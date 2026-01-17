@@ -1,0 +1,27 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Personal data files (keep templates, ignore personal portfolio data)
+# 个人数据文件（保留模板，忽略个人投资组合数据）
+投资组合记录-*.xlsx
+!template/*.xlsx
+
+# Logs
+*.log
