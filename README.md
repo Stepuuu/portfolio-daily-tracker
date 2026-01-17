@@ -18,6 +18,9 @@ A Google Apps Script automation tool that helps you track and record daily inves
 
 ### 🚀 Quick Start
 
+> **📌 Prefer a visual guide?**  
+> If the instructions below seem overwhelming, download [**自动化小程序使用说明--必读.docx**](自动化小程序使用说明--必读.docx) — it contains **step-by-step screenshots** that walk you through the entire setup process!
+
 #### Prerequisites
 
 - A Google Account with access to Google Drive and Google Sheets
@@ -47,6 +50,7 @@ A Google Apps Script automation tool that helps you track and record daily inves
 ├── README.md                           # This file (bilingual)
 ├── LICENSE                             # MIT License
 ├── .gitignore                          # Git ignore rules
+├── 自动化小程序使用说明--必读.docx        # 📸 Visual guide with screenshots (download to view)
 ├── src/
 │   └── code.gs                         # Main Apps Script source code
 ├── template/
@@ -109,10 +113,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### 🚀 快速开始
 
+> **📌 懒得看文字说明？**  
+> 直接下载 [**自动化小程序使用说明--必读.docx**](自动化小程序使用说明--必读.docx)，里面有**详细的图文教程**，跟着截图一步一步操作就行！
+
 #### 前置条件
 
 - 一个可以访问 Google Drive 和 Google Sheets 的 Google 账号
-- 对 Google Apps Script 有基本了解
+- 对 Google Apps Script 有基本了解（不了解也没关系，跟着 docx 里的图操作就行）
 
 #### 安装步骤
 
@@ -138,6 +145,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ├── README.md                           # 本文件（中英双语）
 ├── LICENSE                             # MIT 许可证
 ├── .gitignore                          # Git 忽略规则
+├── 自动化小程序使用说明--必读.docx        # 📸 图文教程（下载后查看，新手推荐！）
 ├── src/
 │   └── code.gs                         # 主要 Apps Script 源代码
 ├── template/
