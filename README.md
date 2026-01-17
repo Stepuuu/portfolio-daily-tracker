@@ -47,15 +47,14 @@ A Google Apps Script automation tool that helps you track and record daily inves
 ├── README.md                           # This file (bilingual)
 ├── LICENSE                             # MIT License
 ├── .gitignore                          # Git ignore rules
-├── 自动化小程序使用说明--必读.docx        # Quick start guide (Chinese, recommended!)
 ├── src/
 │   └── code.gs                         # Main Apps Script source code
 ├── template/
 │   ├── 模板.xlsx                        # Blank template
 │   └── 投资组合记录-20250925.xlsx        # Example with sample data
 └── docs/
-    ├── User_Guide_EN.md                # English user guide
-    └── User_Guide_CN.md                # Chinese user guide
+    ├── User_Guide_EN.md                # 📖 English user guide (click to view)
+    └── User_Guide_CN.md                # 📖 中文使用指南（点击即可阅读）
 ```
 
 ### 🔧 Features
@@ -139,15 +138,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ├── README.md                           # 本文件（中英双语）
 ├── LICENSE                             # MIT 许可证
 ├── .gitignore                          # Git 忽略规则
-├── 自动化小程序使用说明--必读.docx        # 快速入门指南（推荐新手阅读！）
 ├── src/
 │   └── code.gs                         # 主要 Apps Script 源代码
 ├── template/
 │   ├── 模板.xlsx                        # 空白模板
 │   └── 投资组合记录-20250925.xlsx        # 带示例数据的模板
 └── docs/
-    ├── User_Guide_EN.md                # 英文使用指南
-    └── User_Guide_CN.md                # 中文使用指南
+    ├── User_Guide_EN.md                # 📖 英文使用指南（点击即可阅读）
+    └── User_Guide_CN.md                # 📖 中文使用指南（点击即可阅读）
 ```
 
 ### 🔧 功能特点
