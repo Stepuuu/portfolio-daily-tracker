@@ -19,7 +19,8 @@ A Google Apps Script automation tool that helps you track and record daily inves
 ### 🚀 Quick Start
 
 > **📌 Prefer a visual guide?**  
-> If the instructions below seem overwhelming, download [**自动化小程序使用说明--必读.docx**](自动化小程序使用说明--必读.docx) — it contains **step-by-step screenshots** that walk you through the entire setup process!
+> If the instructions below seem overwhelming, download [**Automation_Mini_App_Guide_EN.docx**](Automation_Mini_App_Guide_EN.docx) first.  
+> Need the original Chinese screenshot tutorial? Download [**自动化小程序使用说明--必读.docx**](自动化小程序使用说明--必读.docx).
 
 #### Prerequisites
 
@@ -50,13 +51,15 @@ A Google Apps Script automation tool that helps you track and record daily inves
 ├── README.md                           # This file (bilingual)
 ├── LICENSE                             # MIT License
 ├── .gitignore                          # Git ignore rules
-├── 自动化小程序使用说明--必读.docx        # 📸 Visual guide with screenshots (download to view)
+├── Automation_Mini_App_Guide_EN.docx   # 📘 English translation of the Chinese docx guide
+├── 自动化小程序使用说明--必读.docx        # 📸 Chinese visual guide with screenshots (download to view)
 ├── src/
 │   └── code.gs                         # Main Apps Script source code
 ├── template/
 │   ├── 模板.xlsx                        # Blank template
 │   └── 投资组合记录-20250925.xlsx        # Example with sample data
 └── docs/
+    ├── Automation_Mini_App_Guide_EN.md # 📖 English translation of the Chinese docx guide
     ├── User_Guide_EN.md                # 📖 English user guide (click to view)
     └── User_Guide_CN.md                # 📖 中文使用指南（点击即可阅读）
 ```
@@ -145,13 +148,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ├── README.md                           # 本文件（中英双语）
 ├── LICENSE                             # MIT 许可证
 ├── .gitignore                          # Git 忽略规则
-├── 自动化小程序使用说明--必读.docx        # 📸 图文教程（下载后查看，新手推荐！）
+├── Automation_Mini_App_Guide_EN.docx   # 📘 中文 docx 的英文翻译版（下载后查看）
+├── 自动化小程序使用说明--必读.docx        # 📸 中文图文教程（下载后查看，新手推荐！）
 ├── src/
 │   └── code.gs                         # 主要 Apps Script 源代码
 ├── template/
 │   ├── 模板.xlsx                        # 空白模板
 │   └── 投资组合记录-20250925.xlsx        # 带示例数据的模板
 └── docs/
+    ├── Automation_Mini_App_Guide_EN.md # 📖 中文 docx 的英文翻译版（点击即可阅读）
     ├── User_Guide_EN.md                # 📖 英文使用指南（点击即可阅读）
     └── User_Guide_CN.md                # 📖 中文使用指南（点击即可阅读）
 ```
