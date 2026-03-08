@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  # Portfolio Dashboard Backend (FastAPI)
+  backend:
+    build:
+      context: ./dashboard/backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./engine/portfolio:/app/portfolio:ro
+    environment:
+      - PORTFOLIO_DIR=/app/portfolio
+    restart: unless-stopped
+
+  # Portfolio Dashboard Frontend (React + Vite)
+  frontend:
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Portfolio Engine — run manually or via scheduler
+  # Usage: docker compose run engine python scripts/portfolio_snapshot.py
+  engine:
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    volumes:
+      - ./engine/portfolio:/app/portfolio
+    working_dir: /app

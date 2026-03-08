@@ -22,7 +22,7 @@ const CONFIG = {
   // --- 历史趋势图配置 ---
   TREND_CHART_DATA_SHEET_NAME: "资产图表-源数据",
   TREND_CHART_DISPLAY_SHEET_NAME: "Sheet1",
-  TREND_CHART_POSITION_CELL: "N1",
+  TREND_CHART_POSITION_CELL: "O1",
   TREND_CHART_TITLE: "资产总和与变化率趋势",
   CHART_WIDTH: 480,
   CHART_HEIGHT: 320,
@@ -205,7 +205,8 @@ function createMonthlySummary_(newDailySpreadsheet) {
   const isFirstRecordOfMonth = previousFileData.isFirstOfMonth;
 
   let tableData = []; 
-  let header = [["日期", "当日净资产", "当日盈亏", "当日成本"]]; 
+  // 列顺序: 日期 | 当日净资产 | 当日盈亏 | 当日收益率 | 当日成本
+  let header = [["日期", "当日净资产", "当日盈亏", "当日收益率", "当日成本"]]; 
 
   if (!isFirstRecordOfMonth && previousFile) {
     try {
@@ -219,8 +220,27 @@ function createMonthlySummary_(newDailySpreadsheet) {
         const lastRow = findLastDataRow_(prevSheet, startCol, startRow); 
         
         if (lastRow >= startRow + 1) { 
-          const prevDataRange = prevSheet.getRange(startRow + 1, startCol, lastRow - startRow, 4); 
-          tableData = prevDataRange.getValues();
+          // 读取前一天文件的表头，判断列顺序（旧格式第4列是"当日成本"，新格式是"当日收益率"）
+          const prevHeaderRow = prevSheet.getRange(startRow, startCol, 1, 5).getValues()[0];
+          const isOldColOrder = (typeof prevHeaderRow[3] === 'string' && prevHeaderRow[3] === '当日成本');
+          const rawData = prevSheet.getRange(startRow + 1, startCol, lastRow - startRow, 5).getValues();
+          if (isOldColOrder) {
+            // 旧格式: [日期, 净资产, 盈亏, 成本, (无收益率)] → 新格式: [日期, 净资产, 盈亏, 收益率, 成本]
+            // 旧文件只有4列，row[4] 为空，需用「盈亏 / (净资产 - 盈亏)」补算收益率
+            // 推导: 前一日净资产 = 当日净资产 - 当日盈亏（无资金净流入时精确成立）
+            tableData = rawData.map(row => {
+              const profit = row[2];
+              const assets = row[1];
+              const prevAssets = assets - profit;
+              const rate = (typeof profit === 'number' && typeof assets === 'number' && prevAssets !== 0)
+                           ? profit / prevAssets
+                           : (typeof row[4] === 'number' ? row[4] : 0); // row[4]有数值说明是5列旧格式
+              return [row[0], row[1], row[2], rate, row[3]];
+            });
+            Logger.log(`检测到旧列格式，已自动重映射并补算历史收益率。`);
+          } else {
+            tableData = rawData; // 已是新格式，直接使用
+          }
            Logger.log(`成功从 ${previousFile.getName()} 复制了 ${tableData.length} 行历史数据。`);
         } else {
              Logger.log(`昨天文件 ${previousFile.getName()} 的月度总结表似乎只有表头，不复制数据。`);
@@ -236,6 +256,7 @@ function createMonthlySummary_(newDailySpreadsheet) {
   }
 
   let dailyProfit = 0;
+  let dailyReturnRate = 0;
   if (previousValues && previousValues.assets > 0) { 
     const assetChange = currentValues.assets - previousValues.assets;
     let costChange = 0; 
@@ -243,12 +264,18 @@ function createMonthlySummary_(newDailySpreadsheet) {
       costChange = currentValues.cost - previousValues.cost;
     }
     dailyProfit = assetChange - costChange;
+    // 当日收益率 = 当日盈亏 / 前一日净资产（标准日度收益率）
+    dailyReturnRate = dailyProfit / previousValues.assets;
   } else {
       dailyProfit = currentValues.assets - currentValues.cost; 
-      Logger.log(`计算首个记录日(${Utilities.formatDate(todayDate, Session.getScriptTimeZone(), 'yyyy-MM-dd')})盈亏: ${currentValues.assets} - ${currentValues.cost} = ${dailyProfit}`);
+      Logger.log(`计算系统首个记录日(${Utilities.formatDate(todayDate, Session.getScriptTimeZone(), 'yyyy-MM-dd')})盈亏: ${currentValues.assets} - ${currentValues.cost} = ${dailyProfit}`);
+      // 仅当系统中完全没有历史文件时才走到这里（并非每月第一天——那种情况
+      // findPreviousDayData_ 已能跨月找到上月末文件，previousValues.assets > 0）。
+      // 无前一日数据时，用成本作为分母近似。
+      dailyReturnRate = currentValues.cost > 0 ? dailyProfit / currentValues.cost : 0;
   }
 
-  tableData.push([todayDate, currentValues.assets, dailyProfit, currentValues.cost]);
+  tableData.push([todayDate, currentValues.assets, dailyProfit, dailyReturnRate, currentValues.cost]);
 
   let totalProfit = 0;
   tableData.forEach(row => {
@@ -257,32 +284,54 @@ function createMonthlySummary_(newDailySpreadsheet) {
     }
   });
 
+  // 月收益率 = 本月总盈亏 / 月初基准净资产
+  // 月初基准净资产 = 第一行盈亏 / 第一行收益率（col index 3），即上月末的净资产。
+  // 若第一行收益率为空（如从旧格式文件过渡），回退用「第一行净资产 - 第一行盈亏」近似
+  // （当日无资金进出时该近似精确成立）。
+  let monthlyReturnRate = 0;
+  if (tableData.length > 0) {
+    const firstRowProfit = tableData[0][2];
+    const firstRowRate   = tableData[0][3]; // 新格式: index 3 = 当日收益率
+    let baseAssets = 0;
+    if (typeof firstRowRate === 'number' && firstRowRate !== 0 && typeof firstRowProfit === 'number') {
+      baseAssets = firstRowProfit / firstRowRate; // 精确反推上月末净资产
+    } else if (typeof tableData[0][1] === 'number' && typeof firstRowProfit === 'number') {
+      baseAssets = tableData[0][1] - firstRowProfit; // 回退: 本月首日净资产 - 首日盈亏 ≈ 上月末净资产
+      Logger.log(`月收益率使用回退计算，月初基准净资产估算为: ${baseAssets}`);
+    }
+    if (baseAssets !== 0) {
+      monthlyReturnRate = totalProfit / baseAssets;
+    }
+  }
+
 
   const startCellToday = todaySheet.getRange(CONFIG.MONTHLY_SUMMARY_START_CELL);
   const startRowToday = startCellToday.getRow();
   const startColToday = startCellToday.getColumn();
 
-  todaySheet.getRange(startRowToday, startColToday, todaySheet.getMaxRows() - startRowToday + 1, 4).clearContent();
+  todaySheet.getRange(startRowToday, startColToday, todaySheet.getMaxRows() - startRowToday + 1, 5).clearContent();
 
-  const headerRange = todaySheet.getRange(startRowToday, startColToday, 1, 4);
+  const headerRange = todaySheet.getRange(startRowToday, startColToday, 1, 5);
   headerRange.setValues(header);
   
   if (tableData.length > 0) {
-    const dataRange = todaySheet.getRange(startRowToday + 1, startColToday, tableData.length, 4);
+    const dataRange = todaySheet.getRange(startRowToday + 1, startColToday, tableData.length, 5);
     dataRange.setValues(tableData);
     
-    todaySheet.getRange(startRowToday + 1, startColToday, tableData.length, 1).setNumberFormat('yyyy-mm-dd');        
-    todaySheet.getRange(startRowToday + 1, startColToday + 1, tableData.length, 1).setNumberFormat('#,##0.00'); 
-    todaySheet.getRange(startRowToday + 1, startColToday + 2, tableData.length, 1).setNumberFormat('0.00');        
-    todaySheet.getRange(startRowToday + 1, startColToday + 3, tableData.length, 1).setNumberFormat('#,##0.00'); 
+    todaySheet.getRange(startRowToday + 1, startColToday,     tableData.length, 1).setNumberFormat('yyyy-mm-dd');  // 日期
+    todaySheet.getRange(startRowToday + 1, startColToday + 1, tableData.length, 1).setNumberFormat('#,##0.00');    // 当日净资产
+    todaySheet.getRange(startRowToday + 1, startColToday + 2, tableData.length, 1).setNumberFormat('0.00');        // 当日盈亏
+    todaySheet.getRange(startRowToday + 1, startColToday + 3, tableData.length, 1).setNumberFormat('0.00%');       // 当日收益率
+    todaySheet.getRange(startRowToday + 1, startColToday + 4, tableData.length, 1).setNumberFormat('#,##0.00');    // 当日成本
   }
 
   const totalRowIndex = startRowToday + tableData.length + 1;
-  const totalRange = todaySheet.getRange(totalRowIndex, startColToday, 1, 4);
-  totalRange.setValues([["本月总计", "", totalProfit, ""]]); 
-  todaySheet.getRange(totalRowIndex, startColToday + 2).setNumberFormat('0.00');
+  const totalRange = todaySheet.getRange(totalRowIndex, startColToday, 1, 5);
+  totalRange.setValues([["本月总计", "", totalProfit, monthlyReturnRate, ""]]); 
+  todaySheet.getRange(totalRowIndex, startColToday + 2).setNumberFormat('0.00');       // 本月总盈亏
+  todaySheet.getRange(totalRowIndex, startColToday + 3).setNumberFormat('0.00%');      // 本月总收益率
 
-  const tableRange = todaySheet.getRange(startRowToday, startColToday, tableData.length + 2, 4);
+  const tableRange = todaySheet.getRange(startRowToday, startColToday, tableData.length + 2, 5);
   const headerAndTotalColor = "#4a86e8";
   
   headerRange.setBackground(headerAndTotalColor).setFontColor("white").setFontWeight("bold");
@@ -291,7 +340,7 @@ function createMonthlySummary_(newDailySpreadsheet) {
   tableRange.setBorder(true, true, true, true, true, true, "#a9c4f5", SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
 
   if (tableData.length > 0) {
-     const dataBodyRange = todaySheet.getRange(startRowToday + 1, startColToday, tableData.length, 4);
+     const dataBodyRange = todaySheet.getRange(startRowToday + 1, startColToday, tableData.length, 5);
      dataBodyRange.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, false, false);
   }
   
@@ -299,6 +348,7 @@ function createMonthlySummary_(newDailySpreadsheet) {
   todaySheet.setColumnWidth(startColToday + 1, 100);
   todaySheet.setColumnWidth(startColToday + 2, 100);
   todaySheet.setColumnWidth(startColToday + 3, 100);
+  todaySheet.setColumnWidth(startColToday + 4, 100);
 }
 
 /**

@@ -1,10 +1,5 @@
 # OS generated files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
 # Editor files
@@ -18,10 +13,34 @@ Thumbs.db
 *.tmp
 *.temp
 
-# Personal data files (keep templates, ignore personal portfolio data)
-# 个人数据文件（保留模板，忽略个人投资组合数据）
-投资组合记录-*.xlsx
-!template/*.xlsx
-
 # Logs
 *.log
+logs/
+
+# ── Engine: keep examples, ignore user data ──
+engine/portfolio/config.json
+engine/portfolio/holdings/*.json
+!engine/portfolio/holdings/example.json
+engine/portfolio/snapshots/
+engine/portfolio/history.csv
+engine/reports/
+
+# ── Dashboard: build artifacts ──
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
+dashboard/frontend/.vite/
+
+# ── Dashboard: private config & data (NEVER commit these) ──
+dashboard/config.json
+dashboard/data/
+!dashboard/config.example.json
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# ── Docker ──
+.env
