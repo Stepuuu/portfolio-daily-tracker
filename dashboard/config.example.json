@@ -1,0 +1,86 @@
+{
+  "_comment": "Copy this file to config.json and fill in your API keys. Never commit config.json.",
+  "current_api_group": "openai_official",
+  "api_groups": {
+    "openai_official": {
+      "name": "OpenAI",
+      "description": "OpenAI official API",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-YOUR_OPENAI_API_KEY_HERE",
+      "headers": null,
+      "provider_type": "openai",
+      "models": [
+        {
+          "id": "gpt-4o",
+          "name": "GPT-4o",
+          "description": "OpenAI multimodal flagship model",
+          "supports_vision": true
+        },
+        {
+          "id": "gpt-4o-mini",
+          "name": "GPT-4o Mini",
+          "description": "Lightweight GPT-4o, faster and cheaper",
+          "supports_vision": true
+        }
+      ]
+    },
+    "anthropic_official": {
+      "name": "Anthropic",
+      "description": "Anthropic Claude official API",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key": "sk-ant-YOUR_ANTHROPIC_API_KEY_HERE",
+      "headers": null,
+      "provider_type": "claude",
+      "models": [
+        {
+          "id": "claude-sonnet-4-20250514",
+          "name": "Claude Sonnet 4",
+          "description": "Claude 4 generation model",
+          "supports_vision": true
+        }
+      ]
+    },
+    "openai_compatible": {
+      "name": "OpenAI-Compatible API",
+      "description": "Any OpenAI-compatible API endpoint (DeepSeek, Qwen, etc.)",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "sk-YOUR_API_KEY_HERE",
+      "headers": null,
+      "provider_type": "openai",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "name": "DeepSeek Chat",
+          "description": "DeepSeek chat model, cost-effective",
+          "supports_vision": false
+        }
+      ]
+    }
+  },
+  "llm": {
+    "current_model": "gpt-4o",
+    "max_tokens": 4096,
+    "temperature": 0.0
+  },
+  "market_data": {
+    "provider": "akshare"
+  },
+  "portfolio": {
+    "provider": "manual",
+    "data_file": "data/portfolio.json",
+    "auto_refresh": true,
+    "refresh_interval": 60
+  },
+  "monitor": {
+    "enabled": true,
+    "check_interval": 5,
+    "default_conditions": {
+      "change_pct_above": 5,
+      "change_pct_below": -5
+    }
+  },
+  "storage": {
+    "conversations_dir": "data/conversations",
+    "alerts_file": "data/alerts.json"
+  }
+}

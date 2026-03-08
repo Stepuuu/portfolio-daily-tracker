@@ -1,0 +1,21 @@
+{
+  "groups": {
+    "进攻": {"cost_basis": 500000, "label": "进攻 (成本50万)"},
+    "稳健": {"cost_basis": 800000, "label": "稳健 (成本80万)"}
+  },
+  "data_dir": "./portfolio",
+  "qr_portfolio_path": "",
+  "proxy": "",
+  "feishu_chat_id": "",
+  "yahoo_base": "https://query1.finance.yahoo.com/v8/finance/chart",
+  "ticker_map": {},
+  "currency_map": {
+    "SHA": "CNY", "SHE": "CNY",
+    "HKG": "HKD",
+    "NASDAQ": "USD", "NYSE": "USD"
+  },
+  "fx_tickers": {
+    "HKD_CNY": "HKDCNY=X",
+    "USD_CNY": "USDCNY=X"
+  }
+}

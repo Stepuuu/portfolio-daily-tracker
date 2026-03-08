@@ -1,0 +1,15 @@
+{
+  "_comment": "OpenClaw configuration example for portfolio tracker integration",
+  "feishu_chat_id": "your_chat_id_here",
+  "notification_schedule": {
+    "notify_time": "18:00",
+    "pipeline_time": "19:00",
+    "timezone": "Asia/Shanghai",
+    "skip_weekends": true,
+    "holidays": ["2026-01-01", "2026-01-26"]
+  },
+  "message_templates": {
+    "notify": "📊 投资组合每日更新 — {date}\n\n今日持仓已基于昨日自动生成。\n请告诉我今日变化：\n• 回复「未变化」→ 直接生成日报\n• 告诉我变化内容",
+    "report_header": "📊 投资组合日报 — {date}"
+  }
+}

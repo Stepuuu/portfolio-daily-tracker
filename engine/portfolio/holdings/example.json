@@ -1,0 +1,24 @@
+{
+  "date": "2025-01-01",
+  "updated_at": "2025-01-01T16:00:00+08:00",
+  "groups": {
+    "进攻": {
+      "cost_basis": 500000,
+      "positions": [
+        {"name": "示例A股", "ticker": "SHA:600000", "quantity": 1000, "cost_price": 10.50},
+        {"name": "示例港股", "ticker": "HKG:0700", "quantity": 100, "cost_price": 350.0},
+        {"name": "示例美股", "ticker": "NASDAQ:AAPL", "quantity": 10, "cost_price": 150.0}
+      ],
+      "fund": 0,
+      "cash": 50000
+    },
+    "稳健": {
+      "cost_basis": 800000,
+      "positions": [
+        {"name": "示例ETF", "ticker": "SHA:510300", "quantity": 5000, "cost_price": 4.0}
+      ],
+      "fund": 0,
+      "cash": 100000
+    }
+  }
+}
