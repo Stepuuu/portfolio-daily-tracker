@@ -385,7 +385,7 @@ def _send_openclaw_message(chat_id, message):
     """Send a message via OpenClaw CLI."""
     try:
         cmd = (
-            f'source {NVM_SH} && nvm use v22.22.0 > /dev/null 2>&1 && '
+            f'source {NVM_SH} && nvm use {os.environ.get("NODE_VERSION", "node")} > /dev/null 2>&1 && '
             f'openclaw message send --channel feishu --target "{chat_id}" --message "{_escape_shell(message)}"'
         )
         result = subprocess.run(
@@ -416,7 +416,7 @@ def run_snapshot(date_str):
     conda = os.environ.get("CONDA_EXE") or _shutil.which("conda") or "conda"
     
     result = subprocess.run(
-        [conda, "run", "-n", "quant", "python3", str(script), "--date", date_str],
+        [conda, "run", "-n", os.environ.get("CONDA_ENV", "base"), "python3", str(script), "--date", date_str],
         capture_output=True, text=True, timeout=120,
         cwd=str(BASE_DIR)
     )
@@ -444,7 +444,7 @@ def run_report(date_str):
     report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
     
     result = subprocess.run(
-        [conda, "run", "-n", "quant", "python3", str(script), "--date", date_str, "-o", str(report_file)],
+        [conda, "run", "-n", os.environ.get("CONDA_ENV", "base"), "python3", str(script), "--date", date_str, "-o", str(report_file)],
         capture_output=True, text=True, timeout=30,
         cwd=str(BASE_DIR)
     )

@@ -1,2 +1,10 @@
 fastapi>=0.100.0
 uvicorn>=0.23.0
+httpx>=0.27.0
+akshare>=1.14.0
+python-dotenv>=1.0.0
+rich>=13.7.0
+Pillow>=10.0.0
+anthropic>=0.25.0
+openai>=1.12.0
+requests>=2.31.0

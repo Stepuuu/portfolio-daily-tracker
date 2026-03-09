@@ -66,7 +66,8 @@ def run_action(action, date_str=None):
         date_str = datetime.now().strftime("%Y-%m-%d")
     
     script = str(BASE_DIR / "portfolio_daily_update.py")
-    cmd = [CONDA, "run", "-n", "quant", "python3", script, "--action", action, "--date", date_str]
+    conda_env = os.environ.get("CONDA_ENV", "base")
+    cmd = [CONDA, "run", "-n", conda_env, "python3", script, "--action", action, "--date", date_str]
     
     log(f"执行: {action} (日期: {date_str})")
     try:
