@@ -48,13 +48,13 @@ log "🚀 开始执行: $ACTION (日期: $TODAY)"
 
 case "$ACTION" in
     notify)
-        $CONDA run -n quant python3 "$SCRIPT" --action notify --date "$TODAY" 2>&1 | tee -a "$LOG_FILE"
+        $CONDA run -n ${CONDA_ENV:-base} python3 "$SCRIPT" --action notify --date "$TODAY" 2>&1 | tee -a "$LOG_FILE"
         ;;
     auto-pipeline)
-        $CONDA run -n quant python3 "$SCRIPT" --action auto-pipeline --date "$TODAY" 2>&1 | tee -a "$LOG_FILE"
+        $CONDA run -n ${CONDA_ENV:-base} python3 "$SCRIPT" --action auto-pipeline --date "$TODAY" 2>&1 | tee -a "$LOG_FILE"
         ;;
     pipeline)
-        $CONDA run -n quant python3 "$SCRIPT" --action pipeline --date "$TODAY" 2>&1 | tee -a "$LOG_FILE"
+        $CONDA run -n ${CONDA_ENV:-base} python3 "$SCRIPT" --action pipeline --date "$TODAY" 2>&1 | tee -a "$LOG_FILE"
         ;;
     update)
         TEXT="${2:-}"
@@ -62,7 +62,7 @@ case "$ACTION" in
             log "❌ update 需要提供变更文本"
             exit 1
         fi
-        $CONDA run -n quant python3 "$SCRIPT" --action update --date "$TODAY" --text "$TEXT" 2>&1 | tee -a "$LOG_FILE"
+        $CONDA run -n ${CONDA_ENV:-base} python3 "$SCRIPT" --action update --date "$TODAY" --text "$TEXT" 2>&1 | tee -a "$LOG_FILE"
         ;;
     *)
         echo "Usage: $0 {notify|auto-pipeline|pipeline|update \"text\"}"

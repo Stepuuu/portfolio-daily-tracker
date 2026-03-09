@@ -34,12 +34,12 @@ class Config:
     def _default_config(self) -> dict:
         """默认配置"""
         return {
-            "current_api_group": "dashscope",  # 当前使用的 API 组
+            "current_api_group": "openai_official",  # 当前使用的 API 组
             "api_groups": {
-                "dashscope": {
-                    "name": "DashScope API",
-                    "description": "阿里云 DashScope Anthropic 兼容接口，支持 Kimi 等模型",
-                    "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1",
+                "openai_compatible": {
+                    "name": "OpenAI-Compatible API",
+                    "description": "Any OpenAI-compatible endpoint (e.g. Ollama, LiteLLM, vLLM)",
+                    "base_url": "http://localhost:11434/v1",
                     "api_key": "",
                     "headers": {
                         "Authorization": "Bearer ",
@@ -47,17 +47,17 @@ class Config:
                     },
                     "models": [
                         {
-                            "id": "kimi-k2.5",
-                            "name": "Kimi K2.5",
-                            "description": "Kimi K2.5 模型，高性能对话模型",
-                            "supports_vision": True
+                            "id": "llama3",
+                            "name": "Llama 3",
+                            "description": "Local model via Ollama / vLLM",
+                            "supports_vision": False
                         }
                     ]
                 },
-                "xhub": {
-                    "name": "XHub API",
-                    "description": "第三方聚合 API，支持多种主流模型",
-                    "base_url": "https://api3.xhub.chat/v1",
+                "third_party": {
+                    "name": "Third-Party API",
+                    "description": "Third-party aggregation API (set your own base_url)",
+                    "base_url": "https://api.example.com/v1",
                     "api_key": "",
                     "headers": {
                         "Authorization": "",
@@ -138,24 +138,6 @@ class Config:
                         }
                     ]
                 },
-                "xiaomi": {
-                    "name": "小米官方 API",
-                    "description": "小米官方 Anthropic API",
-                    "base_url": "https://api.xiaomimimo.com/anthropic",
-                    "api_key": "",
-                    "headers": {
-                        "Authorization": "",
-                        "Content-Type": "application/json"
-                    },
-                    "models": [
-                        {
-                            "id": "mimo-v2-flash",
-                            "name": "Mimo V2 Flash",
-                            "description": "小米优化的快速模型",
-                            "supports_vision": False
-                        }
-                    ]
-                },
                 "anthropic_official": {
                     "name": "Anthropic 官方",
                     "description": "Claude 官方 API",
@@ -190,7 +172,7 @@ class Config:
                 }
             },
             "llm": {
-                "current_model": "kimi-k2.5",
+                "current_model": "gpt-4o",
                 "max_tokens": 4096,
                 "temperature": 0.0
             },
