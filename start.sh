@@ -37,18 +37,21 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-# ── Check config ──
+# ── Auto-copy config templates if missing ──
 if [ ! -f "dashboard/config.json" ]; then
-    warn "dashboard/config.json not found."
-    echo "  Run: cp dashboard/config.example.json dashboard/config.json"
-    echo "  Then edit config.json with your API keys."
-    exit 1
+    warn "dashboard/config.json not found — copying from example."
+    cp dashboard/config.example.json dashboard/config.json
+    echo "  ✓ Copied dashboard/config.example.json → dashboard/config.json"
+    echo "  ⚠  Edit dashboard/config.json and add your API keys before using AI features."
 fi
 
 if [ ! -f "engine/portfolio/config.json" ]; then
-    warn "engine/portfolio/config.json not found."
-    echo "  Run: cp engine/portfolio/config.example.json engine/portfolio/config.json"
+    warn "engine/portfolio/config.json not found — copying from example."
+    cp engine/portfolio/config.example.json engine/portfolio/config.json
+    echo "  ✓ Copied engine/portfolio/config.example.json → engine/portfolio/config.json"
 fi
+
+mkdir -p engine/portfolio/holdings engine/portfolio/snapshots
 
 MODE=${1:-all}
 
