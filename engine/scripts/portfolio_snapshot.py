@@ -223,50 +223,84 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
     grand_profit = grand_total_value - grand_total_cost
     grand_return_pct = (grand_profit / grand_total_cost * 100) if grand_total_cost != 0 else 0
 
-    # Daily change (vs previous snapshot)
-    prev_value = prev_snapshot["summary"]["total_value"] if prev_snapshot else grand_total_value
+    # Daily change — prefer CSV history (more complete than snapshot files)
+    prev_value = grand_total_value  # default: no change
+    prev_cost = grand_total_cost
+    prev_date = None
+    if history_values:
+        prev_entries = [(d, v, c) for d, v, c in history_values if d < date_str]
+        if prev_entries:
+            prev_date, prev_value, prev_cost = prev_entries[-1]
+    if prev_date is None and prev_snapshot:
+        # CSV had no prior entry — fall back to snapshot file
+        prev_value = prev_snapshot["summary"]["total_value"]
+        prev_cost = prev_snapshot["summary"].get("total_cost", grand_total_cost)
+        prev_date = prev_snapshot.get("date")
     daily_change = grand_total_value - prev_value
     daily_change_pct = (daily_change / prev_value * 100) if prev_value != 0 else 0
 
-    # Max drawdown from full history (history.csv + snapshot files)
-    all_values = []
-    if history_values:
-        all_values = [v for _, v in history_values if _ < date_str]
-    # Also include snapshot file values as fallback
-    for s in all_snapshots:
-        if s.get("date", "") < date_str and "summary" in s:
-            v = s["summary"]["total_value"]
-            if v not in all_values:
-                all_values.append(v)
-    all_values.append(grand_total_value)
-    max_value = max(all_values) if all_values else grand_total_value
-    drawdown = (grand_total_value - max_value) / max_value * 100 if max_value != 0 else 0
+    # Capital change = cost difference vs previous day
+    capital_change = grand_total_cost - prev_cost
+    # For more accurate market_daily_change: if previous snapshot has group-level
+    # cash data, use cash-based capital calc (captures fund purchases correctly)
+    if prev_snapshot and prev_snapshot.get("date") == prev_date:
+        prev_cash_total = sum(gdata.get("cash", 0) for gdata in prev_snapshot.get("groups", {}).values())
+        curr_cash_total = sum(gdata.get("cash", 0) for gdata in snapshot["groups"].values())
+        capital_change = curr_cash_total - prev_cash_total
+    market_daily_change = daily_change - capital_change
+    market_daily_change_pct = (market_daily_change / prev_value * 100) if prev_value != 0 else 0
 
-    # Monthly stats — always use last day of previous month from history for accuracy
-    month_first_day = date_str[:8] + "01"  # e.g. "2026-03-01"
-    prev_month_values = [(d, v) for d, v in (history_values or []) if d < month_first_day]
-    if prev_month_values:
-        month_start_value = prev_month_values[-1][1]  # last trading day of previous month
+    # ── Build history with capital-adjusted daily returns ──
+    # history_values is list of (date, total_value, total_cost)
+    hist = [(d, v, c) for d, v, c in (history_values or []) if d < date_str]
+    # Append today
+    hist.append((date_str, grand_total_value, grand_total_cost))
+
+    # Compute market_daily_return for each day (excluding capital flows)
+    # capital_change = cost[i] - cost[i-1]; market_change = value_change - capital_change
+    market_daily_returns = []  # (date, market_return_ratio, market_change_amount)
+    for i in range(1, len(hist)):
+        prev_d, prev_v, prev_c = hist[i - 1]
+        curr_d, curr_v, curr_c = hist[i]
+        cap_change = curr_c - prev_c  # capital injection/withdrawal
+        value_change = curr_v - prev_v
+        mkt_change = value_change - cap_change
+        mkt_return = mkt_change / prev_v if prev_v != 0 else 0
+        market_daily_returns.append((curr_d, mkt_return, mkt_change))
+
+    # ── Drawdown: 净资产回撤 (capital-flow-adjusted) ──
+    # Track peak of total_value (same as traditional). Record the profit at peak.
+    # drawdown = (current_profit - profit_at_peak) / peak_value
+    # This excludes capital injection effects: injection raises both value & cost equally,
+    # so the difference (profit_at_peak - current_profit) captures only market losses.
+    peak_value_for_dd = hist[0][1]
+    profit_at_peak = hist[0][1] - hist[0][2]
+    for d, v, c in hist:
+        if v > peak_value_for_dd:
+            peak_value_for_dd = v
+            profit_at_peak = v - c
+    # Current drawdown from peak
+    current_profit = grand_total_value - grand_total_cost
+    drawdown = ((current_profit - profit_at_peak) / peak_value_for_dd * 100) if peak_value_for_dd > 0 else 0
+
+    # ── Monthly stats (market-only) ──
+    month_first_day = date_str[:8] + "01"
+    # month_start_value = total_value at end of previous month
+    prev_month_entries = [(d, v) for d, v, c in hist if d < month_first_day]
+    if prev_month_entries:
+        month_start_value = prev_month_entries[-1][1]
     else:
-        # Fallback: use first snapshot of the month's prev_total_value, or prev_value
-        month_snapshots = [s for s in all_snapshots if s["date"].startswith(date_str[:7])]
-        if month_snapshots:
-            month_start_value = month_snapshots[0]["summary"].get("prev_total_value", grand_total_value)
-        else:
-            month_start_value = prev_value
-    month_change = grand_total_value - month_start_value
-    month_return_pct = (month_change / month_start_value * 100) if month_start_value != 0 else 0
+        month_start_value = prev_value
+    # Sum market-only changes this month
+    month_market_changes = [mc for d, r, mc in market_daily_returns if d >= month_first_day]
+    month_market_change = sum(month_market_changes)
+    month_return_pct = (month_market_change / month_start_value * 100) if month_start_value != 0 else 0
+    # month_change (net, for display) = actual value change including capital
+    month_net_change = grand_total_value - month_start_value
 
-    # Quantitative metrics from history
-    daily_returns = []
-    hist_vals = [(d, v) for d, v in (history_values or []) if d <= date_str]
-    for i in range(1, len(hist_vals)):
-        prev_v = hist_vals[i - 1][1]
-        curr_v = hist_vals[i][1]
-        if prev_v > 0:
-            daily_returns.append((curr_v - prev_v) / prev_v)
+    # ── Quantitative metrics (using market-only returns) ──
+    daily_returns = [r for _, r, _ in market_daily_returns]
 
-    # Sharpe ratio (annualized, risk-free rate ~2%)
     import math
     sharpe_ratio = 0.0
     volatility_annual = 0.0
@@ -292,13 +326,17 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
         "total_cost": grand_total_cost,
         "total_profit": round(grand_profit, 2),
         "total_return_pct": round(grand_return_pct, 2),
+        "prev_date": prev_date,
         "prev_total_value": round(prev_value, 2),
         "daily_change": round(daily_change, 2),
         "daily_change_pct": round(daily_change_pct, 2),
-        "max_value": round(max_value, 2),
+        "capital_change": round(capital_change, 2),
+        "market_daily_change": round(market_daily_change, 2),
+        "market_daily_change_pct": round(market_daily_change_pct, 2),
         "max_drawdown_pct": round(drawdown, 2),
         "month_start_value": round(month_start_value, 2),
-        "month_change": round(month_change, 2),
+        "month_change": round(month_net_change, 2),
+        "month_market_change": round(month_market_change, 2),
         "month_return_pct": round(month_return_pct, 2),
         # Quantitative metrics
         "sharpe_ratio": sharpe_ratio,
@@ -375,19 +413,24 @@ def load_all_snapshots():
 
 
 def load_all_history_values():
-    """Load all historical total_value from history.csv for accurate peak/drawdown."""
+    """Load all historical data from history.csv for accurate peak/drawdown/monthly calcs."""
     csv_path = os.path.join(PORTFOLIO_DIR, "history.csv")
-    values = []  # list of (date, total_value)
+    values = []  # list of (date, total_value, total_cost)
     if os.path.exists(csv_path):
         with open(csv_path, "r") as f:
             header = f.readline().strip().split(",")
             date_idx = header.index("date") if "date" in header else 0
             val_idx = header.index("total_value") if "total_value" in header else 1
+            cost_idx = header.index("total_cost") if "total_cost" in header else 2
             for line in f:
                 parts = line.strip().split(",")
-                if len(parts) > val_idx:
+                if len(parts) > max(val_idx, cost_idx):
                     try:
-                        values.append((parts[date_idx], float(parts[val_idx])))
+                        values.append((
+                            parts[date_idx],
+                            float(parts[val_idx]),
+                            float(parts[cost_idx]) if cost_idx < len(parts) else 0
+                        ))
                     except ValueError:
                         pass
     return values
@@ -424,14 +467,57 @@ def main():
         save_snapshot(snapshot)
         sync_to_qr(snapshot, config)
 
-        # Append to history CSV
+        # Upsert to history CSV (replace existing row for date, or append)
         history_path = os.path.join(PORTFOLIO_DIR, "history.csv")
-        write_header = not os.path.exists(history_path)
-        with open(history_path, "a") as f:
-            if write_header:
-                f.write("date,total_value,total_cost,total_profit,return_pct,daily_change,daily_change_pct,max_drawdown_pct\n")
-            s = snapshot["summary"]
-            f.write(f"{date_str},{s['total_value']},{s['total_cost']},{s['total_profit']},{s['total_return_pct']},{s['daily_change']},{s['daily_change_pct']},{s['max_drawdown_pct']}\n")
+        CSV_HEADER = "date,total_value,total_cost,total_profit,return_pct,daily_change,daily_change_pct,max_drawdown_pct,capital_change,market_daily_change,market_daily_change_pct\n"
+        s = snapshot["summary"]
+        new_row = (
+            f"{date_str},{s['total_value']},{s['total_cost']},{s['total_profit']},"
+            f"{s['total_return_pct']},{s['daily_change']},{s['daily_change_pct']},"
+            f"{s['max_drawdown_pct']},{s['capital_change']},{s['market_daily_change']},{s['market_daily_change_pct']}\n"
+        )
+        if os.path.exists(history_path):
+            with open(history_path, "r") as f:
+                lines = f.readlines()
+            # Upgrade header if needed
+            existing_header = lines[0] if lines else CSV_HEADER
+            if "capital_change" not in existing_header:
+                # Migrate old rows: compute capital_change/market_daily_change from cost diffs
+                data_lines = [l for l in lines[1:] if l.strip() and not l.startswith("date,")]
+                migrated = []
+                prev_cost = None
+                for line in data_lines:
+                    parts = line.strip().split(",")
+                    if len(parts) >= 8:
+                        try:
+                            v, c, dc = float(parts[1]), float(parts[2]), float(parts[5])
+                            pc = prev_cost if prev_cost is not None else c
+                            cap = c - pc
+                            mkt = dc - cap
+                            pv_prev = float(parts[1]) - dc  # approx prev value
+                            mkt_pct = round(mkt / pv_prev * 100, 4) if pv_prev else 0
+                            prev_cost = c
+                            migrated.append(parts[:8] + [str(round(cap, 2)), str(round(mkt, 2)), str(mkt_pct)] )
+                        except (ValueError, IndexError):
+                            prev_cost = None
+                            migrated.append(parts[:8] + ["0", parts[5], parts[6]])
+                with open(history_path, "w") as f:
+                    f.write(CSV_HEADER)
+                    for row in migrated:
+                        if not row[0].startswith(date_str):
+                            f.write(",".join(row) + "\n")
+                    f.write(new_row)
+            else:
+                # Header already has new columns
+                data_lines = [l for l in lines if not l.startswith("date,") and not l.startswith(f"{date_str},")]
+                with open(history_path, "w") as f:
+                    f.write(CSV_HEADER)
+                    f.writelines(data_lines)
+                    f.write(new_row)
+        else:
+            with open(history_path, "w") as f:
+                f.write(CSV_HEADER)
+                f.write(new_row)
 
     # Print summary
     s = snapshot["summary"]

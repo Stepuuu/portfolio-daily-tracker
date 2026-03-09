@@ -198,13 +198,17 @@ function GroupBar({ groups }: { groups: Record<string, TrackerGroup> }) {
                 style={{ width: `${pct}%` }}
               />
             </div>
-            {hasMargin && (
-              <div className="flex items-center space-x-3 text-xs text-slate-500 mt-1">
-                <span>融资 <span className="text-amber-400">{fmtWan(margin)}</span></span>
-                <span>杠杆 <span className="text-amber-400">{leverage.toFixed(2)}x</span></span>
-                <span>持仓 <span className="text-slate-400">{fmtWan(grossAsset)}</span></span>
-              </div>
-            )}
+            <div className="flex items-center space-x-3 text-xs text-slate-500 mt-1">
+              <span>成本 <span className="text-slate-300">{fmtWan(g.cost_basis)}</span></span>
+              <span>盈亏 <span className={colorClass(g.profit)}>{fmtWan(g.profit)}</span></span>
+              {hasMargin && (
+                <>
+                  <span>融资 <span className="text-amber-400">{fmtWan(margin)}</span></span>
+                  <span>杠杆 <span className="text-amber-400">{leverage.toFixed(2)}x</span></span>
+                  <span>持仓 <span className="text-slate-400">{fmtWan(grossAsset)}</span></span>
+                </>
+              )}
+            </div>
           </div>
         )
       })}
@@ -641,13 +645,14 @@ export default function PortfolioTracker() {
         }
         const leverageRatio = totalMargin > 0 ? (totalPositionsVal + totalMargin) / s.total_value : 1
         const netAsset = s.total_value
-        // Net asset daily change rate = daily_change / (net_asset - daily_change)
-        const prevNetAsset = netAsset - s.daily_change
-        const netDailyPct = prevNetAsset !== 0 ? (s.daily_change / prevNetAsset) * 100 : 0
+        // Use market_daily_change (excludes capital injections) for rate display
+        const mdc = s.market_daily_change ?? s.daily_change
+        const prevNetAsset = netAsset - mdc
+        const netDailyPct = prevNetAsset !== 0 ? (mdc / prevNetAsset) * 100 : 0
         // Gross asset daily change rate (based on total positions incl. margin)
         const grossAsset = totalPositionsVal + totalMargin
-        const prevGrossAsset = grossAsset - s.daily_change
-        const grossDailyPct = prevGrossAsset !== 0 ? (s.daily_change / prevGrossAsset) * 100 : 0
+        const prevGrossAsset = grossAsset - mdc
+        const grossDailyPct = prevGrossAsset !== 0 ? (mdc / prevGrossAsset) * 100 : 0
 
         return (
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -673,10 +678,10 @@ export default function PortfolioTracker() {
           <div className="text-xs text-slate-500 mt-1">成本 {fmtWan(s.total_cost)}</div>
         </div>
 
-        <div className={`rounded-lg p-4 border ${bgColor(s.daily_change)}`}>
+        <div className={`rounded-lg p-4 border ${bgColor(mdc)}`}>
           <div className="text-xs text-slate-400 mb-1">今日盈亏</div>
-          <div className={`text-xl font-bold ${colorClass(s.daily_change)}`}>
-            {s.daily_change >= 0 ? '+' : ''}{fmtWan(s.daily_change)}
+          <div className={`text-xl font-bold ${colorClass(mdc)}`}>
+            {mdc >= 0 ? '+' : ''}{fmtWan(mdc)}
           </div>
           <div className="text-xs mt-1 space-y-0.5">
             <div className={colorClass(netDailyPct)}>
@@ -687,13 +692,18 @@ export default function PortfolioTracker() {
                 总资产 {fmtPct(grossDailyPct)}
               </div>
             )}
+            {!!s.capital_change && Math.abs(s.capital_change) > 100 && (
+              <div className="text-slate-500">
+                {s.capital_change > 0 ? '注资' : '取出'} {fmtWan(Math.abs(s.capital_change))}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className={`rounded-lg p-4 border ${bgColor(s.month_change)}`}>
+        <div className={`rounded-lg p-4 border ${bgColor(s.month_market_change ?? s.month_change)}`}>
           <div className="text-xs text-slate-400 mb-1">本月收益</div>
-          <div className={`text-xl font-bold ${colorClass(s.month_change)}`}>
-            {fmtWan(s.month_change)}
+          <div className={`text-xl font-bold ${colorClass(s.month_market_change ?? s.month_change)}`}>
+            {fmtWan(s.month_market_change ?? s.month_change)}
           </div>
           <div className={`text-sm mt-1 ${colorClass(s.month_return_pct)}`}>
             {fmtPct(s.month_return_pct)}
@@ -706,7 +716,7 @@ export default function PortfolioTracker() {
             {fmt(s.max_drawdown_pct, 2)}%
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            峰值 {fmtWan(s.max_value)}
+            TWR 调整
           </div>
         </div>
       </div>
@@ -798,7 +808,7 @@ export default function PortfolioTracker() {
                 <tbody>
                   {monthGroups.map(({ month, rows: monthRows }) => {
                     const isExpanded = expandedMonths.has(month)
-                    const monthPnl = monthRows.reduce((s, r) => s + r.daily_change, 0)
+                    const monthPnl = monthRows.reduce((s, r) => s + (r.market_daily_change ?? r.daily_change), 0)
                     return (
                       <Fragment key={month}>
                         <tr
@@ -826,11 +836,14 @@ export default function PortfolioTracker() {
                             <td className="px-3 py-2 pl-6">{h.date}</td>
                             <td className="px-3 py-2 text-right">{fmtWan(h.total_value)}</td>
                             <td className="px-3 py-2 text-right text-slate-400">{fmtWan(h.total_cost)}</td>
-                            <td className={`px-3 py-2 text-right ${colorClass(h.daily_change)}`}>
-                              {h.daily_change >= 0 ? '+' : ''}{fmtWan(h.daily_change)}
+                            <td className={`px-3 py-2 text-right ${colorClass(h.market_daily_change ?? h.daily_change)}`}>
+                              {(h.market_daily_change ?? h.daily_change) >= 0 ? '+' : ''}{fmtWan(h.market_daily_change ?? h.daily_change)}
+                              {!!h.capital_change && Math.abs(h.capital_change) > 100 && (
+                                <span className="ml-1 text-xs text-slate-500">({h.capital_change > 0 ? '+' : ''}{fmtWan(h.capital_change)}注资)</span>
+                              )}
                             </td>
-                            <td className={`px-3 py-2 text-right font-medium ${colorClass(h.daily_change_pct)}`}>
-                              {fmtPct(h.daily_change_pct)}
+                            <td className={`px-3 py-2 text-right font-medium ${colorClass(h.market_daily_change_pct ?? h.daily_change_pct)}`}>
+                              {fmtPct(h.market_daily_change_pct ?? h.daily_change_pct)}
                             </td>
                             <td className={`px-3 py-2 text-right ${colorClass(h.return_pct)}`}>
                               {fmtPct(h.return_pct)}
