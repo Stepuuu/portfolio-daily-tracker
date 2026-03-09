@@ -1,17 +1,17 @@
 #!/bin/bash
 # 投资组合每日定时任务
 # ┌─────────────────────────────────────────────────────┐
-# │  18:00 (UTC 10:00) — 克隆持仓 + 飞书通知           │
-# │  19:00 (UTC 11:00) — 自动生成快照（如用户未更新）   │
+# │  21:30 (UTC 13:30) — 克隆持仓 + 飞书询问变化       │
+# │  22:30 (UTC 14:30) — 自动生成快照（如用户未回复）   │
 # └─────────────────────────────────────────────────────┘
 #
 # crontab 设置:
-#   0 10 * * 1-5 /path/to/portfolio-cron.sh notify
-#   0 11 * * 1-5 /path/to/portfolio-cron.sh auto-pipeline
+#   30 13 * * 1-5 /path/to/portfolio-cron.sh notify
+#   30 14 * * 1-5 /path/to/portfolio-cron.sh auto-pipeline
 #
 # 手动运行:
 #   bash portfolio-cron.sh notify         # 发送通知
-#   bash portfolio-cron.sh auto-pipeline  # 自动生成快照
+#   bash portfolio-cron.sh auto-pipeline  # 自动生成快照（无回复时的兜底）
 #   bash portfolio-cron.sh pipeline       # 强制运行管道
 
 set -euo pipefail
