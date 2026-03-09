@@ -1,5 +1,5 @@
 """
-投资组合跟踪器 API — 读取 portfolio/ 目录的快照和持仓数据
+投资组合跟踪器 API — 读取 claw_try/portfolio/ 目录的快照和持仓数据
 """
 import json, os, glob
 from typing import Optional, List
@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", str(Path(__file__).parent.parent.parent.parent / "engine" / "portfolio"))
+PORTFOLIO_DIR = "/inspire/hdd/global_user/shengyang-253107100022/claw_try/portfolio"
 
 
 def _read_json(path: str):
@@ -107,6 +107,24 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
                         row[h] = v
                 history.append(row)
 
+    # Augment with market_daily_change from snapshot files (excludes capital injections)
+    snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
+    snap_extra = {}
+    for f in glob.glob(os.path.join(snap_dir, "*.json")):
+        s = _read_json(f)
+        if s and "summary" in s:
+            sm = s["summary"]
+            snap_extra[s.get("date", "")] = {
+                "market_daily_change": sm.get("market_daily_change", sm.get("daily_change", 0)),
+                "market_daily_change_pct": sm.get("market_daily_change_pct", sm.get("daily_change_pct", 0)),
+                "capital_change": sm.get("capital_change", 0),
+            }
+    for row in history:
+        extra = snap_extra.get(row["date"], {})
+        row["market_daily_change"] = extra.get("market_daily_change", row.get("daily_change", 0))
+        row["market_daily_change_pct"] = extra.get("market_daily_change_pct", row.get("daily_change_pct", 0))
+        row["capital_change"] = extra.get("capital_change", 0)
+
     return {"history": history[-limit:], "count": len(history)}
 
 
@@ -164,7 +182,12 @@ async def get_summary():
         "total_return_pct": s.get("total_return_pct", 0),
         "daily_change": s.get("daily_change", 0),
         "daily_change_pct": s.get("daily_change_pct", 0),
+        "market_daily_change": s.get("market_daily_change", s.get("daily_change", 0)),
+        "market_daily_change_pct": s.get("market_daily_change_pct", s.get("daily_change_pct", 0)),
+        "capital_change": s.get("capital_change", 0),
         "max_drawdown_pct": s.get("max_drawdown_pct", 0),
+        "month_change": s.get("month_change", 0),
+        "month_market_change": s.get("month_market_change", s.get("month_change", 0)),
         "month_return_pct": s.get("month_return_pct", 0),
         "groups": groups_summary,
     }

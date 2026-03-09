@@ -37,13 +37,17 @@ export interface TrackerSnapshot {
     total_cost: number
     total_profit: number
     total_return_pct: number
+    prev_date?: string | null
     prev_total_value: number
     daily_change: number
     daily_change_pct: number
-    max_value: number
+    market_daily_change?: number
+    market_daily_change_pct?: number
+    capital_change?: number
     max_drawdown_pct: number
     month_start_value: number
     month_change: number
+    month_market_change?: number
     month_return_pct: number
   }
 }
@@ -56,7 +60,12 @@ export interface TrackerSummary {
   total_return_pct: number
   daily_change: number
   daily_change_pct: number
+  market_daily_change?: number
+  market_daily_change_pct?: number
+  capital_change?: number
   max_drawdown_pct: number
+  month_change?: number
+  month_market_change?: number
   month_return_pct: number
   groups: Record<string, {
     total_value: number
@@ -75,6 +84,9 @@ export interface HistoryRow {
   return_pct: number
   daily_change: number
   daily_change_pct: number
+  market_daily_change?: number
+  market_daily_change_pct?: number
+  capital_change?: number
   max_drawdown_pct: number
 }
 

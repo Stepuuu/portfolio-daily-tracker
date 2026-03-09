@@ -125,17 +125,21 @@ def parse_and_apply_changes(holdings, text):
     changes = []
     text = text.strip()
     
-    # Check for no-change keywords
-    no_change_patterns = ["未变化", "不变", "没变", "no change", "unchanged", "一样"]
-    if any(p in text.lower() for p in no_change_patterns):
-        return [{"action": "no_change", "description": "持仓未变化"}]
-    
     # Split text by common delimiters
     parts = re.split(r'[;；\n,，、]', text)
+    
+    # Per-part no-change keywords (e.g. "其他不变" should be silently skipped)
+    no_change_patterns = ["未变化", "不变", "没变", "no change", "unchanged", "一样"]
     
     for part in parts:
         part = part.strip()
         if not part:
+            continue
+        
+        # Skip parts that are purely no-change declarations
+        if any(p in part.lower() for p in no_change_patterns) and not any(
+            kw in part for kw in ["现金", "基金", "成本", "持仓", "股"]
+        ):
             continue
         
         change = _parse_single_change(holdings, part)
@@ -175,7 +179,9 @@ def _parse_number(text):
     if "万" in text:
         num_str = text.replace("万", "").strip()
         try:
-            return float(num_str) * 10000
+            val = float(num_str) * 10000
+            # Round to nearest integer to avoid float precision issues (e.g. -44.41万 → -444100)
+            return round(val)
         except ValueError:
             return None
     try:
@@ -206,7 +212,18 @@ def _parse_single_change(holdings, text):
         if amount is not None and group:
             return {"action": "set_fund", "group": group, "value": amount, "description": f"{group}基金→{amount}"}
     
-    # Pattern: cost_basis — "进攻成本585000" / "成本调整为58.5万"
+    # Pattern: cost_basis delta — "成本增加4万" / "进攻账户成本减少2万"
+    cost_delta_match = re.search(r'(?:(.+?)(?:账户|组))?.*?成本(增加|减少|\+|\-)\s*([\d.万]+)', text)
+    if cost_delta_match:
+        group_hint = cost_delta_match.group(1) or ""
+        group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
+        sign = 1 if cost_delta_match.group(2) in ("增加", "+") else -1
+        delta = _parse_number(cost_delta_match.group(3))
+        if delta is not None and group:
+            return {"action": "delta_cost_basis", "group": group, "value": sign * delta,
+                    "description": f"{group}成本{'增加' if sign > 0 else '减少'}{delta}"}
+    
+    # Pattern: cost_basis set — "进攻成本585000" / "成本调整为58.5万"
     cost_match = re.search(r'(?:(.+?)(?:账户|组))?.*?成本.*?(?:变为|调整为|改为|=|:)?[：:]?\s*([-\d.万]+)', text)
     if cost_match:
         group_hint = cost_match.group(1) or ""
@@ -321,6 +338,10 @@ def _apply_single_change(holdings, change):
     elif action == "set_cost_basis":
         holdings["groups"][change["group"]]["cost_basis"] = change["value"]
     
+    elif action == "delta_cost_basis":
+        holdings["groups"][change["group"]]["cost_basis"] = (
+            holdings["groups"][change["group"]].get("cost_basis", 0) + change["value"]
+        )
     elif action == "set_quantity":
         pos = holdings["groups"][change["group"]]["positions"][change["position_index"]]
         pos["quantity"] = change["value"]
