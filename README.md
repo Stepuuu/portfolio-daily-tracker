@@ -54,6 +54,34 @@ See full documentation: [English](README_EN.md) · [中文](README_CN.md)
 
 ---
 
+### Contributing / 贡献
+
+We welcome issues, feature requests, and pull requests!
+If you find a bug, have an idea, or want to improve the code, please open an [issue](https://github.com/Stepuuu/portfolio-daily-tracker/issues) or submit a [pull request](https://github.com/Stepuuu/portfolio-daily-tracker/pulls).
+
+欢迎提交 Issue、功能建议和 Pull Request！
+如果你发现了 Bug、有改进想法或希望贡献代码，请在 [Issues](https://github.com/Stepuuu/portfolio-daily-tracker/issues) 中反馈，或直接提交 [PR](https://github.com/Stepuuu/portfolio-daily-tracker/pulls)。
+
+---
+
+### Citation / 引用
+
+If this project helps your research or workflow, please cite it:
+
+如果本项目对你的研究或工作有帮助，欢迎引用：
+
+```bibtex
+@misc{portfolio-daily-tracker,
+  author       = {Stepuuu},
+  title        = {Portfolio Daily Tracker — Self-hosted Investment Portfolio Tracking \& AI Trading Assistant},
+  year         = {2026},
+  publisher    = {GitHub},
+  howpublished = {\url{https://github.com/Stepuuu/portfolio-daily-tracker}},
+}
+```
+
+---
+
 <div align="center">
   <b>📊 Manage your investments with code · 用代码管理你的投资</b><br>
   <b>Powered by OpenClaw 🦞</b><br>
