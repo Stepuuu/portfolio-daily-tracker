@@ -233,45 +233,53 @@ def _parse_single_change(holdings, text):
             return {"action": "set_cost_basis", "group": group, "value": amount, "description": f"{group}成本→{amount}"}
     
     # Pattern: sell/reduce — "卖了500股药明康德" / "药明康德减500" / "卖出药明康德500股"
-    sell_match = re.search(r'(?:卖[了出]?|减[少持]?|清仓)\s*(\d+)\s*股?\s*(.+?)$', text)
-    if not sell_match:
-        sell_match = re.search(r'(.+?)\s*(?:卖[了出]?|减[少持]?)\s*(\d+)\s*股?', text)
-        if sell_match:
-            # Swap groups — name first, then quantity
-            name, qty = sell_match.group(1), sell_match.group(2)
-            sell_match = type('Match', (), {'group': lambda self, n: [None, qty, name][n]})()
-    
-    if sell_match:
-        qty = int(sell_match.group(1))
-        name = sell_match.group(2).strip()
-        gname, idx, pos = _find_group_and_position(holdings, name)
+    # Try both patterns: "verb qty name" and "name verb qty"
+    _sell_result = None
+    for sell_match, swapped in [
+        (re.search(r'(?:卖[了出]?|减[少持]?|清仓)\s*(\d+)\s*股?\s*(.+?)$', text), False),
+        (re.search(r'(.+?)\s*(?:卖[了出]?|减[少持]?)\s*(\d+)\s*股?', text), True),
+    ]:
+        if not sell_match:
+            continue
+        if swapped:
+            _qty, _name = int(sell_match.group(2)), sell_match.group(1).strip()
+        else:
+            _qty, _name = int(sell_match.group(1)), sell_match.group(2).strip()
+        gname, idx, pos = _find_group_and_position(holdings, _name)
         if pos:
-            new_qty = max(0, pos["quantity"] - qty)
-            return {
+            new_qty = max(0, pos["quantity"] - _qty)
+            _sell_result = {
                 "action": "set_quantity" if new_qty > 0 else "remove_position",
                 "group": gname, "position_index": idx, "name": pos["name"],
-                "value": new_qty, "description": f"{pos['name']}减{qty}股→{new_qty}股"
+                "value": new_qty, "description": f"{pos['name']}减{_qty}股→{new_qty}股"
             }
+            break
+    if _sell_result:
+        return _sell_result
     
-    # Pattern: buy/add — "买了1000股药明康德" / "药明加1000"  
-    buy_match = re.search(r'(?:买[了入]?|加[仓]?)\s*(\d+)\s*股?\s*(.+?)$', text)
-    if not buy_match:
-        buy_match = re.search(r'(.+?)\s*(?:买[了入]?|加[仓]?)\s*(\d+)\s*股?', text)
-        if buy_match:
-            name, qty = buy_match.group(1), buy_match.group(2)
-            buy_match = type('Match', (), {'group': lambda self, n: [None, qty, name][n]})()
-    
-    if buy_match:
-        qty = int(buy_match.group(1))
-        name = buy_match.group(2).strip()
-        gname, idx, pos = _find_group_and_position(holdings, name)
+    # Pattern: buy/add — "买了1000股药明康德" / "药明加1000"
+    _buy_result = None
+    for buy_match, swapped in [
+        (re.search(r'(?:买[了入]?|加[仓]?)\s*(\d+)\s*股?\s*(.+?)$', text), False),
+        (re.search(r'(.+?)\s*(?:买[了入]?|加[仓]?)\s*(\d+)\s*股?', text), True),
+    ]:
+        if not buy_match:
+            continue
+        if swapped:
+            _qty, _name = int(buy_match.group(2)), buy_match.group(1).strip()
+        else:
+            _qty, _name = int(buy_match.group(1)), buy_match.group(2).strip()
+        gname, idx, pos = _find_group_and_position(holdings, _name)
         if pos:
-            new_qty = pos["quantity"] + qty
-            return {
+            new_qty = pos["quantity"] + _qty
+            _buy_result = {
                 "action": "set_quantity", "group": gname, "position_index": idx,
                 "name": pos["name"], "value": new_qty,
-                "description": f"{pos['name']}加{qty}股→{new_qty}股"
+                "description": f"{pos['name']}加{_qty}股→{new_qty}股"
             }
+            break
+    if _buy_result:
+        return _buy_result
     
     # Pattern: clear/remove — "清仓药明康德"
     clear_match = re.search(r'清仓\s*(.+)', text)
@@ -342,6 +350,7 @@ def _apply_single_change(holdings, change):
         holdings["groups"][change["group"]]["cost_basis"] = (
             holdings["groups"][change["group"]].get("cost_basis", 0) + change["value"]
         )
+    
     elif action == "set_quantity":
         pos = holdings["groups"][change["group"]]["positions"][change["position_index"]]
         pos["quantity"] = change["value"]
@@ -406,13 +415,13 @@ def _send_openclaw_message(chat_id, message):
     """Send a message via OpenClaw CLI."""
     try:
         cmd = (
-            f'source {NVM_SH} && nvm use {os.environ.get("NODE_VERSION", "node")} > /dev/null 2>&1 && '
+            f'source {NVM_SH} && nvm use v22.22.0 > /dev/null 2>&1 && '
             f'openclaw message send --channel feishu --target "{chat_id}" --message "{_escape_shell(message)}"'
         )
         result = subprocess.run(
             ["bash", "-c", cmd],
             capture_output=True, text=True, timeout=30,
-            env={**os.environ, "HOME": os.environ.get("HOME", os.path.expanduser("~"))}
+            env={**os.environ, "HOME": os.environ.get("OPENCLAW_HOME", os.path.expanduser("~"))}
         )
         if result.returncode == 0:
             print(f"  ✅ 飞书消息已发送")
@@ -433,11 +442,10 @@ def _escape_shell(text):
 def run_snapshot(date_str):
     """Run the snapshot engine."""
     script = BASE_DIR / "portfolio_snapshot.py"
-    import shutil as _shutil
-    conda = os.environ.get("CONDA_EXE") or _shutil.which("conda") or "conda"
+    conda = os.environ.get("CONDA_EXE", "conda")
     
     result = subprocess.run(
-        [conda, "run", "-n", os.environ.get("CONDA_ENV", "base"), "python3", str(script), "--date", date_str],
+        [conda, "run", "-n", "quant", "python3", str(script), "--date", date_str],
         capture_output=True, text=True, timeout=120,
         cwd=str(BASE_DIR)
     )
@@ -458,14 +466,13 @@ def run_snapshot(date_str):
 def run_report(date_str):
     """Generate markdown report."""
     script = BASE_DIR / "portfolio_report.py"
-    import shutil as _shutil
-    conda = os.environ.get("CONDA_EXE") or _shutil.which("conda") or "conda"
+    conda = os.environ.get("CONDA_EXE", "conda")
     
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
     
     result = subprocess.run(
-        [conda, "run", "-n", os.environ.get("CONDA_ENV", "base"), "python3", str(script), "--date", date_str, "-o", str(report_file)],
+        [conda, "run", "-n", "quant", "python3", str(script), "--date", date_str, "-o", str(report_file)],
         capture_output=True, text=True, timeout=30,
         cwd=str(BASE_DIR)
     )

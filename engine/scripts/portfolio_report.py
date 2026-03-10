@@ -85,7 +85,8 @@ def generate_report(snapshot, history=None):
     lines.append(f"| 累计盈亏 | {format_money(s['total_profit'])} ({s['total_return_pct']:+.2f}%) |")
     lines.append(f"| 日变动 | {format_money(s['daily_change'])} ({s['daily_change_pct']:+.2f}%) |")
     lines.append(f"| 本月收益 | {s['month_return_pct']:+.2f}% |")
-    lines.append(f"| 历史最高 | {format_money(s['max_value'])} |")
+    if 'max_value' in s:
+        lines.append(f"| 历史最高 | {format_money(s['max_value'])} |")
     lines.append(f"| 最大回撤 | {s['max_drawdown_pct']:.2f}% |")
     lines.append(f"")
 
