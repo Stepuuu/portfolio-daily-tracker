@@ -2,9 +2,35 @@
 name: portfolio-daily-tracker
 description: Track and report multi-group stock portfolios with daily snapshots, live Yahoo Finance prices, P&L analytics, and push notifications (Feishu/Telegram). Supports A-shares, HK, US markets. Use when asked about holdings, buy/sell/rebalance positions, generate daily portfolio reports, check drawdown or returns, update fund/cash balances, or run the full snapshot-report-push pipeline.
 version: 1.2.0
+setup: scripts/setup.sh
+env:
+  OPENAI_API_KEY:
+    description: OpenAI API key for AI chat features
+    required: false
+  FEISHU_WEBHOOK:
+    description: Feishu/Lark webhook URL for push notifications
+    required: false
+  TELEGRAM_BOT_TOKEN:
+    description: Telegram bot token for push notifications
+    required: false
+  PORTFOLIO_DIR:
+    description: Override default portfolio data directory path
+    required: false
+requires:
+  - python3 >= 3.9
+  - pip packages: yfinance, pandas, requests, fastapi, uvicorn
+  - Engine scripts installed via setup.sh (clones repo with portfolio_manager.py, portfolio_snapshot.py, portfolio_report.py)
 ---
 
 # Portfolio Daily Tracker Skill
+
+## Prerequisites / 前置条件
+
+This skill requires the engine scripts from the main repository. Run setup first:
+```bash
+bash scripts/setup.sh [target_dir]
+```
+This clones the repo, creates data directories, copies config templates, and installs Python dependencies. The Python engine scripts (`portfolio_manager.py`, `portfolio_snapshot.py`, `portfolio_report.py`, `portfolio_daily_update.py`) are located in `engine/scripts/` after setup.
 
 ## 触发条件
 
