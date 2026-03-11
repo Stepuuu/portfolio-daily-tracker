@@ -9,7 +9,7 @@
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
 [![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
-[🇬🇧 English](README_EN.md)
+[🇬🇧 English](README_EN.md) &nbsp;·&nbsp; [📖 完整使用指南 (CN)](docs/FULL_GUIDE_CN.md)
 
 </div>
 
