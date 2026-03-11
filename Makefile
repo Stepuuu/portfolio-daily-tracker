@@ -31,8 +31,8 @@ help:
 setup:
 	@echo "Setting up Portfolio Daily Tracker..."
 	@# Python deps
-	pip install -r dashboard/requirements.txt
-	pip install requests
+	python3 -m pip install -r dashboard/requirements.txt
+	python3 -m pip install requests
 	@# Frontend deps
 	cd dashboard/frontend && npm install
 	@# Copy config templates (don't overwrite existing)

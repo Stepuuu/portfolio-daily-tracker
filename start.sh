@@ -58,7 +58,7 @@ MODE=${1:-all}
 start_backend() {
     echo -e "${CYAN}Starting backend (FastAPI on :8000)...${NC}"
     cd "$SCRIPT_DIR/dashboard"
-    pip install -q -r requirements.txt 2>/dev/null || true
+    python3 -m pip install -q -r requirements.txt 2>/dev/null || true
     python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload &
     BACKEND_PID=$!
     echo "  PID: $BACKEND_PID"
@@ -93,7 +93,7 @@ start_frontend() {
 run_engine() {
     echo -e "${CYAN}Running portfolio snapshot engine...${NC}"
     cd "$SCRIPT_DIR/engine"
-    pip install -q requests 2>/dev/null || true
+    python3 -m pip install -q requests 2>/dev/null || true
     python3 scripts/portfolio_snapshot.py
     log "Snapshot complete. Check engine/portfolio/snapshots/"
     cd "$SCRIPT_DIR"
