@@ -369,13 +369,14 @@ This project ships a **complete multi-page AI trading assistant** — far beyond
 | Cash update | `Aggressive cash now -50k` | Update group cash |
 | Fund update | `Fund changed to 20k` | Update fund amount |
 | Sell | `Sold 500 shares Moutai` | Reduce position |
-| Buy | `Bought 200 shares Ping An` | Increase position |
+| Buy | `Bought 200 shares Ping An` | Increase existing position |
+| Buy new stock | `Bought 500 shares Wanrun, code is SHA:688275` | Auto-add a new position |
 | Set qty | `Tencent 800 shares` | Set quantity directly |
-| Clear | `Cleared Moutai position` | Remove position |
+| Clear | `Cleared Moutai position` / `Wanrun is fully sold` | Remove position |
 | New position | `New: Apple ticker:NASDAQ:AAPL qty:50 cost:175.5` | Add new position |
 | Cost adjust | `Aggressive cost basis 620000` | Adjust group cost basis |
 
-Multiple changes can be comma/semicolon separated. Supports `万` (10k) suffix in Chinese.
+Multiple changes can be comma/semicolon separated. Supports the Chinese `万` (10k) suffix, and for cash/fund fields it also accepts shorthand decimals like `-44.273` or `15.635` as `-44.273万` / `15.635万`. If a newly added position omits `cost_price`, the parser will try to infer it from same-message cash/fund deltas.
 
 ### 📋 V1: Google Sheets Version
 
