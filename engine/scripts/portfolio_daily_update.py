@@ -190,6 +190,60 @@ def _parse_number(text):
         return None
 
 
+def _parse_money_number(text):
+    """Parse money amounts with a portfolio-oriented shorthand heuristic.
+
+    Examples users commonly send:
+    -44.273  -> -44.273万
+     15.635  -> 15.635万
+
+    Rules:
+    - explicit "万" always wins
+    - plain decimals with abs(value) < 1000 are treated as 万
+    - otherwise treat as raw yuan
+    """
+    cleaned = text.strip().replace(",", "").replace("，", "")
+    if "万" in cleaned:
+        return _parse_number(cleaned)
+    try:
+        val = float(cleaned)
+    except ValueError:
+        return None
+    if ("." in cleaned or "-" in cleaned) and abs(val) < 1000:
+        return round(val * 10000)
+    return val
+
+
+def _parse_share_cost(text):
+    """Parse per-share cost price as a raw numeric value."""
+    cleaned = text.strip().replace(",", "").replace("，", "").replace("万", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _extract_ticker(text):
+    """Extract ticker like SHA:688275 or NASDAQ:AAPL from free-form text."""
+    patterns = [
+        r'(?:ticker|代码(?:是|为)?)[：:\s]*([A-Z]{2,10}:[A-Za-z0-9]+)',
+        r'\b([A-Z]{2,10}:[A-Za-z0-9]+)\b',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    return ""
+
+
+def _strip_ticker_phrase(text):
+    """Remove ticker phrases from a natural-language stock name hint."""
+    text = re.sub(r'(?:代码(?:是|为)?|ticker)[：:\s]*[A-Z]{2,10}:[A-Za-z0-9]+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b[A-Z]{2,10}:[A-Za-z0-9]+\b', '', text)
+    text = re.sub(r'\s+', ' ', text).strip(" ：:，,。.;；")
+    return text
+
+
 def _parse_single_change(holdings, text):
     """Parse a single change directive."""
     text_lower = text.lower().strip()
@@ -199,7 +253,7 @@ def _parse_single_change(holdings, text):
     if cash_match:
         group_hint = cash_match.group(1) or ""
         group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        amount = _parse_number(cash_match.group(2))
+        amount = _parse_money_number(cash_match.group(2))
         if amount is not None and group:
             return {"action": "set_cash", "group": group, "value": amount, "description": f"{group}现金→{amount}"}
     
@@ -208,7 +262,7 @@ def _parse_single_change(holdings, text):
     if fund_match:
         group_hint = fund_match.group(1) or ""
         group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        amount = _parse_number(fund_match.group(2))
+        amount = _parse_money_number(fund_match.group(2))
         if amount is not None and group:
             return {"action": "set_fund", "group": group, "value": amount, "description": f"{group}基金→{amount}"}
     
@@ -224,11 +278,13 @@ def _parse_single_change(holdings, text):
                     "description": f"{group}成本{'增加' if sign > 0 else '减少'}{delta}"}
     
     # Pattern: cost_basis set — "进攻成本585000" / "成本调整为58.5万"
+    # Skip this generic rule when the text is clearly describing a new position,
+    # e.g. "买了500股万润新能代码是SHA:688275 成本110.2".
     cost_match = re.search(r'(?:(.+?)(?:账户|组))?.*?成本.*?(?:变为|调整为|改为|=|:)?[：:]?\s*([-\d.万]+)', text)
-    if cost_match:
+    if cost_match and not (("新增" in text or "买" in text) and _extract_ticker(text)):
         group_hint = cost_match.group(1) or ""
         group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        amount = _parse_number(cost_match.group(2))
+        amount = _parse_money_number(cost_match.group(2))
         if amount is not None and group:
             return {"action": "set_cost_basis", "group": group, "value": amount, "description": f"{group}成本→{amount}"}
     
@@ -269,13 +325,31 @@ def _parse_single_change(holdings, text):
             _qty, _name = int(buy_match.group(2)), buy_match.group(1).strip()
         else:
             _qty, _name = int(buy_match.group(1)), buy_match.group(2).strip()
-        gname, idx, pos = _find_group_and_position(holdings, _name)
+        ticker = _extract_ticker(text)
+        clean_name = _strip_ticker_phrase(_name)
+        gname, idx, pos = _find_group_and_position(holdings, clean_name)
         if pos:
             new_qty = pos["quantity"] + _qty
             _buy_result = {
                 "action": "set_quantity", "group": gname, "position_index": idx,
                 "name": pos["name"], "value": new_qty,
                 "description": f"{pos['name']}加{_qty}股→{new_qty}股"
+            }
+            break
+        group = _find_group_by_hint(holdings, text)
+        if ticker and clean_name and group:
+            cost_m = re.search(r'(?:成本|cost)[：:]\s*([-\d.万]+)', text, flags=re.IGNORECASE)
+            cost = _parse_share_cost(cost_m.group(1)) if cost_m else 0
+            _buy_result = {
+                "action": "add_position",
+                "group": group,
+                "position": {
+                    "name": clean_name,
+                    "ticker": ticker,
+                    "quantity": _qty,
+                    "cost_price": float(cost or 0),
+                },
+                "description": f"新增{clean_name} {ticker} {_qty}股@{float(cost or 0)}"
             }
             break
     if _buy_result:
@@ -285,6 +359,15 @@ def _parse_single_change(holdings, text):
     clear_match = re.search(r'清仓\s*(.+)', text)
     if clear_match:
         name = clear_match.group(1).strip()
+        gname, idx, pos = _find_group_and_position(holdings, name)
+        if pos:
+            return {
+                "action": "remove_position", "group": gname, "position_index": idx,
+                "name": pos["name"], "value": 0, "description": f"清仓{pos['name']}"
+            }
+    clear_match_2 = re.search(r'(.+?)\s*(?:清了|清仓了|卖完了|全卖了|清空了)$', text)
+    if clear_match_2:
+        name = clear_match_2.group(1).strip()
         gname, idx, pos = _find_group_and_position(holdings, name)
         if pos:
             return {
@@ -309,20 +392,20 @@ def _parse_single_change(holdings, text):
     new_match = re.search(r'新增\s+(\S+)', text)
     if new_match:
         name = new_match.group(1)
-        ticker_m = re.search(r'ticker[：:]\s*(\S+)', text)
+        ticker_m = re.search(r'(?:ticker|代码(?:是|为)?)[：:]\s*(\S+)', text, flags=re.IGNORECASE)
         qty_m = re.search(r'(?:数量|qty)[：:]\s*(\d+)', text)
-        cost_m = re.search(r'(?:成本|cost)[：:]\s*([\d.]+)', text)
+        cost_m = re.search(r'(?:成本|cost)[：:]\s*([-\d.万]+)', text, flags=re.IGNORECASE)
         group_m = re.search(r'(?:组|group)[：:]\s*(\S+)', text)
         
-        ticker = ticker_m.group(1) if ticker_m else ""
+        ticker = ticker_m.group(1).upper() if ticker_m else ""
         qty = int(qty_m.group(1)) if qty_m else 0
-        cost = float(cost_m.group(1)) if cost_m else 0
+        cost = _parse_share_cost(cost_m.group(1)) if cost_m else 0
         group = group_m.group(1) if group_m else _find_group_by_hint(holdings, text)
         
         if ticker and qty > 0 and group:
             return {
                 "action": "add_position", "group": group,
-                "position": {"name": name, "ticker": ticker, "quantity": qty, "cost_price": cost},
+                "position": {"name": name, "ticker": ticker, "quantity": qty, "cost_price": float(cost)},
                 "description": f"新增{name} {ticker} {qty}股@{cost}"
             }
     
@@ -360,6 +443,45 @@ def _apply_single_change(holdings, change):
     
     elif action == "add_position":
         holdings["groups"][change["group"]]["positions"].append(change["position"])
+
+
+def _infer_missing_cost_prices(holdings_before, changes):
+    """Infer per-share cost for newly added positions when omitted by the user.
+
+    Heuristic:
+    - only apply to add_position changes with cost_price <= 0
+    - if the same update sets group cash, use |cash_delta| / quantity
+    - fallback to |fund_delta| / quantity when cash is unchanged but fund changes
+    """
+    for change in changes:
+        if change.get("action") != "add_position":
+            continue
+        pos = change.get("position", {})
+        qty = pos.get("quantity", 0)
+        cost_price = pos.get("cost_price", 0) or 0
+        group = change.get("group")
+        if qty <= 0 or cost_price > 0 or not group:
+            continue
+
+        before_group = holdings_before.get("groups", {}).get(group, {})
+        old_cash = before_group.get("cash")
+        old_fund = before_group.get("fund")
+
+        new_cash = next((c["value"] for c in changes if c.get("action") == "set_cash" and c.get("group") == group), None)
+        new_fund = next((c["value"] for c in changes if c.get("action") == "set_fund" and c.get("group") == group), None)
+
+        inferred = None
+        if old_cash is not None and new_cash is not None and old_cash != new_cash:
+            inferred = abs(new_cash - old_cash) / qty
+        elif old_fund is not None and new_fund is not None and old_fund != new_fund:
+            inferred = abs(new_fund - old_fund) / qty
+
+        if inferred and inferred > 0:
+            pos["cost_price"] = round(inferred, 4)
+            change["description"] = (
+                f"新增{pos['name']} {pos['ticker']} {qty}股@{pos['cost_price']} "
+                f"(由账户资金变动推断)"
+            )
 
 
 def send_feishu_notification(date_str, holdings, config):
@@ -550,10 +672,12 @@ def action_update(date_str, text):
     if not holdings:
         print("  ❌ 无法加载今日持仓", file=sys.stderr)
         return False
+    holdings_before = copy.deepcopy(holdings)
     
     # Parse and apply changes
     print(f"\n  解析变更: {text[:100]}...")
     changes = parse_and_apply_changes(holdings, text)
+    _infer_missing_cost_prices(holdings_before, changes)
     
     for c in changes:
         icon = "✅" if c["action"] != "unknown" else "❓"
