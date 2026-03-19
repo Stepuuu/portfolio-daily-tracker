@@ -1,9 +1,11 @@
 import axios from 'axios'
 
 const API_BASE = '/api'
+const REQUEST_TIMEOUT_MS = 10000
 
 const api = axios.create({
   baseURL: API_BASE,
+  timeout: REQUEST_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -26,7 +28,11 @@ api.interceptors.response.use(
     return response
   },
   (error) => {
-    console.error('API Error:', error.response?.data || error.message)
+    const detail =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message
+    console.error('API Error:', detail)
     return Promise.reject(error)
   }
 )

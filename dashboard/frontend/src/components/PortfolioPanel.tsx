@@ -10,8 +10,10 @@ export default function PortfolioPanel() {
     refetch,
     isRefetching,
   } = useQuery({
-    queryKey: ['portfolio'],
-    queryFn: portfolioService.getPortfolio,
+    queryKey: ['portfolio', 'live'],
+    queryFn: portfolioService.getLivePortfolio,
+    refetchInterval: 60000,
+    refetchOnWindowFocus: false,
   })
 
   const formatMoney = (value: number) => {

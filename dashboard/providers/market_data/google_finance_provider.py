@@ -5,7 +5,7 @@ Google Finance 行情数据 Provider
 from typing import List, Optional
 from datetime import datetime
 import asyncio
-import re
+from concurrent.futures import ThreadPoolExecutor
 
 from core.data.base import MarketDataProvider
 from core.models import Stock, Quote, Market
@@ -26,6 +26,7 @@ class GoogleFinanceProvider(MarketDataProvider):
 
     def __init__(self):
         self._yq = None
+        self._executor = ThreadPoolExecutor(max_workers=4)
 
     def _ensure_yahooquery(self):
         """确保 yahooquery 已导入"""
@@ -106,51 +107,35 @@ class GoogleFinanceProvider(MarketDataProvider):
         else:
             return yahoo_symbol, Market.US_STOCK
 
-    async def get_quote(self, symbol: str, market: Market) -> Optional[Quote]:
-        """获取单个股票实时行情"""
+    def _build_quote(self, symbol: str, market: Market, data: dict) -> Optional[Quote]:
+        if not isinstance(data, dict) or 'error' in str(data).lower():
+            return None
+
+        name = data.get('shortName') or data.get('longName') or symbol
+        stock = Stock(symbol=symbol, name=name, market=market)
+
+        return Quote(
+            stock=stock,
+            price=float(data.get('regularMarketPrice', 0) or 0),
+            open=float(data.get('regularMarketOpen', 0) or 0),
+            high=float(data.get('regularMarketDayHigh', 0) or 0),
+            low=float(data.get('regularMarketDayLow', 0) or 0),
+            prev_close=float(data.get('regularMarketPreviousClose', 0) or 0),
+            volume=int(data.get('regularMarketVolume', 0) or 0),
+            amount=0.0,
+            timestamp=datetime.now()
+        )
+
+    def _get_quote_sync(self, symbol: str, market: Market) -> Optional[Quote]:
         self._ensure_yahooquery()
 
         try:
-            # 转换为 Yahoo Finance 格式
             yahoo_symbol = self._convert_to_yahoo_symbol(symbol, market)
-
-            # 获取行情数据
             ticker = self._yq(yahoo_symbol)
-
-            # 获取价格信息
             price_data = ticker.price
 
             if isinstance(price_data, dict) and yahoo_symbol in price_data:
-                data = price_data[yahoo_symbol]
-
-                # 检查是否有错误
-                if 'error' in str(data).lower():
-                    return None
-
-                # 获取股票名称
-                name = data.get('shortName') or data.get('longName') or symbol
-
-                # 构建 Stock 对象
-                stock = Stock(
-                    symbol=symbol,
-                    name=name,
-                    market=market
-                )
-
-                # 构建 Quote 对象
-                quote = Quote(
-                    stock=stock,
-                    price=float(data.get('regularMarketPrice', 0)),
-                    open=float(data.get('regularMarketOpen', 0)),
-                    high=float(data.get('regularMarketDayHigh', 0)),
-                    low=float(data.get('regularMarketDayLow', 0)),
-                    prev_close=float(data.get('regularMarketPreviousClose', 0)),
-                    volume=int(data.get('regularMarketVolume', 0)),
-                    amount=0.0,  # Yahoo Finance 不直接提供成交额
-                    timestamp=datetime.now()
-                )
-
-                return quote
+                return self._build_quote(symbol, market, price_data[yahoo_symbol])
 
             return None
 
@@ -158,15 +143,21 @@ class GoogleFinanceProvider(MarketDataProvider):
             print(f"获取 {symbol} 行情失败: {e}")
             return None
 
-    async def get_quotes(self, symbols: List[str], market: Market) -> List[Quote]:
-        """批量获取实时行情"""
+    async def get_quote(self, symbol: str, market: Market) -> Optional[Quote]:
+        """获取单个股票实时行情"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._get_quote_sync,
+            symbol,
+            market
+        )
+
+    def _get_quotes_sync(self, symbols: List[str], market: Market) -> List[Quote]:
         self._ensure_yahooquery()
 
         try:
-            # 转换所有股票代码
             yahoo_symbols = [self._convert_to_yahoo_symbol(s, market) for s in symbols]
-
-            # 批量获取
             ticker = self._yq(yahoo_symbols)
             price_data = ticker.price
 
@@ -174,40 +165,26 @@ class GoogleFinanceProvider(MarketDataProvider):
 
             if isinstance(price_data, dict):
                 for yahoo_symbol, data in price_data.items():
-                    if 'error' in str(data).lower():
-                        continue
-
-                    # 转换回标准格式
                     symbol, detected_market = self._convert_from_yahoo_symbol(yahoo_symbol)
-
-                    # 获取股票名称
-                    name = data.get('shortName') or data.get('longName') or symbol
-
-                    stock = Stock(
-                        symbol=symbol,
-                        name=name,
-                        market=detected_market
-                    )
-
-                    quote = Quote(
-                        stock=stock,
-                        price=float(data.get('regularMarketPrice', 0)),
-                        open=float(data.get('regularMarketOpen', 0)),
-                        high=float(data.get('regularMarketDayHigh', 0)),
-                        low=float(data.get('regularMarketDayLow', 0)),
-                        prev_close=float(data.get('regularMarketPreviousClose', 0)),
-                        volume=int(data.get('regularMarketVolume', 0)),
-                        amount=0.0,
-                        timestamp=datetime.now()
-                    )
-
-                    quotes.append(quote)
+                    quote = self._build_quote(symbol, detected_market, data)
+                    if quote:
+                        quotes.append(quote)
 
             return quotes
 
         except Exception as e:
             print(f"批量获取行情失败: {e}")
             return []
+
+    async def get_quotes(self, symbols: List[str], market: Market) -> List[Quote]:
+        """批量获取实时行情"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._get_quotes_sync,
+            symbols,
+            market
+        )
 
     async def search_stock(self, keyword: str) -> List[Stock]:
         """

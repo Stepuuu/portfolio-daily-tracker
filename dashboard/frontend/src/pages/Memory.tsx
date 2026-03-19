@@ -2,28 +2,21 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Brain, User, Target, BookOpen, AlertTriangle, Plus, Edit2, X, Save, Trash2, RefreshCw } from 'lucide-react'
 import { memoryService } from '@/services'
+import type { TradingPreferences, UserMemory, UserProfile } from '@/types'
+
+type EditableProfile = Partial<UserProfile>
 
 // 编辑用户档案对话框
 interface EditProfileDialogProps {
-  profile: {
-    experience_level?: string
-    risk_tolerance?: string
-    trading_style?: string
-    notes?: string
-  }
+  profile: EditableProfile
   onClose: () => void
-  onSave: (data: {
-    experience_level?: string
-    risk_tolerance?: string
-    trading_style?: string
-    notes?: string
-  }) => void
+  onSave: (data: EditableProfile) => void
 }
 
 function EditProfileDialog({ profile, onClose, onSave }: EditProfileDialogProps) {
-  const [experienceLevel, setExperienceLevel] = useState(profile.experience_level || '')
-  const [riskTolerance, setRiskTolerance] = useState(profile.risk_tolerance || '')
-  const [tradingStyle, setTradingStyle] = useState(profile.trading_style || '')
+  const [experienceLevel, setExperienceLevel] = useState<UserProfile['experience_level'] | ''>(profile.experience_level || '')
+  const [riskTolerance, setRiskTolerance] = useState<UserProfile['risk_tolerance'] | ''>(profile.risk_tolerance || '')
+  const [tradingStyle, setTradingStyle] = useState<UserProfile['trading_style'] | ''>(profile.trading_style || '')
   const [notes, setNotes] = useState(profile.notes || '')
 
   const handleSave = () => {
@@ -51,7 +44,7 @@ function EditProfileDialog({ profile, onClose, onSave }: EditProfileDialogProps)
             <label className="block text-sm text-slate-400 mb-2">交易经验</label>
             <select
               value={experienceLevel}
-              onChange={(e) => setExperienceLevel(e.target.value)}
+              onChange={(e) => setExperienceLevel((e.target.value || '') as UserProfile['experience_level'] | '')}
               className="w-full bg-slate-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="">请选择</option>
@@ -65,7 +58,7 @@ function EditProfileDialog({ profile, onClose, onSave }: EditProfileDialogProps)
             <label className="block text-sm text-slate-400 mb-2">风险偏好</label>
             <select
               value={riskTolerance}
-              onChange={(e) => setRiskTolerance(e.target.value)}
+              onChange={(e) => setRiskTolerance((e.target.value || '') as UserProfile['risk_tolerance'] | '')}
               className="w-full bg-slate-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="">请选择</option>
@@ -79,7 +72,7 @@ function EditProfileDialog({ profile, onClose, onSave }: EditProfileDialogProps)
             <label className="block text-sm text-slate-400 mb-2">交易风格</label>
             <select
               value={tradingStyle}
-              onChange={(e) => setTradingStyle(e.target.value)}
+              onChange={(e) => setTradingStyle((e.target.value || '') as UserProfile['trading_style'] | '')}
               className="w-full bg-slate-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="">请选择</option>
@@ -159,10 +152,24 @@ export default function Memory() {
   const queryClient = useQueryClient()
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const emptyProfile: UserProfile = {
+    name: '',
+    experience_level: 'beginner',
+    trading_style: 'swing',
+    risk_tolerance: 'moderate',
+    notes: '',
+  }
+  const emptyPreferences: TradingPreferences = {
+    preferred_sectors: [],
+    avoid_sectors: [],
+    max_single_position: 0,
+    preferred_holding_period: '',
+    emotional_triggers: [],
+  }
 
   const { data: memory, isLoading, error } = useQuery({
     queryKey: ['memory'],
-    queryFn: memoryService.getMemory,
+    queryFn: memoryService.getMemory as () => Promise<UserMemory>,
   })
 
   const [newLesson, setNewLesson] = useState('')
@@ -170,12 +177,7 @@ export default function Memory() {
   const [newSector, setNewSector] = useState('')
 
   const updateProfileMutation = useMutation({
-    mutationFn: (data: {
-      experience_level?: string
-      risk_tolerance?: string
-      trading_style?: string
-      notes?: string
-    }) => memoryService.updateProfile(data),
+    mutationFn: (data: EditableProfile) => memoryService.updateProfile(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['memory'] })
     }
@@ -277,8 +279,8 @@ export default function Memory() {
     )
   }
 
-  const profile = memory?.profile || {}
-  const preferences = memory?.preferences || {}
+  const profile: UserProfile = memory?.profile ?? emptyProfile
+  const preferences: TradingPreferences = memory?.preferences ?? emptyPreferences
 
   return (
     <div className="p-6 space-y-6">
@@ -349,7 +351,7 @@ export default function Memory() {
           偏好板块
         </h2>
         <div className="flex flex-wrap gap-2 mb-4">
-          {profile.preferred_sectors?.map((sector: string, index: number) => (
+          {preferences.preferred_sectors.map((sector: string, index: number) => (
             <span
               key={index}
               className="group px-3 py-1.5 bg-primary-600/20 text-primary-400 rounded-full text-sm flex items-center"
@@ -364,7 +366,7 @@ export default function Memory() {
               </button>
             </span>
           ))}
-          {(!profile.preferred_sectors || profile.preferred_sectors.length === 0) && (
+          {preferences.preferred_sectors.length === 0 && (
             <span className="text-slate-400">暂无偏好板块</span>
           )}
         </div>

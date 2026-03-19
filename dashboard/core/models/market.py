@@ -49,6 +49,8 @@ class Quote:
     volume: int              # 成交量
     amount: float            # 成交额
     timestamp: datetime      # 更新时间
+    turnover: Optional[float] = None
+    pe: Optional[float] = None
 
     @property
     def change(self) -> float:
@@ -77,6 +79,8 @@ class Quote:
             "change_pct": f"{self.change_pct:+.2f}%",
             "volume": self.volume,
             "amount": self.amount,
+            "turnover": self.turnover,
+            "pe": self.pe,
             "timestamp": self.timestamp.isoformat()
         }
 

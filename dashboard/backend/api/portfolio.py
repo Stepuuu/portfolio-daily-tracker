@@ -39,6 +39,14 @@ async def get_portfolio():
     return await service.get_portfolio()
 
 
+@router.get("/live")
+async def get_live_portfolio():
+    """刷新行情后获取持仓列表"""
+    service = get_service()
+    await service.refresh_portfolio()
+    return await service.get_portfolio()
+
+
 @router.post("/add")
 async def add_position(request: AddPositionRequest):
     """添加持仓"""

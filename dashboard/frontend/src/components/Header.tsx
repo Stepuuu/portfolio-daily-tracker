@@ -4,9 +4,10 @@ import { portfolioService } from '@/services'
 
 export default function Header() {
   const { data: portfolio, refetch, isRefetching } = useQuery({
-    queryKey: ['portfolio'],
-    queryFn: portfolioService.getPortfolio,
+    queryKey: ['portfolio', 'live'],
+    queryFn: portfolioService.getLivePortfolio,
     refetchInterval: 60000, // 每分钟自动刷新
+    refetchOnWindowFocus: false,
   })
 
   const formatMoney = (value: number) => {
@@ -14,11 +15,6 @@ export default function Header() {
       style: 'currency',
       currency: 'CNY',
     }).format(value)
-  }
-
-  const formatPercent = (value: number) => {
-    const sign = value >= 0 ? '+' : ''
-    return `${sign}${value.toFixed(2)}%`
   }
 
   return (

@@ -15,7 +15,7 @@ from core.llm import LLMConfig
 from core.models import AgentContext, Market
 from core.memory import MemoryManager, MemoryExtractor, LLMMemoryExtractor
 from providers.llm import create_llm_provider, LLMProviderType
-from providers.market_data import GoogleFinanceProvider, AKShareProvider, MultiSourceProvider
+from providers.market_data import EastmoneyDirectProvider, GoogleFinanceProvider, AKShareProvider, MultiSourceProvider
 from providers.portfolio.manual import ManualPortfolioProvider
 from agents.trader import TraderAgent
 
@@ -122,12 +122,14 @@ class AgentService:
 
     def _init_market_provider(self):
         """初始化市场数据 Provider"""
-        # 使用 MultiSource Provider
-        # 优先使用 Google Finance（Yahoo），失败则fallback到AKShare
+        # 优先走东方财富直连单票接口（A股更稳），
+        # 再回退到 Yahoo/AKShare。
+        eastmoney_provider = EastmoneyDirectProvider()
         google_provider = GoogleFinanceProvider()
         akshare_provider = AKShareProvider()
 
         self.market_provider = MultiSourceProvider([
+            eastmoney_provider,
             google_provider,
             akshare_provider
         ])
@@ -692,27 +694,48 @@ class AgentService:
 
     # ==================== 行情接口 ====================
 
+    def _normalize_market(self, market: str) -> Market:
+        market_aliases = {
+            "hk": "hk_stock",
+            "us": "us_stock",
+        }
+        return Market(market_aliases.get(market, market))
+
+    def _serialize_quote(self, quote) -> Dict[str, Any]:
+        return {
+            "symbol": quote.stock.symbol,
+            "name": quote.stock.name,
+            "price": quote.price,
+            "open": quote.open,
+            "high": quote.high,
+            "low": quote.low,
+            "prev_close": quote.prev_close,
+            "volume": quote.volume,
+            "amount": quote.amount,
+            "turnover": quote.turnover,
+            "pe": quote.pe,
+            "change": quote.price - quote.prev_close if quote.prev_close else 0,
+            "change_pct": (quote.price - quote.prev_close) / quote.prev_close * 100 if quote.prev_close else 0,
+            "timestamp": quote.timestamp.isoformat()
+        }
+
     async def get_quote(self, symbol: str, market: str = "a_share") -> Optional[Dict]:
         """获取股票行情"""
         print(f"[Service] 获取行情: symbol={symbol}, market={market}")
-        quote = await self.market_provider.get_quote(symbol, Market(market))
+        normalized_market = self._normalize_market(market)
+        quote = await self.market_provider.get_quote(symbol, normalized_market)
         if quote:
             print(f"[Service] 成功获取: {quote.stock.name} - {quote.price}")
-            return {
-                "symbol": quote.stock.symbol,
-                "name": quote.stock.name,
-                "price": quote.price,
-                "open": quote.open,
-                "high": quote.high,
-                "low": quote.low,
-                "prev_close": quote.prev_close,
-                "volume": quote.volume,
-                "change": quote.price - quote.prev_close if quote.prev_close else 0,
-                "change_pct": (quote.price - quote.prev_close) / quote.prev_close * 100 if quote.prev_close else 0
-            }
+            return self._serialize_quote(quote)
         else:
             print(f"[Service] 未找到: {symbol}")
         return None
+
+    async def get_quotes(self, symbols: List[str], market: str = "a_share") -> List[Dict[str, Any]]:
+        """批量获取股票行情"""
+        normalized_market = self._normalize_market(market)
+        quotes = await self.market_provider.get_quotes(symbols, normalized_market)
+        return [self._serialize_quote(quote) for quote in quotes]
 
     # ==================== 记忆接口 ====================
 

@@ -38,17 +38,40 @@ export default function Market() {
     return () => clearInterval(interval)
   }, [])
 
-  const { data: quote, isLoading, refetch, isRefetching } = useQuery({
+  const formatQueryError = (queryError: unknown) => {
+    const errorLike = queryError as {
+      response?: { data?: { detail?: string; message?: string }; status?: number }
+      message?: string
+    }
+
+    if (errorLike?.response?.data?.detail) {
+      return errorLike.response.data.detail
+    }
+    if (errorLike?.response?.data?.message) {
+      return errorLike.response.data.message
+    }
+    if (errorLike?.message) {
+      return errorLike.message
+    }
+    return '行情服务暂时不可用，请稍后重试'
+  }
+
+  const { data: quote, isLoading, isError, error, refetch, isRefetching, isFetching } = useQuery({
     queryKey: ['quote', selectedSymbol],
     queryFn: () => selectedSymbol ? marketService.getQuote(selectedSymbol) : null,
     enabled: !!selectedSymbol,
-    refetchInterval: tradingStatus ? 10000 : false, // 热股轮询
+    refetchInterval: selectedSymbol && tradingStatus ? 10000 : false,
+    staleTime: 5000,
+    retry: 1,
+    refetchOnWindowFocus: false,
   })
 
   const { data: portfolio } = useQuery({
     queryKey: ['portfolio'],
     queryFn: portfolioService.getPortfolio,
     refetchInterval: tradingStatus ? 30000 : false,
+    staleTime: 10000,
+    refetchOnWindowFocus: false,
   })
 
   const handleSearch = () => {
@@ -264,19 +287,31 @@ export default function Market() {
         <div className="bg-slate-800 rounded-2xl p-8 border border-slate-700 shadow-xl transition-all">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-semibold">行情详情</h3>
-            <button
-              onClick={() => refetch()}
-              disabled={isRefetching}
-              className="flex items-center px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isRefetching ? 'animate-spin' : ''}`} />
-              刷新
-            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">
+                {isFetching ? '行情更新中...' : quote?.timestamp ? `更新于 ${new Date(quote.timestamp).toLocaleTimeString('zh-CN')}` : '等待查询'}
+              </span>
+              <button
+                onClick={() => refetch()}
+                disabled={isRefetching}
+                className="flex items-center px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors disabled:opacity-60"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isRefetching ? 'animate-spin' : ''}`} />
+                刷新
+              </button>
+            </div>
           </div>
 
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="h-8 w-8 animate-spin text-primary-500" />
+            </div>
+          ) : isError ? (
+            <div className="py-12 text-center">
+              <AlertCircle className="h-8 w-8 mx-auto text-red-400 mb-3" />
+              <div className="text-red-300 font-medium">获取实时行情失败</div>
+              <div className="text-sm text-slate-400 mt-2">{formatQueryError(error)}</div>
+              <div className="text-xs text-slate-500 mt-2">常见原因：后端未启动、端口代理错误，或行情源响应超时</div>
             </div>
           ) : quote ? (
             <div className="space-y-6">
