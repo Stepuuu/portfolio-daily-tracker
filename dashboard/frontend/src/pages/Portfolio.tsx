@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useEffect, useRef } from 'react'
-import { TrendingUp, TrendingDown, RefreshCw, Plus, Edit2, Trash2, X, Save } from 'lucide-react'
+import { useState } from 'react'
+import { TrendingUp, TrendingDown, RefreshCw, Edit2, Trash2, X, Save } from 'lucide-react'
 import { portfolioService } from '@/services'
 import type { Position } from '@/types'
 
@@ -87,28 +87,18 @@ export default function Portfolio() {
   const queryClient = useQueryClient()
   const [editingPosition, setEditingPosition] = useState<Position | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
-  const hasRefreshedOnMount = useRef(false)
 
-  const { data: portfolio, isLoading } = useQuery({
-    queryKey: ['portfolio'],
-    queryFn: portfolioService.getPortfolio,
+  const {
+    data: portfolio,
+    isLoading,
+    refetch,
+    isRefetching,
+  } = useQuery({
+    queryKey: ['portfolio', 'live'],
+    queryFn: portfolioService.getLivePortfolio,
     refetchInterval: autoRefresh ? 60000 : false, // 每60秒自动刷新
+    refetchOnWindowFocus: false,
   })
-
-  const refreshMutation = useMutation({
-    mutationFn: portfolioService.refresh,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio'] })
-    }
-  })
-
-  // 页面加载时自动刷新一次行情
-  useEffect(() => {
-    if (!hasRefreshedOnMount.current && portfolio?.positions?.length > 0) {
-      hasRefreshedOnMount.current = true
-      refreshMutation.mutate()
-    }
-  }, [portfolio?.positions?.length])
 
   const updatePositionMutation = useMutation({
     mutationFn: ({ symbol, data }: { symbol: string; data: { quantity: number; cost_price: number } }) =>
@@ -205,11 +195,11 @@ export default function Portfolio() {
             </label>
           </div>
           <button
-            onClick={() => refreshMutation.mutate()}
-            disabled={refreshMutation.isPending}
+            onClick={() => refetch()}
+            disabled={isRefetching}
             className="flex items-center px-4 py-2 bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${refreshMutation.isPending ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 mr-2 ${isRefetching ? 'animate-spin' : ''}`} />
             刷新行情
           </button>
         </div>

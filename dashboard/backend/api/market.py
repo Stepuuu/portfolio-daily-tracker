@@ -1,6 +1,7 @@
 """
 行情 API 路由
 """
+from datetime import datetime
 from typing import List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -28,6 +29,24 @@ def get_service():
     return service
 
 
+@router.get("/overview")
+async def get_market_overview():
+    """获取市场概览，兼容旧版前端轮询入口"""
+    service = get_service()
+
+    indices = await service.get_quotes(["000001", "399001", "399006"], "a_share")
+    hot_stocks = await service.get_quotes(
+        ["600519", "000858", "601318", "600036", "000333"],
+        "a_share"
+    )
+
+    return {
+        "indices": indices,
+        "hot_stocks": hot_stocks,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+
+
 @router.get("/quote/{symbol}")
 async def get_quote(symbol: str, market: str = "a_share"):
     """获取单只股票行情"""
@@ -50,25 +69,42 @@ async def get_quote(symbol: str, market: str = "a_share"):
 async def get_quotes(request: BatchQuoteRequest):
     """批量获取行情"""
     service = get_service()
+    grouped_symbols: dict[str, List[str]] = {}
+    ordered_requests: List[tuple[str, str]] = []
 
-    results = []
     for item in request.symbols:
         symbol = item.get("symbol")
         market = item.get("market", "a_share")
+        if not symbol:
+            continue
+        grouped_symbols.setdefault(market, []).append(symbol)
+        ordered_requests.append((symbol, market))
 
+    quote_map = {}
+    results = []
+
+    for market, symbols in grouped_symbols.items():
         try:
-            quote = await service.get_quote(symbol, market)
-            if quote:
-                results.append(quote)
-            else:
+            quotes = await service.get_quotes(symbols, market)
+            for quote in quotes:
+                quote_map[(quote["symbol"], market)] = quote
+        except Exception as e:
+            for symbol in symbols:
                 results.append({
                     "symbol": symbol,
-                    "error": "未找到数据"
+                    "market": market,
+                    "error": str(e)
                 })
-        except Exception as e:
+
+    for symbol, market in ordered_requests:
+        quote = quote_map.get((symbol, market))
+        if quote:
+            results.append(quote)
+        elif not any(item.get("symbol") == symbol and item.get("market") == market for item in results):
             results.append({
                 "symbol": symbol,
-                "error": str(e)
+                "market": market,
+                "error": "未找到数据"
             })
 
     return {"quotes": results}
@@ -78,22 +114,7 @@ async def get_quotes(request: BatchQuoteRequest):
 async def get_market_indices():
     """获取主要指数行情"""
     service = get_service()
-
-    indices = [
-        ("000001", "a_share"),  # 上证指数
-        ("399001", "a_share"),  # 深证成指
-        ("399006", "a_share"),  # 创业板指
-    ]
-
-    results = []
-    for symbol, market in indices:
-        try:
-            quote = await service.get_quote(symbol, market)
-            if quote:
-                results.append(quote)
-        except Exception:
-            pass
-
+    results = await service.get_quotes(["000001", "399001", "399006"], "a_share")
     return {"indices": results}
 
 

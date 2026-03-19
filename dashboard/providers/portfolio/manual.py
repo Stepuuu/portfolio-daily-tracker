@@ -4,6 +4,7 @@
 """
 from typing import List, Optional
 from datetime import datetime
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -108,20 +109,41 @@ class ManualPortfolioProvider(PortfolioProvider):
 
     async def refresh(self) -> None:
         """刷新持仓数据（更新当前价格）"""
-        if not self.market_provider:
+        if not self.market_provider or not self._portfolio.positions:
             return
 
+        positions_by_market: dict[Market, List[Position]] = {}
         for position in self._portfolio.positions:
+            positions_by_market.setdefault(position.stock.market, []).append(position)
+
+        async def refresh_market_positions(market: Market, positions: List[Position]) -> None:
+            symbols = [position.stock.symbol for position in positions]
+            quote_map = {}
+
             try:
-                quote = await self.market_provider.get_quote(
-                    position.stock.symbol,
-                    position.stock.market
-                )
+                quotes = await self.market_provider.get_quotes(symbols, market)
+                quote_map = {quote.stock.symbol: quote for quote in quotes}
+            except Exception as e:
+                print(f"批量刷新 {market.value} 失败: {e}")
+
+            for position in positions:
+                quote = quote_map.get(position.stock.symbol)
+                if quote is None:
+                    try:
+                        quote = await self.market_provider.get_quote(
+                            position.stock.symbol,
+                            position.stock.market
+                        )
+                    except Exception as e:
+                        print(f"刷新 {position.stock.symbol} 价格失败: {e}")
+                        quote = None
+
                 if quote:
                     position.current_price = quote.price
-            except Exception as e:
-                print(f"刷新 {position.stock.symbol} 价格失败: {e}")
 
+        await asyncio.gather(
+            *(refresh_market_positions(market, positions) for market, positions in positions_by_market.items())
+        )
         self._last_update = datetime.now()
         self._save()
 

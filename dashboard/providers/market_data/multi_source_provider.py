@@ -2,8 +2,9 @@
 多数据源组合 Provider
 自动尝试多个数据源，提高成功率
 """
+import asyncio
+import time
 from typing import List, Optional
-from datetime import datetime
 
 from core.data.base import MarketDataProvider
 from core.models import Stock, Quote, Market
@@ -25,7 +26,13 @@ class MultiSourceProvider(MarketDataProvider):
     ])
     """
 
-    def __init__(self, providers: List[MarketDataProvider]):
+    def __init__(
+        self,
+        providers: List[MarketDataProvider],
+        provider_timeout: float = 6.0,
+        cache_ttl: float = 5.0,
+        stale_ttl: float = 30.0
+    ):
         """
         Args:
             providers: 数据源列表，按优先级排序
@@ -35,6 +42,10 @@ class MultiSourceProvider(MarketDataProvider):
 
         self.providers = providers
         self._last_successful_provider = None
+        self.provider_timeout = provider_timeout
+        self.cache_ttl = cache_ttl
+        self.stale_ttl = stale_ttl
+        self._quote_cache: dict[str, tuple[float, Quote]] = {}
 
     @property
     def name(self) -> str:
@@ -49,20 +60,61 @@ class MultiSourceProvider(MarketDataProvider):
             markets.update(provider.supported_markets)
         return list(markets)
 
+    def _cache_key(self, symbol: str, market: Market) -> str:
+        return f"{symbol}:{market.value}"
+
+    def _get_cached_quote(self, key: str, max_age: float) -> Optional[Quote]:
+        cached = self._quote_cache.get(key)
+        if not cached:
+            return None
+
+        cached_at, quote = cached
+        if time.monotonic() - cached_at <= max_age:
+            return quote
+        return None
+
+    def _store_quote(self, symbol: str, market: Market, quote: Quote) -> None:
+        self._quote_cache[self._cache_key(symbol, market)] = (time.monotonic(), quote)
+
+    async def _get_quote_from_provider(
+        self,
+        provider: MarketDataProvider,
+        symbol: str,
+        market: Market
+    ) -> Optional[Quote]:
+        try:
+            return await asyncio.wait_for(
+                provider.get_quote(symbol, market),
+                timeout=self.provider_timeout
+            )
+        except asyncio.TimeoutError:
+            print(f"[{provider.name}] 获取 {symbol} 超时")
+            return None
+        except Exception as e:
+            print(f"[{provider.name}] 获取 {symbol} 失败: {e}")
+            return None
+
     async def get_quote(self, symbol: str, market: Market) -> Optional[Quote]:
         """
         获取单个股票实时行情
         依次尝试各个数据源，直到成功
         """
+        cache_key = self._cache_key(symbol, market)
+        cached_quote = self._get_cached_quote(cache_key, self.cache_ttl)
+        if cached_quote:
+            return cached_quote
+
         # 优先使用上次成功的数据源
         if self._last_successful_provider:
-            try:
-                if market in self._last_successful_provider.supported_markets:
-                    quote = await self._last_successful_provider.get_quote(symbol, market)
-                    if quote:
-                        return quote
-            except Exception as e:
-                print(f"[{self._last_successful_provider.name}] 失败: {e}")
+            if market in self._last_successful_provider.supported_markets:
+                quote = await self._get_quote_from_provider(
+                    self._last_successful_provider,
+                    symbol,
+                    market
+                )
+                if quote:
+                    self._store_quote(symbol, market, quote)
+                    return quote
 
         # 依次尝试其他数据源
         for provider in self.providers:
@@ -72,37 +124,55 @@ class MultiSourceProvider(MarketDataProvider):
             if market not in provider.supported_markets:
                 continue
 
-            try:
-                quote = await provider.get_quote(symbol, market)
-                if quote:
-                    self._last_successful_provider = provider
-                    return quote
-            except Exception as e:
-                print(f"[{provider.name}] 获取 {symbol} 失败: {e}")
-                continue
+            quote = await self._get_quote_from_provider(provider, symbol, market)
+            if quote:
+                self._last_successful_provider = provider
+                self._store_quote(symbol, market, quote)
+                return quote
 
-        return None
+        return self._get_cached_quote(cache_key, self.stale_ttl)
 
     async def get_quotes(self, symbols: List[str], market: Market) -> List[Quote]:
         """
         批量获取实时行情
         优先使用支持批量查询的数据源
         """
+        cached_quotes = []
+        missing_symbols = []
+
+        for symbol in symbols:
+            cached_quote = self._get_cached_quote(self._cache_key(symbol, market), self.cache_ttl)
+            if cached_quote:
+                cached_quotes.append(cached_quote)
+            else:
+                missing_symbols.append(symbol)
+
+        if not missing_symbols:
+            return cached_quotes
+
         for provider in self.providers:
             if market not in provider.supported_markets:
                 continue
 
             try:
-                quotes = await provider.get_quotes(symbols, market)
+                quotes = await asyncio.wait_for(
+                    provider.get_quotes(missing_symbols, market),
+                    timeout=self.provider_timeout
+                )
                 if quotes:
-                    return quotes
+                    for quote in quotes:
+                        self._store_quote(quote.stock.symbol, quote.stock.market, quote)
+                    return cached_quotes + quotes
+            except asyncio.TimeoutError:
+                print(f"[{provider.name}] 批量获取超时")
+                continue
             except Exception as e:
                 print(f"[{provider.name}] 批量获取失败: {e}")
                 continue
 
         # 如果批量失败，尝试逐个获取
-        quotes = []
-        for symbol in symbols:
+        quotes = list(cached_quotes)
+        for symbol in missing_symbols:
             quote = await self.get_quote(symbol, market)
             if quote:
                 quotes.append(quote)
@@ -115,8 +185,13 @@ class MultiSourceProvider(MarketDataProvider):
 
         for provider in self.providers:
             try:
-                results = await provider.search_stock(keyword)
+                results = await asyncio.wait_for(
+                    provider.search_stock(keyword),
+                    timeout=self.provider_timeout
+                )
                 all_results.extend(results)
+            except asyncio.TimeoutError:
+                print(f"[{provider.name}] 搜索超时")
             except Exception as e:
                 print(f"[{provider.name}] 搜索失败: {e}")
                 continue

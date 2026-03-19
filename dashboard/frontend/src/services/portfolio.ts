@@ -8,6 +8,12 @@ export const portfolioService = {
     return response.data
   },
 
+  // 获取实时持仓（先刷新行情再返回）
+  async getLivePortfolio(): Promise<Portfolio> {
+    const response = await api.get<Portfolio>('/portfolio/live')
+    return response.data
+  },
+
   // 获取持仓摘要
   async getSummary(): Promise<PortfolioSummary> {
     const response = await api.get<PortfolioSummary>('/portfolio/summary')
