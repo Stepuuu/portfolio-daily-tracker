@@ -5,6 +5,7 @@ from typing import List, Dict, Any, AsyncIterator, Optional
 import httpx
 
 from core.llm.base import LLMProvider, LLMConfig, LLMResponse
+from .error_utils import format_httpx_error
 
 
 class ClaudeProvider(LLMProvider):
@@ -16,10 +17,11 @@ class ClaudeProvider(LLMProvider):
         super().__init__(config)
         self.base_url = config.base_url or self.DEFAULT_BASE_URL
         self.custom_headers = custom_headers
+        self.display_name = "Claude"
 
     @property
     def name(self) -> str:
-        return "Claude"
+        return getattr(self, "display_name", "Claude")
 
     def _get_headers(self) -> Dict[str, str]:
         # 如果有自定义 headers，使用自定义的（用于第三方 API 代理）
@@ -71,14 +73,17 @@ class ClaudeProvider(LLMProvider):
         if "tools" in kwargs and kwargs["tools"]:
             payload["tools"] = kwargs["tools"]
 
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/messages",
-                headers=self._get_headers(),
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout, trust_env=False) as client:
+                response = await client.post(
+                    f"{self.base_url}/messages",
+                    headers=self._get_headers(),
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            raise RuntimeError(format_httpx_error(self.name, e)) from e
 
         # 处理响应内容
         content_text = ""
@@ -134,63 +139,65 @@ class ClaudeProvider(LLMProvider):
         current_tool_input_json = ""  # 累积工具输入 JSON 片段
         stop_reason = None
 
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/messages",
-                headers=self._get_headers(),
-                json=payload
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            import json
-                            data = json.loads(data_str)
-                            event_type = data.get("type")
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout, trust_env=False) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/messages",
+                    headers=self._get_headers(),
+                    json=payload
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line.startswith("data:"):
+                            data_str = line[5:].lstrip()
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                import json
+                                data = json.loads(data_str)
+                                event_type = data.get("type")
 
-                            # 处理工具调用开始
-                            if event_type == "content_block_start":
-                                block = data.get("content_block", {})
-                                if block.get("type") == "tool_use":
-                                    current_tool_input_json = ""
-                                    tool_calls.append({
-                                        "id": block.get("id"),
-                                        "name": block.get("name"),
-                                        "input": {}
-                                    })
+                                # 处理工具调用开始
+                                if event_type == "content_block_start":
+                                    block = data.get("content_block", {})
+                                    if block.get("type") == "tool_use":
+                                        current_tool_input_json = ""
+                                        tool_calls.append({
+                                            "id": block.get("id"),
+                                            "name": block.get("name"),
+                                            "input": {}
+                                        })
 
-                            # 处理内容增量
-                            elif event_type == "content_block_delta":
-                                delta = data.get("delta", {})
-                                delta_type = delta.get("type")
-                                if delta_type == "text_delta" and "text" in delta:
-                                    yield delta["text"]
-                                elif delta_type == "input_json_delta" and tool_calls:
-                                    # 累积工具输入 JSON 片段
-                                    current_tool_input_json += delta.get("partial_json", "")
+                                # 处理内容增量
+                                elif event_type == "content_block_delta":
+                                    delta = data.get("delta", {})
+                                    delta_type = delta.get("type")
+                                    if delta_type == "text_delta" and "text" in delta:
+                                        yield delta["text"]
+                                    elif delta_type == "input_json_delta" and tool_calls:
+                                        current_tool_input_json += delta.get("partial_json", "")
 
-                            # 处理内容块结束（解析累积的工具 JSON）
-                            elif event_type == "content_block_stop":
-                                if current_tool_input_json and tool_calls:
-                                    try:
-                                        tool_calls[-1]["input"] = json.loads(current_tool_input_json)
-                                    except json.JSONDecodeError as e:
-                                        print(f"[Stream] 工具输入 JSON 解析失败: {e}")
-                                    current_tool_input_json = ""
+                                # 处理内容块结束（解析累积的工具 JSON）
+                                elif event_type == "content_block_stop":
+                                    if current_tool_input_json and tool_calls:
+                                        try:
+                                            tool_calls[-1]["input"] = json.loads(current_tool_input_json)
+                                        except json.JSONDecodeError as e:
+                                            print(f"[Stream] 工具输入 JSON 解析失败: {e}")
+                                        current_tool_input_json = ""
 
-                            # 处理消息完成
-                            elif event_type == "message_delta":
-                                delta = data.get("delta", {})
-                                if "stop_reason" in delta:
-                                    stop_reason = delta["stop_reason"]
+                                # 处理消息完成
+                                elif event_type == "message_delta":
+                                    delta = data.get("delta", {})
+                                    if "stop_reason" in delta:
+                                        stop_reason = delta["stop_reason"]
 
-                        except Exception as e:
-                            print(f"[Stream] 解析错误: {e}")
-                            continue
+                            except Exception as e:
+                                print(f"[Stream] 解析错误: {e}")
+                                continue
+        except Exception as e:
+            raise RuntimeError(format_httpx_error(self.name, e)) from e
 
         # 如果有工具调用，返回元数据
         if tool_calls or stop_reason:

@@ -45,6 +45,12 @@ class ChatResponse(BaseModel):
     imported_positions: int = 0  # 导入的持仓数量
 
 
+class ChatExtractRequest(BaseModel):
+    """对已生成回复做结构化提取"""
+    message: str
+    response: str
+
+
 def get_service():
     """获取 Agent 服务实例"""
     from backend.main import get_agent_service
@@ -52,6 +58,21 @@ def get_service():
     if service is None:
         raise HTTPException(status_code=503, detail="服务尚未初始化")
     return service
+
+
+def _chat_error_to_http(error: Exception) -> HTTPException:
+    detail = str(error).strip() or "聊天服务调用失败"
+    lower = detail.lower()
+
+    if "401" in lower or "鉴权失败" in detail:
+        return HTTPException(status_code=401, detail=detail)
+    if "403" in lower or "无权限" in detail:
+        return HTTPException(status_code=403, detail=detail)
+    if "429" in lower or "限流" in detail:
+        return HTTPException(status_code=429, detail=detail)
+    if "超时" in detail or "timeout" in lower:
+        return HTTPException(status_code=504, detail=detail)
+    return HTTPException(status_code=502, detail=detail)
 
 
 def _save_image_to_disk(image_b64: str, image_type: str, turn_id: str, index: int) -> str:
@@ -130,45 +151,45 @@ async def chat_message(request: ChatRequest):
     """
     service = get_service()
 
-    if request.extract_data:
-        # 带结构化数据提取
-        result = await service.chat_with_extraction(request.message)
-        # 保存对话
-        save_conversation_turn(request.message, result.get("response", ""))
-        return ChatResponse(**result)
+    try:
+        if request.extract_data:
+            result = await service.chat_with_extraction(request.message)
+            save_conversation_turn(request.message, result.get("response", ""))
+            return ChatResponse(**result)
 
-    elif request.stream:
-        # 流式返回
-        async def generate():
-            full_response = ""
-            async for chunk in service.chat(request.message, stream=True):
-                full_response += chunk
-                escaped = json.dumps(chunk, ensure_ascii=False)
-                yield f"data: {escaped}\n\n"
-            yield "data: [DONE]\n\n"
-            save_conversation_turn(
-                request.message, full_response,
-                suggestions=service._recent_suggestions,
-                risks=service._recent_risks
+        elif request.stream:
+            async def generate():
+                full_response = ""
+                async for chunk in service.chat(request.message, stream=True):
+                    full_response += chunk
+                    escaped = json.dumps(chunk, ensure_ascii=False)
+                    yield f"data: {escaped}\n\n"
+                yield "data: [DONE]\n\n"
+                save_conversation_turn(
+                    request.message, full_response,
+                    suggestions=service._recent_suggestions,
+                    risks=service._recent_risks
+                )
+
+            return StreamingResponse(
+                generate(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                }
             )
 
-        return StreamingResponse(
-            generate(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            }
-        )
-
-    else:
-        # 一次性返回
-        full_response = ""
-        async for chunk in service.chat(request.message, stream=False):
-            full_response += chunk
-        # 保存对话
-        save_conversation_turn(request.message, full_response)
-        return {"response": full_response}
+        else:
+            full_response = ""
+            async for chunk in service.chat(request.message, stream=False):
+                full_response += chunk
+            save_conversation_turn(request.message, full_response)
+            return {"response": full_response}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _chat_error_to_http(e) from e
 
 
 @router.post("/message-with-image")
@@ -201,22 +222,26 @@ async def chat_with_image(
             image_list.append({"data": image_data, "type": image_type})
             print(f"[图片上传] 收到图片: {image.filename}, {len(content)} 字节, 类型: {image_type}")
 
-    # 调用带图片的对话
-    if image_list:
-        result = await service.chat_with_images(
-            message=message,
-            images=image_list,
-            extract_data=should_extract
-        )
-        print(f"[图片上传] 导入持仓数: {result.get('imported_positions', 0)}")
-    else:
-        if should_extract:
-            result = await service.chat_with_extraction(message)
+    try:
+        if image_list:
+            result = await service.chat_with_images(
+                message=message,
+                images=image_list,
+                extract_data=should_extract
+            )
+            print(f"[图片上传] 导入持仓数: {result.get('imported_positions', 0)}")
         else:
-            full_response = ""
-            async for chunk in service.chat(message, stream=False):
-                full_response += chunk
-            result = {"response": full_response}
+            if should_extract:
+                result = await service.chat_with_extraction(message)
+            else:
+                full_response = ""
+                async for chunk in service.chat(message, stream=False):
+                    full_response += chunk
+                result = {"response": full_response}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _chat_error_to_http(e) from e
 
     # 保存对话（含图片与建议）
     save_conversation_turn(
@@ -229,6 +254,20 @@ async def chat_with_image(
         return ChatResponse(**result)
     else:
         return {"response": result.get("response", "")}
+
+
+@router.post("/extract")
+async def extract_chat_response(request: ChatExtractRequest):
+    """对已有回复做结构化提取，供流式聊天完成后异步调用。"""
+    service = get_service()
+
+    try:
+        result = await service.extract_chat_artifacts(request.message, request.response)
+        return ChatResponse(response=request.response, **result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _chat_error_to_http(e) from e
 
 
 @router.get("/history")

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useAppStore } from '@/store'
 import { chatService } from '@/services'
+import { getApiErrorMessage } from '@/services/chat'
 
 export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false)
@@ -59,7 +60,7 @@ export function useChat() {
         console.error('Chat error:', error)
         addMessage({
           role: 'assistant',
-          content: '抱歉，发生了错误，请稍后重试。',
+          content: `抱歉，请求失败：${getApiErrorMessage(error)}`,
         })
       } finally {
         setLoading(false)
@@ -98,7 +99,7 @@ export function useChat() {
         console.error('Chat error:', error)
         addMessage({
           role: 'assistant',
-          content: '抱歉，发生了错误，请稍后重试。',
+          content: `抱歉，请求失败：${getApiErrorMessage(error)}`,
         })
       } finally {
         setLoading(false)

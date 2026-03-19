@@ -6,6 +6,7 @@ import httpx
 import json
 
 from core.llm.base import LLMProvider, LLMConfig, LLMResponse
+from .error_utils import format_httpx_error
 
 
 class OpenAIProvider(LLMProvider):
@@ -17,10 +18,11 @@ class OpenAIProvider(LLMProvider):
         super().__init__(config)
         self.base_url = config.base_url or self.DEFAULT_BASE_URL
         self.custom_headers = custom_headers or {}
+        self.display_name = "OpenAI"
 
     @property
     def name(self) -> str:
-        return "OpenAI"
+        return getattr(self, "display_name", "OpenAI")
 
     def _get_headers(self) -> Dict[str, str]:
         # 如果有自定义 headers，使用自定义的
@@ -44,14 +46,17 @@ class OpenAIProvider(LLMProvider):
             "temperature": kwargs.get("temperature", self.config.temperature)
         }
 
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._get_headers(),
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout, trust_env=False) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=self._get_headers(),
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            raise RuntimeError(format_httpx_error(self.name, e)) from e
 
         choice = data["choices"][0]
         return LLMResponse(
@@ -77,24 +82,27 @@ class OpenAIProvider(LLMProvider):
             "stream": True
         }
 
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/chat/completions",
-                headers=self._get_headers(),
-                json=payload
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            delta = data["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                yield delta["content"]
-                        except Exception as e:
-                            print(f"[OpenAI Stream] 解析错误: {e}")
-                            continue
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout, trust_env=False) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=self._get_headers(),
+                    json=payload
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line.startswith("data:"):
+                            data_str = line[5:].lstrip()
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    yield delta["content"]
+                            except Exception as e:
+                                print(f"[OpenAI Stream] 解析错误: {e}")
+                                continue
+        except Exception as e:
+            raise RuntimeError(format_httpx_error(self.name, e)) from e
