@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/store'
 import { chatService } from '@/services'
+import { getApiErrorMessage } from '@/services/chat'
 import ConversationHistory from './ConversationHistory'
 import type { ChatMessage } from '@/types'
 
@@ -25,6 +26,7 @@ export default function ChatPanel() {
     addMessage,
     setLoading,
     setCurrentResponse,
+    appendToCurrentResponse,
     setSuggestions,
     setRisks,
     clearMessages,
@@ -147,43 +149,74 @@ export default function ChatPanel() {
     setCurrentResponse('')
 
     try {
-      let response
-
       if (currentImages.length > 0) {
         // 带图片的消息
-        response = await chatService.sendMessageWithImage(
+        const response = await chatService.sendMessageWithImage(
           userMessage,
           currentImages.map(c => c.file),
           true
         )
+
+        // 添加助手回复
+        addMessage({
+          role: 'assistant',
+          content: response.response,
+        })
+
+        // 更新建议和风险
+        if (response.suggestions) {
+          setSuggestions(response.suggestions)
+        }
+        if (response.risks) {
+          setRisks(response.risks)
+        }
+
+        // 如果有持仓导入，刷新持仓数据
+        if (response.imported_positions && response.imported_positions > 0) {
+          queryClient.invalidateQueries({ queryKey: ['portfolio'] })
+        }
       } else {
-        // 普通消息
-        response = await chatService.sendMessage(userMessage, true)
-      }
+        // 普通文本消息默认流式返回
+        let streamedResponse = ''
+        await chatService.streamMessage(
+          userMessage,
+          (chunk) => {
+            streamedResponse += chunk
+            appendToCurrentResponse(chunk)
+          },
+          () => {}
+        )
 
-      // 添加助手回复
-      addMessage({
-        role: 'assistant',
-        content: response.response,
-      })
+        addMessage({
+          role: 'assistant',
+          content: streamedResponse,
+        })
+        setCurrentResponse('')
+        setLoading(false)
 
-      // 更新建议和风险
-      if (response.suggestions) {
-        setSuggestions(response.suggestions)
-      }
-      if (response.risks) {
-        setRisks(response.risks)
-      }
-
-      // 如果有持仓导入，刷新持仓数据
-      if (response.imported_positions && response.imported_positions > 0) {
-        queryClient.invalidateQueries({ queryKey: ['portfolio'] })
+        // 在回复已展示后，异步提取建议/风险/记忆
+        void chatService.extractResponse(userMessage, streamedResponse)
+          .then((result) => {
+            if (result.suggestions) {
+              setSuggestions(result.suggestions)
+            }
+            if (result.risks) {
+              setRisks(result.risks)
+            }
+            if (result.imported_positions && result.imported_positions > 0) {
+              queryClient.invalidateQueries({ queryKey: ['portfolio'] })
+            }
+          })
+          .catch((extractError) => {
+            console.error('Extraction error:', extractError)
+          })
+        return
       }
     } catch (error) {
       console.error('Chat error:', error)
       addMessage({
         role: 'assistant',
-        content: '抱歉，发生了错误，请稍后重试。',
+        content: `抱歉，请求失败：${getApiErrorMessage(error)}`,
       })
     } finally {
       setLoading(false)

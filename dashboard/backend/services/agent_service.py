@@ -16,6 +16,7 @@ from core.models import AgentContext, Market
 from core.memory import MemoryManager, MemoryExtractor, LLMMemoryExtractor
 from providers.llm import create_llm_provider, LLMProviderType
 from providers.market_data import EastmoneyDirectProvider, GoogleFinanceProvider, AKShareProvider, MultiSourceProvider
+from providers.news import RSSNewsProvider
 from providers.portfolio.manual import ManualPortfolioProvider
 from agents.trader import TraderAgent
 
@@ -37,6 +38,7 @@ class AgentService:
         self.llm_provider = None
         self.portfolio_provider = None
         self.market_provider = None
+        self.news_provider = None
         self.memory_manager = None
         self.agent = None
         self.memory_extractor = None
@@ -60,6 +62,9 @@ class AgentService:
 
         # 初始化持仓 Provider
         self._init_portfolio_provider()
+
+        # 初始化新闻 Provider
+        self._init_news_provider()
 
         # 初始化记忆管理器
         self._init_memory_manager()
@@ -98,7 +103,8 @@ class AgentService:
             api_key=api_group["api_key"],
             base_url=api_group["base_url"],
             model=model_id,
-            temperature=self.config.llm_config.get("temperature", 0.7)
+            temperature=self.config.llm_config.get("temperature", 0.7),
+            timeout=self.config.llm_config.get("timeout", 120),
         )
 
         # 根据 API 组配置、base_url 或模型名称确定 provider 类型
@@ -119,6 +125,15 @@ class AgentService:
 
         custom_headers = api_group.get("headers")
         self.llm_provider = create_llm_provider(provider_type, llm_config, custom_headers)
+
+        model_name = model_id
+        for model in api_group.get("models", []):
+            if model.get("id") == model_id:
+                model_name = model.get("name", model_id)
+                break
+
+        provider_label = api_group.get("name", provider_type.value)
+        setattr(self.llm_provider, "display_name", f"{provider_label} / {model_name}")
 
     def _init_market_provider(self):
         """初始化市场数据 Provider"""
@@ -141,6 +156,10 @@ class AgentService:
             market_provider=self.market_provider
         )
 
+    def _init_news_provider(self):
+        """初始化新闻 Provider"""
+        self.news_provider = RSSNewsProvider()
+
     def _init_memory_manager(self):
         """初始化记忆管理器"""
         self.memory_manager = MemoryManager(data_file="data/memory.json")
@@ -152,6 +171,7 @@ class AgentService:
             get_stock_quote_tool,
             get_portfolio_tool,
             get_market_indices_tool,
+            get_market_news_tool,
             compare_stocks_tool,
             get_tracker_snapshot_tool,
             update_holdings_tool,
@@ -163,6 +183,7 @@ class AgentService:
             get_stock_quote_tool(self.market_provider),
             get_portfolio_tool(self.portfolio_provider),
             get_market_indices_tool(self.market_provider),
+            get_market_news_tool(self.news_provider),
             compare_stocks_tool(self.market_provider),
             get_tracker_snapshot_tool(),
             update_holdings_tool(),
@@ -228,7 +249,7 @@ class AgentService:
                 "risks": [...],
                 "sentiment": "...",
                 "memory_updates": [...]
-            }
+        }
         """
         # 构建上下文
         context = await self._build_context()
@@ -243,28 +264,36 @@ class AgentService:
         async for chunk in self.agent.chat(message, context, stream=False):
             full_response += chunk
 
-        # 使用 LLM 提取结构化数据
-        extraction = await self.llm_extractor.extract(message, full_response)
+        extraction_result = await self.extract_chat_artifacts(message, full_response)
+        return {
+            "response": full_response,
+            **extraction_result,
+        }
 
-        # 应用记忆更新
+    async def extract_chat_artifacts(
+        self,
+        user_message: str,
+        ai_response: str
+    ) -> Dict[str, Any]:
+        """对已生成的回复做结构化提取，不重新生成回答。"""
+        extraction = await self.llm_extractor.extract(user_message, ai_response)
+
         for update in extraction.get("memory_updates", []):
             self._apply_memory_update(update)
 
-        # 从用户画像提取中更新结构化数据
         user_profile = extraction.get("user_profile", {})
         if user_profile:
             self._apply_profile_update(user_profile)
 
-        # 更新最近的建议和风险
         self._recent_suggestions = extraction.get("suggestions", [])
         self._recent_risks = extraction.get("risks", [])
 
         return {
-            "response": full_response,
             "suggestions": self._recent_suggestions,
             "risks": self._recent_risks,
             "sentiment": extraction.get("sentiment", "neutral"),
-            "memory_updates": extraction.get("memory_updates", [])
+            "memory_updates": extraction.get("memory_updates", []),
+            "imported_positions": 0,
         }
 
     async def chat_with_images(

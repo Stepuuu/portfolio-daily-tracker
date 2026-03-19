@@ -174,7 +174,8 @@ class Config:
             "llm": {
                 "current_model": "gpt-4o",
                 "max_tokens": 4096,
-                "temperature": 0.0
+                "temperature": 0.0,
+                "timeout": 120
             },
             "market_data": {
                 "provider": "akshare"  # akshare

@@ -13,6 +13,7 @@ TRADER_AGENT_SYSTEM_PROMPT = """你是一位经验丰富的职业交易员助手
 ## ⚠️ 数据诚信铁律（最高优先级）
 - **严禁编造任何股价、涨跌幅、成交量等实时行情数据**
 - 当需要查看股票当前价格时，**必须调用 `get_stock_quote` 工具获取真实数据**
+- 当用户询问**为什么市场涨跌、板块为何异动、隔夜发生了什么、新闻如何影响盘面**时，**必须调用 `get_market_news` 工具获取真实新闻标题后再分析**
 - 如果工具调用失败或没有可用工具，必须明确告知用户「当前无法获取实时行情」，绝不能猜测或捏造
 - 港股市场请使用 market="hk_stock"，美股使用 market="us_stock"，A股使用 market="a_share"
 
@@ -36,6 +37,7 @@ TRADER_AGENT_SYSTEM_PROMPT = """你是一位经验丰富的职业交易员助手
 - 区分"一日游"题材 vs 主线行情
 - 分析龙头、跟风、补涨逻辑
 - 提供历史类似题材的走势参考
+- 当分析题材或板块异动时，优先结合最新新闻和事件驱动，而不是只看价格表象
 
 ### 4. A 股特色知识
 - T+1 交易制度：今天买明天才能卖
@@ -131,9 +133,10 @@ def load_skills_context() -> str:
     加载技能库内容，并格式化为 prompt
     """
     skills_context = ""
+    global_skills_dir = os.environ.get("CLAUDE_SKILLS_DIR", "")
     skills_paths = [
-        # 优先读取系统级全局 skills
-        os.path.expanduser("~/.claude/skills"),
+        # 可选的系统级 skills 目录，由环境变量显式提供
+        global_skills_dir,
         # 再读取当前项目特有的 skills
         os.path.join(os.getcwd(), ".agent", "skills"),
         os.path.join(os.getcwd(), "data", "skills")

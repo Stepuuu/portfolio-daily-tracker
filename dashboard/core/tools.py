@@ -228,6 +228,63 @@ def get_market_indices_tool(market_provider) -> Tool:
     )
 
 
+def get_market_news_tool(news_provider) -> Tool:
+    """获取市场新闻工具"""
+    async def get_market_news(keyword: str = "", category: str = "all", limit: int = 6) -> Dict:
+        """
+        获取最新市场新闻，或按关键词过滤。
+
+        Args:
+            keyword: 搜索关键词，留空则获取最新新闻
+            category: 新闻分类（market/world/all）
+            limit: 返回条数
+        """
+        category = (category or "all").strip().lower()
+        if category not in {"market", "world", "all"}:
+            category = "all"
+
+        limit = max(1, min(int(limit or 6), 12))
+
+        if keyword and keyword.strip():
+            items = await news_provider.search_news(keyword.strip(), limit=limit, category=category)
+        else:
+            items = await news_provider.get_latest_news(category=category, limit=limit)
+
+        return {
+            "keyword": keyword,
+            "category": category,
+            "count": len(items),
+            "news": items,
+        }
+
+    return Tool(
+        name="get_market_news",
+        description="获取近期市场新闻和国际宏观新闻。用户询问为什么市场涨跌、板块为何异动、隔夜发生了什么、宏观/地缘事件影响时，应调用此工具获取真实新闻标题后再分析。",
+        parameters=[
+            ToolParameter(
+                name="keyword",
+                type=ToolParameterType.STRING,
+                description="关键词，可留空表示获取最新新闻；例如 fed、oil、tariff、nvidia、ai、middle east",
+                required=False,
+            ),
+            ToolParameter(
+                name="category",
+                type=ToolParameterType.STRING,
+                description="新闻分类：market(财经市场), world(国际/地缘), all(全部)",
+                required=False,
+                enum=["market", "world", "all"],
+            ),
+            ToolParameter(
+                name="limit",
+                type=ToolParameterType.NUMBER,
+                description="返回新闻条数，默认 6，最大 12",
+                required=False,
+            ),
+        ],
+        function=get_market_news,
+    )
+
+
 def compare_stocks_tool(market_provider) -> Tool:
     """比较多只股票工具"""
     async def compare_stocks(symbols: List[str], market: str = "a_share") -> Dict:

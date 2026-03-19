@@ -1,5 +1,7 @@
-import api from './api'
+import api, { getApiErrorMessage } from './api'
 import type { ChatResponse } from '@/types'
+
+const CHAT_REQUEST_TIMEOUT_MS = 120000
 
 export const chatService = {
   // 发送消息（带结构化数据提取）
@@ -8,6 +10,8 @@ export const chatService = {
       message,
       stream: false,
       extract_data: extractData,
+    }, {
+      timeout: CHAT_REQUEST_TIMEOUT_MS,
     })
     return response.data
   },
@@ -31,7 +35,15 @@ export const chatService = {
     })
 
     if (!response.ok) {
-      throw new Error('Stream request failed')
+      const rawText = await response.text()
+      let detail = rawText
+      try {
+        const data = JSON.parse(rawText)
+        detail = data.detail || data.message || rawText
+      } catch {
+        // keep raw text
+      }
+      throw new Error(detail || `Stream request failed (${response.status})`)
     }
 
     const reader = response.body?.getReader()
@@ -82,9 +94,21 @@ export const chatService = {
     formData.append('extract_data', String(extractData))
 
     const response = await api.post<ChatResponse>('/chat/message-with-image', formData, {
+      timeout: CHAT_REQUEST_TIMEOUT_MS,
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+    })
+    return response.data
+  },
+
+  // 对流式返回后的文本做结构化提取
+  async extractResponse(message: string, responseText: string): Promise<ChatResponse> {
+    const response = await api.post<ChatResponse>('/chat/extract', {
+      message,
+      response: responseText,
+    }, {
+      timeout: CHAT_REQUEST_TIMEOUT_MS,
     })
     return response.data
   },
@@ -119,3 +143,5 @@ export const chatService = {
     return response.data
   },
 }
+
+export { getApiErrorMessage }
