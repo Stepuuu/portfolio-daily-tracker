@@ -94,14 +94,20 @@ export interface UserProfile {
   trading_style: 'day' | 'swing' | 'position' | 'value'
   risk_tolerance: 'conservative' | 'moderate' | 'aggressive'
   notes: string
+  preferred_sectors?: string[]
+  typical_position_size?: string
+  holding_period?: string
 }
 
 export interface TradingPreferences {
-  preferred_sectors: string[]
-  avoid_sectors: string[]
-  max_single_position: number
-  preferred_holding_period: string
-  emotional_triggers: string[]
+  preferred_sectors?: string[]
+  avoid_sectors?: string[]
+  max_single_position?: number
+  preferred_holding_period?: string
+  emotional_triggers?: string[]
+  news_sensitivity?: string
+  avoid_patterns?: string[]
+  preferred_indicators?: string[]
 }
 
 export interface TradingLesson {
@@ -113,10 +119,11 @@ export interface TradingLesson {
 }
 
 export interface UserGoals {
-  short_term: string[]
-  long_term: string[]
-  monthly_target: number | null
-  annual_target: number | null
+  short_term: string[] | string
+  long_term: string[] | string
+  monthly_target?: number | null
+  annual_target?: number | null
+  learning?: string[]
 }
 
 export interface UserMemory {
