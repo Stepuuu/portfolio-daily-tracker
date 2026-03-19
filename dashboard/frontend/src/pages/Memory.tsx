@@ -281,6 +281,9 @@ export default function Memory() {
 
   const profile: UserProfile = memory?.profile ?? emptyProfile
   const preferences: TradingPreferences = memory?.preferences ?? emptyPreferences
+  const preferredSectors = profile.preferred_sectors ?? preferences.preferred_sectors ?? []
+  const emotionalTriggers = preferences.emotional_triggers ?? []
+  const lessons = memory?.history?.lessons ?? []
 
   return (
     <div className="p-6 space-y-6">
@@ -351,7 +354,7 @@ export default function Memory() {
           偏好板块
         </h2>
         <div className="flex flex-wrap gap-2 mb-4">
-          {preferences.preferred_sectors.map((sector: string, index: number) => (
+          {preferredSectors.map((sector: string, index: number) => (
             <span
               key={index}
               className="group px-3 py-1.5 bg-primary-600/20 text-primary-400 rounded-full text-sm flex items-center"
@@ -366,7 +369,7 @@ export default function Memory() {
               </button>
             </span>
           ))}
-          {preferences.preferred_sectors.length === 0 && (
+          {preferredSectors.length === 0 && (
             <span className="text-slate-400">暂无偏好板块</span>
           )}
         </div>
@@ -400,7 +403,7 @@ export default function Memory() {
           交易教训
         </h2>
         <div className="space-y-3 mb-4">
-          {memory?.history?.lessons?.map((lesson: any, index: number) => (
+          {lessons.map((lesson: any, index: number) => (
             <div key={index} className="group flex items-start space-x-3 p-3 bg-slate-700/50 rounded-lg">
               <BookOpen className="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
@@ -418,7 +421,7 @@ export default function Memory() {
               </button>
             </div>
           ))}
-          {(!memory?.history?.lessons || memory.history.lessons.length === 0) && (
+          {lessons.length === 0 && (
             <p className="text-slate-400">暂无交易教训记录</p>
           )}
         </div>
@@ -453,7 +456,7 @@ export default function Memory() {
         </h2>
         <p className="text-sm text-slate-400 mb-4">记录容易让你冲动交易的情况，助手会在对话中提醒你注意</p>
         <div className="flex flex-wrap gap-2 mb-4">
-          {preferences.emotional_triggers?.map((trigger: string, index: number) => (
+          {emotionalTriggers.map((trigger: string, index: number) => (
             <span
               key={index}
               className="group px-3 py-1.5 bg-red-600/20 text-red-400 rounded-full text-sm flex items-center"
@@ -468,7 +471,7 @@ export default function Memory() {
               </button>
             </span>
           ))}
-          {(!preferences.emotional_triggers || preferences.emotional_triggers.length === 0) && (
+          {emotionalTriggers.length === 0 && (
             <span className="text-slate-400">暂无记录</span>
           )}
         </div>
