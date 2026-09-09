@@ -5,6 +5,7 @@ import json, os, glob
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
+import re
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
@@ -14,6 +15,26 @@ PORTFOLIO_DIR = os.environ.get(
     "PORTFOLIO_DIR",
     str(Path(__file__).resolve().parent.parent.parent.parent / "engine" / "portfolio"),
 )
+
+
+def _valid_date(value: str) -> bool:
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_date(value):
+    if value is not None and not _valid_date(value):
+        raise HTTPException(status_code=422, detail="日期必须为有效的 YYYY-MM-DD")
+
+
+def _dated_files(directory):
+    return sorted(path for path in glob.glob(os.path.join(directory, "*.json"))
+                  if _valid_date(Path(path).stem))
 
 
 def _read_json(path: str):
@@ -32,7 +53,7 @@ async def list_dates():
     # From snapshot files
     snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
     for f in glob.glob(os.path.join(snap_dir, "*.json")):
-        dates_set.add(os.path.basename(f).replace(".json", ""))
+        dates_set.add(Path(f).stem)
 
     # From history.csv
     csv_path = os.path.join(PORTFOLIO_DIR, "history.csv")
@@ -45,7 +66,7 @@ async def list_dates():
                 if parts and len(parts) > date_idx:
                     dates_set.add(parts[date_idx])
 
-    dates = sorted(dates_set, reverse=True)
+    dates = sorted((day for day in dates_set if _valid_date(day)), reverse=True)
     return {"dates": dates, "count": len(dates)}
 
 
@@ -69,6 +90,8 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
                     except ValueError:
                         row[h] = v
                 rows.append(row)
+
+    rows = sorted({r["date"]: r for r in rows if _valid_date(str(r.get("date", "")))}.values(), key=lambda r: r["date"])
 
     target_row = None
     target_idx = -1
@@ -140,7 +163,7 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
 
     # Try loading the closest snapshot's group data (for positions display)
     snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
-    snap_files = sorted(glob.glob(os.path.join(snap_dir, "*.json")))
+    snap_files = _dated_files(snap_dir)
     groups = {}
     fx_rates = {}
     closest = None
@@ -162,6 +185,8 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
         "groups": groups,
         "summary": summary,
         "synthetic": True,
+        "positions_as_of": Path(closest).stem if closest else None,
+        "data_quality": {"status": "estimated", "reason": "Summary from history; positions from an earlier snapshot"},
     }
 
 
@@ -170,13 +195,15 @@ async def get_snapshot(date: Optional[str] = Query(None, description="日期 YYY
     """获取指定日期的快照"""
     snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
 
+    _validate_date(date)
     if date:
         path = os.path.join(snap_dir, f"{date}.json")
     else:
-        files = sorted(glob.glob(os.path.join(snap_dir, "*.json")))
-        if not files:
+        available = await list_dates()
+        if not available["dates"]:
             raise HTTPException(status_code=404, detail="没有快照数据")
-        path = files[-1]
+        date = available["dates"][0]
+        path = os.path.join(snap_dir, f"{date}.json")
 
     data = _read_json(path)
     if not data and date:
@@ -192,10 +219,11 @@ async def get_holdings(date: Optional[str] = Query(None, description="日期 YYY
     """获取指定日期的持仓"""
     holdings_dir = os.path.join(PORTFOLIO_DIR, "holdings")
 
+    _validate_date(date)
     if date:
         path = os.path.join(holdings_dir, f"{date}.json")
     else:
-        files = sorted(glob.glob(os.path.join(holdings_dir, "*.json")))
+        files = _dated_files(holdings_dir)
         if not files:
             raise HTTPException(status_code=404, detail="没有持仓数据")
         path = files[-1]
@@ -213,7 +241,7 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
     if not os.path.exists(csv_path):
         # Fall back to reading all snapshots
         snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
-        files = sorted(glob.glob(os.path.join(snap_dir, "*.json")))
+        files = _dated_files(snap_dir)
         history = []
         for f in files[-limit:]:
             data = _read_json(f)
@@ -228,6 +256,9 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
                     "daily_change": s.get("daily_change", 0),
                     "daily_change_pct": s.get("daily_change_pct", 0),
                     "max_drawdown_pct": s.get("max_drawdown_pct", 0),
+                    "capital_change": s.get("capital_change", 0),
+                    "market_daily_change": s.get("market_daily_change", s.get("daily_change", 0)),
+                    "market_daily_change_pct": s.get("market_daily_change_pct", s.get("daily_change_pct", 0)),
                 })
         return {"history": history, "count": len(history)}
 
@@ -245,6 +276,8 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
                     except ValueError:
                         row[h] = v
                 history.append(row)
+
+    history = sorted({r["date"]: r for r in history if _valid_date(str(r.get("date", "")))}.values(), key=lambda r: r["date"])
 
     # Compute market_daily_change from CSV cost differences (reliable, no snapshot files needed)
     # capital_change[i] = cost[i] - cost[i-1]; market_change[i] = daily_change[i] - capital_change[i]
@@ -299,7 +332,7 @@ async def get_config():
 async def get_summary():
     """获取最新的投资组合摘要（用于 Dashboard 展示）"""
     snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
-    files = sorted(glob.glob(os.path.join(snap_dir, "*.json")))
+    files = _dated_files(snap_dir)
     if not files:
         return {
             "date": None,
@@ -351,10 +384,11 @@ async def get_group_detail(group_name: str, date: Optional[str] = Query(None)):
     """获取特定组别的详细数据"""
     snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
 
+    _validate_date(date)
     if date:
         path = os.path.join(snap_dir, f"{date}.json")
     else:
-        files = sorted(glob.glob(os.path.join(snap_dir, "*.json")))
+        files = _dated_files(snap_dir)
         if not files:
             raise HTTPException(status_code=404, detail="没有快照数据")
         path = files[-1]

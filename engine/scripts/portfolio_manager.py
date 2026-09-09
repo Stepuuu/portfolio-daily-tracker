@@ -26,8 +26,10 @@ Usage:
 import json, os, sys, argparse, glob, copy
 from datetime import datetime
 
+from portfolio_accounting import atomic_text_writer, atomic_json_dump, cash_balances, set_cash_balance
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PORTFOLIO_DIR = os.path.join(os.path.dirname(BASE_DIR), "portfolio")
+PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
 
 
 def get_holdings_path(date_str):
@@ -59,11 +61,13 @@ def load_or_create_today(date_str):
 
 
 def save_holdings(data, date_str):
+    from ledger_bridge import guard_legacy_write
+    guard_legacy_write(PORTFOLIO_DIR)
     data["date"] = date_str
     data["updated_at"] = datetime.now().isoformat()
     path = get_holdings_path(date_str)
-    with open(path, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with atomic_text_writer(path) as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
     return path
 
 
@@ -89,10 +93,13 @@ def cmd_show(args):
         for pos in gdata.get("positions", []):
             print(f"  {pos['name']:<10s} {pos['ticker']:<16s} {pos['quantity']:>8d} {pos['cost_price']:>10.3f}")
         fund = gdata.get("fund", 0)
-        cash = gdata.get("cash", 0)
+        cash = cash_balances(gdata).get("CNY", 0)
         if fund:
             print(f"  {'基金':<10s} {'':16s} {'':>8s} {fund/10000:>9.2f}万")
         print(f"  {'现金':<10s} {'':16s} {'':>8s} {cash/10000:>9.2f}万")
+        for currency, amount in cash_balances(gdata).items():
+            if currency != "CNY":
+                print(f"  现金 {currency}: {amount:,.2f}")
     print(f"\n更新时间: {data.get('updated_at', '?')}")
 
 
@@ -198,10 +205,11 @@ def cmd_set_cash(args):
         print(f"❌ 组 '{args.group}' 不存在", file=sys.stderr)
         sys.exit(1)
 
-    old = group_data.get("cash", 0)
-    group_data["cash"] = args.value
+    currency = getattr(args, "currency", "CNY")
+    old = cash_balances(group_data).get(currency, 0)
+    set_cash_balance(group_data, args.value, currency)
     path = save_holdings(data, args.date)
-    print(f"✅ {args.group} 现金: ¥{old/10000:.2f}万 → ¥{args.value/10000:.2f}万")
+    print(f"✅ {args.group} 现金 ({currency}): {old:,.2f} → {args.value:,.2f}")
     print(f"   保存到: {path}")
 
 
@@ -257,6 +265,7 @@ def main():
     # set-cash
     p_cash = sub.add_parser("set-cash", help="设置现金")
     p_cash.add_argument("--group", required=True)
+    p_cash.add_argument("--currency", choices=["CNY", "HKD", "USD"], default="CNY")
     p_cash.add_argument("--value", type=float, required=True, help="现金(元)")
 
     # set-cost

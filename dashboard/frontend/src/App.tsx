@@ -1,20 +1,24 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
-import Dashboard from './pages/Dashboard'
-import Portfolio from './pages/Portfolio'
-import PortfolioTracker from './pages/PortfolioTracker'
-import Market from './pages/Market'
-import Memory from './pages/Memory'
-import Settings from './pages/Settings'
-import Help from './pages/Help'
-import Backtest from './pages/Backtest'
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Ledger = lazy(() => import('./pages/Ledger'))
+const Portfolio = lazy(() => import('./pages/Portfolio'))
+const PortfolioTracker = lazy(() => import('./pages/PortfolioTracker'))
+const Market = lazy(() => import('./pages/Market'))
+const Memory = lazy(() => import('./pages/Memory'))
+const Settings = lazy(() => import('./pages/Settings'))
+const Help = lazy(() => import('./pages/Help'))
+const Backtest = lazy(() => import('./pages/Backtest'))
 
 function App() {
   return (
     <Router>
+      <Suspense fallback={<div role="status" className="p-6 text-slate-400">正在加载…</div>}>
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
+          <Route path="ledger" element={<Ledger />} />
           <Route path="portfolio" element={<Portfolio />} />
           <Route path="tracker" element={<PortfolioTracker />} />
           <Route path="market" element={<Market />} />
@@ -24,6 +28,7 @@ function App() {
           <Route path="help" element={<Help />} />
         </Route>
       </Routes>
+      </Suspense>
     </Router>
   )
 }

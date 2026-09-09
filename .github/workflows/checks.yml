@@ -1,0 +1,68 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r dashboard/requirements.txt pytest
+      - run: python scripts/check_public_artifacts.py
+      - run: python -m pytest -q
+      - run: python -c 'import backend.main'
+        working-directory: dashboard
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+      - run: npm ci
+        working-directory: dashboard/frontend
+      - run: npm run build
+        working-directory: dashboard/frontend
+      - run: npm audit --audit-level=high
+        working-directory: dashboard/frontend
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker compose build backend frontend engine
+      - run: |
+          docker compose run -d --name tracker-smoke -e TRACKER_DEMO_MODE=1 -p 127.0.0.1:8000:8000 backend
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health && curl -fsS http://127.0.0.1:8000/api/ledger; then exit 0; fi
+            sleep 2
+          done
+          docker logs tracker-smoke
+          exit 1
+      - if: always()
+        run: docker rm -f tracker-smoke || true
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+      - run: python -m pip install -r dashboard/requirements.txt playwright
+      - run: python -m playwright install --with-deps chromium
+      - run: npm ci
+        working-directory: dashboard/frontend
+      - run: python tests/browser_smoke.py

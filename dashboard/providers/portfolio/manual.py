@@ -159,6 +159,9 @@ class ManualPortfolioProvider(PortfolioProvider):
         current_price: Optional[float] = None
     ):
         """添加持仓（如果已存在则更新）"""
+        from core.ledger import active_ledger
+        if active_ledger():
+            raise ValueError('Use the ledger preview and confirmation to change balances')
         # 检查是否已存在
         existing_idx = None
         for idx, p in enumerate(self._portfolio.positions):
@@ -186,6 +189,9 @@ class ManualPortfolioProvider(PortfolioProvider):
 
     def remove_position(self, symbol: str):
         """删除持仓"""
+        from core.ledger import active_ledger
+        if active_ledger():
+            raise ValueError('Use the ledger preview and confirmation to change balances')
         self._portfolio.positions = [
             p for p in self._portfolio.positions
             if p.stock.symbol != symbol
@@ -200,6 +206,9 @@ class ManualPortfolioProvider(PortfolioProvider):
         available_qty: Optional[int] = None
     ):
         """更新持仓"""
+        from core.ledger import active_ledger
+        if active_ledger():
+            raise ValueError('Use the ledger preview and confirmation to change balances')
         for p in self._portfolio.positions:
             if p.stock.symbol == symbol:
                 if quantity is not None:
@@ -213,6 +222,9 @@ class ManualPortfolioProvider(PortfolioProvider):
 
     def set_cash(self, cash: float):
         """设置现金"""
+        from core.ledger import active_ledger
+        if active_ledger():
+            raise ValueError('Use the ledger preview and confirmation to change balances')
         self._portfolio.cash = cash
         self._save()
 

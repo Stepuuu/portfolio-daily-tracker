@@ -8,9 +8,10 @@ Usage:
 import json, os, sys, argparse, glob, copy
 from datetime import datetime, timedelta
 import requests
+from portfolio_accounting import atomic_text_writer, atomic_json_dump, finite_number, fx_rate, value_cash, ordered_history, drawdowns
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PORTFOLIO_DIR = os.path.join(os.path.dirname(BASE_DIR), "portfolio")
+PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
 CONFIG_PATH = os.path.join(PORTFOLIO_DIR, "config.json")
 
 
@@ -19,8 +20,12 @@ def load_config():
         return json.load(f)
 
 
-def load_holdings(date_str, config):
+def load_holdings(date_str, config, *, persist=True):
     """Load holdings for a date. If missing, copy from previous day."""
+    from ledger_bridge import ledger_holdings
+    confirmed = ledger_holdings(PORTFOLIO_DIR, date_str)
+    if confirmed is not None:
+        return confirmed
     path = os.path.join(PORTFOLIO_DIR, "holdings", f"{date_str}.json")
     if os.path.exists(path):
         with open(path, "r") as f:
@@ -42,8 +47,9 @@ def load_holdings(date_str, config):
         data["date"] = date_str
         data["updated_at"] = datetime.now().isoformat()
         # Save as today's file
-        with open(path, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        if persist:
+            with atomic_text_writer(path) as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
         print(f"  从 {os.path.basename(prev_file)} 复制持仓到 {date_str}")
         return data
     else:
@@ -100,6 +106,7 @@ def fetch_prices(holdings, config):
                 headers=headers, proxies=proxies, timeout=15,
                 params={"interval": "1d", "range": "1d"}
             )
+            r.raise_for_status()
             data = r.json()
             meta = data["chart"]["result"][0]["meta"]
             prices[ticker] = meta["regularMarketPrice"]
@@ -128,6 +135,7 @@ def fetch_fx_rates(config):
                 headers=headers, proxies=proxies, timeout=15,
                 params={"interval": "1d", "range": "1d"}
             )
+            r.raise_for_status()
             data = r.json()
             rate = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
             # key = "HKD_CNY" -> currency = "HKD"
@@ -135,10 +143,6 @@ def fetch_fx_rates(config):
             rates[currency] = rate
         except Exception as e:
             print(f"  ⚠️ 获取汇率 {key} 失败: {e}", file=sys.stderr)
-            if "HKD" in key:
-                rates["HKD"] = 0.88
-            elif "USD" in key:
-                rates["USD"] = 6.90
 
     return rates
 
@@ -146,6 +150,9 @@ def fetch_fx_rates(config):
 def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, all_snapshots, history_values=None):
     """Calculate full portfolio snapshot with all metrics."""
     date_str = holdings["date"]
+    history_values = ordered_history(
+        history_values, [*(all_snapshots or []), *([prev_snapshot] if prev_snapshot else [])], date_str
+    )
     currency_map_cfg = {
         "SHA": "CNY", "SHE": "CNY", "HKG": "HKD", "NASDAQ": "USD", "NYSE": "USD"
     }
@@ -169,12 +176,19 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
             ticker = pos["ticker"]
             exchange = ticker.split(":")[0]
             currency = currencies.get(ticker, currency_map_cfg.get(exchange, "CNY"))
-            fx = fx_rates.get(currency, 1.0)
-            current_price = prices.get(ticker, 0)
+            quantity = finite_number(pos["quantity"], f"{ticker} quantity")
+            if quantity < 0:
+                raise ValueError(f"{ticker}: negative quantity is unsupported")
+            if quantity == 0:
+                continue
+            fx = fx_rate(currency, fx_rates)
+            current_price = finite_number(prices.get(ticker), f"{ticker} price")
+            if current_price <= 0:
+                raise ValueError(f"{ticker}: missing or non-positive price; snapshot refused")
 
             market_value_local = current_price * pos["quantity"]
             market_value_cny = market_value_local * fx
-            cost_value_cny = pos["cost_price"] * pos["quantity"] * fx
+            cost_value_cny = finite_number(pos["cost_price"], f"{ticker} cost_price") * pos["quantity"] * fx
             profit_cny = market_value_cny - cost_value_cny
             profit_pct = (profit_cny / cost_value_cny * 100) if cost_value_cny != 0 else 0
 
@@ -194,10 +208,10 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
             })
             group_positions_value += market_value_cny
 
-        fund = group_data.get("fund", 0)
-        cash = group_data.get("cash", 0)
+        fund = finite_number(group_data.get("fund", 0), "fund")
+        cash, balances, cash_values = value_cash(group_data, fx_rates)
         group_total = group_positions_value + fund + cash
-        cost_basis = group_data.get("cost_basis", 0)
+        cost_basis = finite_number(group_data.get("cost_basis", 0), "cost_basis")
         group_profit = group_total - cost_basis
         group_return_pct = (group_profit / cost_basis * 100) if cost_basis != 0 else 0
 
@@ -209,7 +223,9 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
             "cost_basis": cost_basis,
             "positions": positions_out,
             "fund": fund,
-            "cash": cash,
+            "cash": round(cash, 2),
+            "cash_balances": balances,
+            "cash_values_cny": {key: round(value, 2) for key, value in cash_values.items()},
             "positions_value": round(group_positions_value, 2),
             "total_value": round(group_total, 2),
             "profit": round(group_profit, 2),
@@ -241,12 +257,6 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
 
     # Capital change = cost difference vs previous day
     capital_change = grand_total_cost - prev_cost
-    # For more accurate market_daily_change: if previous snapshot has group-level
-    # cash data, use cash-based capital calc (captures fund purchases correctly)
-    if prev_snapshot and prev_snapshot.get("date") == prev_date:
-        prev_cash_total = sum(gdata.get("cash", 0) for gdata in prev_snapshot.get("groups", {}).values())
-        curr_cash_total = sum(gdata.get("cash", 0) for gdata in snapshot["groups"].values())
-        capital_change = curr_cash_total - prev_cash_total
     market_daily_change = daily_change - capital_change
     market_daily_change_pct = (market_daily_change / prev_value * 100) if prev_value != 0 else 0
 
@@ -268,20 +278,7 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
         mkt_return = mkt_change / prev_v if prev_v != 0 else 0
         market_daily_returns.append((curr_d, mkt_return, mkt_change))
 
-    # ── Drawdown: 净资产回撤 (capital-flow-adjusted) ──
-    # Track peak of total_value (same as traditional). Record the profit at peak.
-    # drawdown = (current_profit - profit_at_peak) / peak_value
-    # This excludes capital injection effects: injection raises both value & cost equally,
-    # so the difference (profit_at_peak - current_profit) captures only market losses.
-    peak_value_for_dd = hist[0][1]
-    profit_at_peak = hist[0][1] - hist[0][2]
-    for d, v, c in hist:
-        if v > peak_value_for_dd:
-            peak_value_for_dd = v
-            profit_at_peak = v - c
-    # Current drawdown from peak
-    current_profit = grand_total_value - grand_total_cost
-    drawdown = ((current_profit - profit_at_peak) / peak_value_for_dd * 100) if peak_value_for_dd > 0 else 0
+    current_drawdown, max_drawdown = drawdowns([r for _, r, _ in market_daily_returns])
 
     # ── Monthly stats (market-only) ──
     month_first_day = date_str[:8] + "01"
@@ -321,6 +318,7 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
         avg_loss = round(sum(losses) / len(losses) * 100, 3) if losses else 0
         profit_loss_ratio = round(abs(avg_win / avg_loss), 2) if avg_loss != 0 else 0
 
+    snapshot["ledger_revision"] = holdings.get("ledger_revision")
     snapshot["summary"] = {
         "total_value": round(grand_total_value, 2),
         "total_cost": grand_total_cost,
@@ -333,7 +331,10 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
         "capital_change": round(capital_change, 2),
         "market_daily_change": round(market_daily_change, 2),
         "market_daily_change_pct": round(market_daily_change_pct, 2),
-        "max_drawdown_pct": round(drawdown, 2),
+        "max_drawdown_pct": max_drawdown,
+        "current_drawdown_pct": current_drawdown,
+        "return_method": "daily_end_of_period_flow_approximation",
+        "capital_flow_source": "cost_basis_delta",
         "month_start_value": round(month_start_value, 2),
         "month_change": round(month_net_change, 2),
         "month_market_change": round(month_market_change, 2),
@@ -354,8 +355,8 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
 def save_snapshot(snapshot):
     """Save snapshot to file."""
     path = os.path.join(PORTFOLIO_DIR, "snapshots", f"{snapshot['date']}.json")
-    with open(path, "w") as f:
-        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    with atomic_text_writer(path) as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2, allow_nan=False)
     print(f"  ✅ 快照已保存: {path}")
     return path
 
@@ -373,10 +374,17 @@ def sync_to_qr(snapshot, config):
             symbol = pos["ticker"].split(":")[1]
             exchange = pos["ticker"].split(":")[0]
             market_map = {"SHA": "a_share", "SHE": "a_share", "HKG": "hk_stock", "NASDAQ": "us_stock", "NYSE": "us_stock"}
-            if symbol in merged:
-                merged[symbol]["quantity"] += pos["quantity"]
+            key = (market_map.get(exchange, "a_share"), symbol)
+            if key in merged:
+                existing = merged[key]
+                new_quantity = existing["quantity"] + pos["quantity"]
+                existing["cost_price"] = (
+                    existing["cost_price"] * existing["quantity"] + pos["cost_price"] * pos["quantity"]
+                ) / new_quantity if new_quantity else 0
+                existing["quantity"] = new_quantity
+                existing["available_qty"] += pos["quantity"]
             else:
-                merged[symbol] = {
+                merged[key] = {
                     "symbol": symbol,
                     "name": pos["name"],
                     "market": market_map.get(exchange, "a_share"),
@@ -394,8 +402,8 @@ def sync_to_qr(snapshot, config):
         "cash": total_cash,
         "updated_at": snapshot["generated_at"]
     }
-    with open(qr_path, "w") as f:
-        json.dump(qr_data, f, ensure_ascii=False, indent=2)
+    with atomic_text_writer(qr_path) as f:
+        json.dump(qr_data, f, ensure_ascii=False, indent=2, allow_nan=False)
     print(f"  ✅ QR portfolio.json 已同步")
 
 
@@ -446,7 +454,7 @@ def main():
     print(f"📊 生成 {date_str} 资产快照...")
 
     config = load_config()
-    holdings = load_holdings(date_str, config)
+    holdings = load_holdings(date_str, config, persist=not args.dry_run)
     if not holdings:
         sys.exit(1)
 
@@ -501,7 +509,7 @@ def main():
                         except (ValueError, IndexError):
                             prev_cost = None
                             migrated.append(parts[:8] + ["0", parts[5], parts[6]])
-                with open(history_path, "w") as f:
+                with atomic_text_writer(history_path) as f:
                     f.write(CSV_HEADER)
                     for row in migrated:
                         if not row[0].startswith(date_str):
@@ -510,12 +518,12 @@ def main():
             else:
                 # Header already has new columns
                 data_lines = [l for l in lines if not l.startswith("date,") and not l.startswith(f"{date_str},")]
-                with open(history_path, "w") as f:
+                with atomic_text_writer(history_path) as f:
                     f.write(CSV_HEADER)
                     f.writelines(data_lines)
                     f.write(new_row)
         else:
-            with open(history_path, "w") as f:
+            with atomic_text_writer(history_path) as f:
                 f.write(CSV_HEADER)
                 f.write(new_row)
 

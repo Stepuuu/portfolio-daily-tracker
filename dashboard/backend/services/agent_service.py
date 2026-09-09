@@ -174,8 +174,7 @@ class AgentService:
             get_market_news_tool,
             compare_stocks_tool,
             get_tracker_snapshot_tool,
-            update_holdings_tool,
-            run_portfolio_pipeline_tool,
+            propose_ledger_tool,
             ToolExecutor
         )
 
@@ -186,8 +185,7 @@ class AgentService:
             get_market_news_tool(self.news_provider),
             compare_stocks_tool(self.market_provider),
             get_tracker_snapshot_tool(),
-            update_holdings_tool(),
-            run_portfolio_pipeline_tool(),
+            propose_ledger_tool(),
         ]
 
         tool_executor = ToolExecutor(tools)
@@ -369,7 +367,7 @@ class AgentService:
                 extraction = await self.llm_extractor.extract(message, full_response)
 
                 # 调试：打印提取结果
-                print(f"[提取调试] 提取到的数据: {extraction}")
+
 
                 # 应用记忆更新
                 for update in extraction.get("memory_updates", []):
@@ -380,31 +378,10 @@ class AgentService:
                 if user_profile:
                     self._apply_profile_update(user_profile)
 
-                # 导入提取的持仓信息
+                # Image recognition is advisory; balances require an explicit ledger preview.
                 positions = extraction.get("positions", [])
-                print(f"[持仓导入] 提取到 {len(positions)} 个持仓")
                 imported_count = 0
-                for pos in positions:
-                    try:
-                        print(f"[持仓导入] 正在导入: {pos}")
-                        await self._import_position(pos)
-                        imported_count += 1
-                    except Exception as e:
-                        print(f"[持仓导入] 导入失败: {pos}, 错误: {e}")
-                        import traceback
-                        traceback.print_exc()
-
-                if imported_count > 0:
-                    print(f"[持仓导入] 成功导入 {imported_count} 个持仓")
-
-                # 导入现金余额
-                cash = extraction.get("cash")
-                if cash is not None and cash > 0:
-                    try:
-                        self.portfolio_provider.set_cash(cash)
-                        print(f"[现金导入] 成功设置现金余额: ¥{cash:,.2f}")
-                    except Exception as e:
-                        print(f"[现金导入] 设置失败: {e}")
+                full_response += "\n\n图片识别结果尚未入账。请在交易账本核对账户、日期、现金币种和数量后确认期初余额或交易。"
 
                 # 更新最近的建议和风险
                 self._recent_suggestions = extraction.get("suggestions", [])
@@ -417,7 +394,8 @@ class AgentService:
                     "sentiment": extraction.get("sentiment", "neutral"),
                     "memory_updates": extraction.get("memory_updates", []),
                     "imported_positions": imported_count,
-                    "cash_updated": cash is not None
+                    "cash_updated": False,
+                    "proposed_positions": positions
                 }
             else:
                 return {"response": full_response}
@@ -439,6 +417,10 @@ class AgentService:
         # 获取持仓信息
         portfolio = await self.portfolio_provider.get_portfolio()
         portfolio_summary = portfolio.to_summary()
+        from core.ledger import active_ledger, encode
+        ledger = active_ledger()
+        if ledger:
+            portfolio_summary = "Confirmed ledger (native currencies; average costs, not live valuations): " + encode(ledger.state())
 
         # 获取用户记忆
         memory_context = self.memory_manager.get_context_string()

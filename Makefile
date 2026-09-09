@@ -10,7 +10,7 @@
 #   make docker    — Start with Docker Compose
 #   make clean     — Remove __pycache__, node_modules, etc.
 
-.PHONY: setup start stop snapshot docker clean help backend frontend cli
+.PHONY: setup start stop snapshot docker clean help backend frontend cli test demo
 
 help:
 	@echo ""
@@ -23,6 +23,8 @@ help:
 	@echo "  make frontend   Start frontend only"
 	@echo "  make cli        Start CLI trading assistant"
 	@echo "  make snapshot   Generate today's portfolio snapshot"
+	@echo "  make demo       Explore fictional data, without API keys"
+	@echo "  make test       Run offline regression tests"
 	@echo "  make docker     Start with Docker Compose"
 	@echo "  make clean      Remove caches and temp files"
 	@echo ""
@@ -34,7 +36,7 @@ setup:
 	python3 -m pip install -r dashboard/requirements.txt
 	python3 -m pip install requests
 	@# Frontend deps
-	cd dashboard/frontend && npm install
+	cd dashboard/frontend && npm ci
 	@# Copy config templates (don't overwrite existing)
 	@[ -f dashboard/config.json ] || cp dashboard/config.example.json dashboard/config.json
 	@[ -f engine/portfolio/config.json ] || cp engine/portfolio/config.example.json engine/portfolio/config.json
@@ -49,6 +51,15 @@ setup:
 	@echo "  2. Edit engine/portfolio/config.json — set group names and cost basis"
 	@echo "  3. Create engine/portfolio/holdings/$$(date +%Y-%m-%d).json"
 	@echo "  4. Run: make start"
+
+# ── Development ──
+test:
+	python3 -m pytest -q
+
+demo:
+	@[ -d .demo/portfolio ] || python3 engine/scripts/create_demo.py --output .demo/portfolio
+	@echo "Open http://localhost:$${FRONTEND_PORT:-3000}/tracker — fictional data only"
+	PORTFOLIO_DIR="$(CURDIR)/.demo/portfolio" TRACKER_DEMO_MODE=1 bash start.sh
 
 # ── Development ──
 start:

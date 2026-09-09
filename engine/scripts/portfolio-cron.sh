@@ -16,7 +16,8 @@
 
 set -euo pipefail
 
-WORKSPACE="${PORTFOLIO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+WORKSPACE="$(cd "$(dirname "$0")/.." && pwd)"
+export PORTFOLIO_DIR="${PORTFOLIO_DIR:-$WORKSPACE/portfolio}"
 SCRIPT="$WORKSPACE/scripts/portfolio_daily_update.py"
 CONDA="${CONDA:-$(which conda 2>/dev/null || echo conda)}"
 TODAY=$(date +%Y-%m-%d)

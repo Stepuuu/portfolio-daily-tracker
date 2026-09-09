@@ -1,11 +1,18 @@
+import api from '@/services/api'
 import { RefreshCw, Bell } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useLocation } from 'react-router-dom'
 import { portfolioService } from '@/services'
 
 export default function Header() {
+  const pathname = useLocation().pathname
+  const ledgerState = useQuery({ queryKey: ['ledger'], queryFn: async () => (await api.get('/ledger')).data })
+  const onTracker = pathname === '/tracker' || pathname === '/ledger' || Boolean(ledgerState.data?.revision)
+  const queryClient = useQueryClient()
   const { data: portfolio, refetch, isRefetching } = useQuery({
     queryKey: ['portfolio', 'live'],
     queryFn: portfolioService.getLivePortfolio,
+    enabled: ledgerState.isSuccess && !onTracker,
     refetchInterval: 60000, // 每分钟自动刷新
     refetchOnWindowFocus: false,
   })
@@ -21,7 +28,8 @@ export default function Header() {
     <header className="flex h-16 items-center justify-between border-b border-slate-700 bg-slate-800 px-6">
       {/* 账户概览 */}
       <div className="flex items-center space-x-8">
-        {portfolio && (
+        {onTracker && <span className="text-sm text-slate-400">账户记录 · 市值以跟踪快照日期为准</span>}
+        {!onTracker && portfolio && (
           <>
             <div>
               <div className="text-sm text-slate-400">总资产</div>
@@ -58,7 +66,7 @@ export default function Header() {
       {/* 操作按钮 */}
       <div className="flex items-center space-x-4">
         <button
-          onClick={() => refetch()}
+          onClick={() => onTracker ? queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith('tracker-') }) : refetch()}
           disabled={isRefetching}
           className="flex items-center px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
           title="刷新数据"

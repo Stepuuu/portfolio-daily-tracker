@@ -25,7 +25,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE="${PORTFOLIO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+PORTFOLIO_ROOT="${PORTFOLIO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)/portfolio}"
 TODAY=$(date +%Y-%m-%d)
 DOW=$(date +%u)   # 1=Mon..7=Sun
 ACTION="${1:-notify}"
@@ -44,7 +44,7 @@ if echo "$HOLIDAYS" | grep -qw "$TODAY"; then
 fi
 
 UPDATER="$SCRIPT_DIR/portfolio_daily_update.py"
-export PORTFOLIO_DIR="$WORKSPACE"
+export PORTFOLIO_DIR="$PORTFOLIO_ROOT"
 
 case "$ACTION" in
     notify)

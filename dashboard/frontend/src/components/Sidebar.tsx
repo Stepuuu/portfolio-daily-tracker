@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   MessageSquare,
   Wallet,
   Brain,
@@ -13,6 +14,7 @@ import { clsx } from 'clsx'
 
 const navItems = [
   { icon: MessageSquare, label: '对话', path: '/' },
+  { icon: BookOpen, label: '账本', path: '/ledger' },
   { icon: Wallet, label: '持仓', path: '/portfolio' },
   { icon: LineChart, label: '跟踪', path: '/tracker' },
   { icon: TrendingUp, label: '行情', path: '/market' },
@@ -29,15 +31,15 @@ export default function Sidebar() {
   const location = useLocation()
 
   return (
-    <aside className="flex w-64 flex-col bg-slate-800 border-r border-slate-700">
+    <aside className="flex w-16 md:w-64 shrink-0 flex-col bg-slate-800 border-r border-slate-700">
       {/* Logo */}
-      <div className="flex h-16 items-center px-6 border-b border-slate-700">
+      <div className="flex h-16 items-center px-4 md:px-6 border-b border-slate-700">
         <TrendingUp className="h-8 w-8 text-primary-500" />
-        <span className="ml-3 text-xl font-bold">交易助手</span>
+        <span className="hidden md:inline ml-3 text-xl font-bold">交易助手</span>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-4 space-y-1">
+      <nav className="flex-1 px-2 md:px-4 py-4 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive = location.pathname === item.path
@@ -46,22 +48,24 @@ export default function Sidebar() {
             <Link
               key={item.path}
               to={item.path}
+              title={item.label}
+              aria-label={item.label}
               className={clsx(
-                'flex items-center px-4 py-3 rounded-lg transition-colors',
+                'flex items-center px-2 md:px-4 py-3 rounded-lg transition-colors',
                 isActive
                   ? 'bg-primary-600 text-white'
                   : 'text-slate-300 hover:bg-slate-700 hover:text-white'
               )}
             >
               <Icon className="h-5 w-5" />
-              <span className="ml-3">{item.label}</span>
+              <span className="hidden md:inline ml-3">{item.label}</span>
             </Link>
           )
         })}
       </nav>
 
       {/* Bottom Navigation */}
-      <div className="border-t border-slate-700 px-4 py-4 space-y-1">
+      <div className="border-t border-slate-700 px-2 md:px-4 py-4 space-y-1">
         {bottomItems.map((item) => {
           const Icon = item.icon
           const isActive = location.pathname === item.path
@@ -70,15 +74,17 @@ export default function Sidebar() {
             <Link
               key={item.path}
               to={item.path}
+              title={item.label}
+              aria-label={item.label}
               className={clsx(
-                'flex items-center px-4 py-3 rounded-lg transition-colors',
+                'flex items-center px-2 md:px-4 py-3 rounded-lg transition-colors',
                 isActive
                   ? 'bg-primary-600 text-white'
                   : 'text-slate-300 hover:bg-slate-700 hover:text-white'
               )}
             >
               <Icon className="h-5 w-5" />
-              <span className="ml-3">{item.label}</span>
+              <span className="hidden md:inline ml-3">{item.label}</span>
             </Link>
           )
         })}

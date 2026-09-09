@@ -5,13 +5,18 @@ from typing import Optional
 from pathlib import Path
 import json
 import os
+import copy
+from urllib.parse import urlparse
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
 class Config:
     """全局配置"""
 
     def __init__(self, config_file: str = "config.json"):
-        self.config_file = Path(config_file)
+        self.config_file = Path(os.environ.get("TRACKER_CONFIG_FILE", config_file))
         self._data = {}
         self._load()
 
@@ -254,7 +259,20 @@ class Config:
     def get_current_api_group(self) -> dict:
         """获取当前使用的 API 组"""
         group_name = self._data.get("current_api_group", "xhub")
-        return self._data.get("api_groups", {}).get(group_name, {})
+        group = copy.deepcopy(self._data.get("api_groups", {}).get(group_name, {}))
+        # Read secrets at use time so saving unrelated settings never persists them.
+        hostname = urlparse(group.get("base_url", "")).hostname
+        env_name = {"api.openai.com": "OPENAI_API_KEY", "api.anthropic.com": "ANTHROPIC_API_KEY"}.get(hostname)
+        api_key = os.environ.get(env_name, "") if env_name else ""
+        if api_key:
+            group["api_key"] = api_key
+            headers = group.get("headers")
+            if headers:
+                if hostname == "api.openai.com":
+                    headers["Authorization"] = f"Bearer {api_key}"
+                else:
+                    headers["x-api-key"] = api_key
+        return group
 
     def get_all_api_groups(self) -> dict:
         """获取所有 API 组"""

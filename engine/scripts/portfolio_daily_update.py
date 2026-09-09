@@ -28,8 +28,10 @@ import json, os, sys, argparse, glob, copy, subprocess, re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from portfolio_accounting import currency_from_text, atomic_text_writer, atomic_json_dump, cash_balances, set_cash_balance
+
 BASE_DIR = Path(__file__).parent
-PORTFOLIO_DIR = BASE_DIR.parent / "portfolio"
+PORTFOLIO_DIR = Path(os.environ.get("PORTFOLIO_DIR", str(BASE_DIR.parent / "portfolio")))
 CONFIG_PATH = PORTFOLIO_DIR / "config.json"
 HOLDINGS_DIR = PORTFOLIO_DIR / "holdings"
 SNAPSHOTS_DIR = PORTFOLIO_DIR / "snapshots"
@@ -57,6 +59,8 @@ def clone_holdings(date_str):
     
     Returns (path, is_new) — path to today's holdings, whether it was newly created.
     """
+    from ledger_bridge import guard_legacy_write
+    guard_legacy_write(PORTFOLIO_DIR)
     today_file = HOLDINGS_DIR / f"{date_str}.json"
     
     if today_file.exists():
@@ -81,8 +85,8 @@ def clone_holdings(date_str):
     data["cloned_from"] = prev_file.stem
     
     HOLDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(today_file, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with atomic_text_writer(today_file) as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
     
     print(f"  ✅ 从 {prev_file.name} 克隆持仓 → {today_file.name}")
     return today_file, True
@@ -99,10 +103,12 @@ def load_holdings(date_str):
 
 def save_holdings(holdings, date_str):
     """Save holdings to file."""
+    from ledger_bridge import guard_legacy_write
+    guard_legacy_write(PORTFOLIO_DIR)
     path = HOLDINGS_DIR / f"{date_str}.json"
     holdings["updated_at"] = datetime.now().isoformat()
-    with open(path, "w") as f:
-        json.dump(holdings, f, ensure_ascii=False, indent=2)
+    with atomic_text_writer(path) as f:
+        json.dump(holdings, f, ensure_ascii=False, indent=2, allow_nan=False)
     print(f"  ✅ 持仓已更新: {path.name}")
     return path
 
@@ -255,7 +261,7 @@ def _parse_single_change(holdings, text):
         group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
         amount = _parse_money_number(cash_match.group(2))
         if amount is not None and group:
-            return {"action": "set_cash", "group": group, "value": amount, "description": f"{group}现金→{amount}"}
+            return {"action": "set_cash", "group": group, "value": amount, **({"currency": currency_from_text(text)} if currency_from_text(text) != "CNY" else {}), "description": f"{group}现金→{amount}"}
     
     # Pattern: fund changes — "基金变为16万" / "进攻基金155900"
     fund_match = re.search(r'(?:(.+?)(?:账户|组))?.*?基金.*?(?:变为|改为|=|:)?[：:]?\s*([-\d.万]+)', text)
@@ -303,7 +309,9 @@ def _parse_single_change(holdings, text):
             _qty, _name = int(sell_match.group(1)), sell_match.group(2).strip()
         gname, idx, pos = _find_group_and_position(holdings, _name)
         if pos:
-            new_qty = max(0, pos["quantity"] - _qty)
+            if _qty > pos["quantity"]:
+                raise ValueError(f"Cannot sell {_qty} shares; only {pos['quantity']} held")
+            new_qty = pos["quantity"] - _qty
             _sell_result = {
                 "action": "set_quantity" if new_qty > 0 else "remove_position",
                 "group": gname, "position_index": idx, "name": pos["name"],
@@ -421,7 +429,7 @@ def _apply_single_change(holdings, change):
         return
     
     if action == "set_cash":
-        holdings["groups"][change["group"]]["cash"] = change["value"]
+        set_cash_balance(holdings["groups"][change["group"]], change["value"], change.get("currency", "CNY"))
     
     elif action == "set_fund":
         holdings["groups"][change["group"]]["fund"] = change["value"]
@@ -464,6 +472,8 @@ def _infer_missing_cost_prices(holdings_before, changes):
             continue
 
         before_group = holdings_before.get("groups", {}).get(group, {})
+        if "cash_balances" in before_group:
+            continue
         old_cash = before_group.get("cash")
         old_fund = before_group.get("fund")
 
@@ -677,6 +687,9 @@ def action_update(date_str, text):
     # Parse and apply changes
     print(f"\n  解析变更: {text[:100]}...")
     changes = parse_and_apply_changes(holdings, text)
+    if any(change.get("action") == "unknown" for change in changes):
+        print("  ❌ 部分内容未识别，未保存任何变更。请拆分或使用结构化 CLI。", file=sys.stderr)
+        return False
     _infer_missing_cost_prices(holdings_before, changes)
     
     for c in changes:

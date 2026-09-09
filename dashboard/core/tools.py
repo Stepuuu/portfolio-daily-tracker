@@ -148,6 +148,10 @@ def get_stock_quote_tool(market_provider) -> Tool:
 def get_portfolio_tool(portfolio_provider) -> Tool:
     """获取持仓信息工具"""
     async def get_portfolio() -> Dict:
+        from core.ledger import active_ledger
+        ledger = active_ledger()
+        if ledger:
+            return {"source": "confirmed_ledger", "valuation": "native balances and average costs, not live market values", **ledger.state()}
         """
         获取用户当前的持仓信息
 
@@ -352,101 +356,8 @@ def get_tracker_snapshot_tool() -> Tool:
         Returns:
             包含分组持仓、汇总指标、量化数据的详细字典
         """
-        import json
-        from pathlib import Path
-
-        snapshot_dir = Path(__file__).parent.parent / "data"
-        portfolio_file = snapshot_dir / "portfolio.json"
-
-        # Also check the dedicated portfolio tracker data
-        tracker_dir = Path(os.environ.get("PORTFOLIO_DIR", str(Path(__file__).parent.parent.parent / "engine" / "portfolio")))
-        snapshots_dir = tracker_dir / "snapshots"
-        history_file = tracker_dir / "history.csv"
-
-        # Load snapshot
-        snapshot = None
-        if date and snapshots_dir.exists():
-            snap_file = snapshots_dir / f"{date}.json"
-            if snap_file.exists():
-                snapshot = json.loads(snap_file.read_text())
-        elif portfolio_file.exists():
-            snapshot = json.loads(portfolio_file.read_text())
-        elif snapshots_dir.exists():
-            # Get latest snapshot
-            snap_files = sorted(snapshots_dir.glob("*.json"), reverse=True)
-            if snap_files:
-                snapshot = json.loads(snap_files[0].read_text())
-
-        if not snapshot:
-            return {"error": "未找到快照数据"}
-
-        # Build rich summary
-        result: Dict[str, Any] = {
-            "date": snapshot.get("date"),
-            "summary": snapshot.get("summary", {}),
-            "groups": {},
-        }
-
-        # Per-group detail with leverage info
-        for gname, g in snapshot.get("groups", {}).items():
-            positions = []
-            for p in g.get("positions", []):
-                positions.append({
-                    "name": p["name"],
-                    "ticker": p["ticker"],
-                    "quantity": p["quantity"],
-                    "cost_price": p["cost_price"],
-                    "current_price": p["current_price"],
-                    "currency": p.get("currency", "CNY"),
-                    "market_value_cny": p["market_value_cny"],
-                    "profit_cny": p["profit_cny"],
-                    "profit_pct": p["profit_pct"],
-                })
-
-            cash = g.get("cash", 0)
-            fund = g.get("fund", 0)
-            pos_val = g.get("positions_value", 0)
-            has_margin = cash < 0
-            margin = abs(cash) if has_margin else 0
-            gross_asset = pos_val + fund
-            leverage = gross_asset / g["total_value"] if g["total_value"] != 0 and has_margin else 1.0
-
-            result["groups"][gname] = {
-                "cost_basis": g.get("cost_basis"),
-                "total_value": g["total_value"],
-                "positions_value": pos_val,
-                "fund": fund,
-                "cash": cash,
-                "profit": g.get("profit"),
-                "return_pct": g.get("return_pct"),
-                "has_margin": has_margin,
-                "margin_amount": margin,
-                "leverage_ratio": round(leverage, 2),
-                "positions": positions,
-            }
-
-        # Load recent history (last 10 rows) for context
-        if history_file.exists():
-            import csv
-            rows = []
-            with open(history_file) as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-            recent = rows[-10:] if len(rows) > 10 else rows
-            recent.reverse()
-            result["recent_history"] = [
-                {
-                    "date": r["date"],
-                    "total_value": float(r["total_value"]),
-                    "total_cost": float(r["total_cost"]),
-                    "daily_change": float(r["daily_change"]),
-                    "daily_change_pct": float(r["daily_change_pct"]),
-                    "return_pct": float(r["return_pct"]),
-                }
-                for r in recent
-            ]
-
-        return result
+        from backend.api.portfolio_tracker import get_snapshot
+        return await get_snapshot(date=date or None)
 
     return Tool(
         name="get_tracker_snapshot",
@@ -635,3 +546,19 @@ class ToolExecutor:
             return result
         except Exception as e:
             return {"error": f"工具执行失败: {str(e)}"}
+
+
+def propose_ledger_tool() -> Tool:
+    """The model may prepare a proposal, but has no confirmation or publication tool."""
+    async def propose_ledger(events: List[Dict]) -> Dict:
+        from core.ledger import Ledger, portfolio_directory
+        proposal = Ledger(portfolio_directory() / 'ledger.sqlite3').propose(events)
+        return {**proposal, "status": "awaiting_user_confirmation", "review_url": "/ledger",
+                "message": "Nothing has been booked. Ask the user to review and confirm this proposal on the ledger page."}
+
+    return Tool(
+        name="propose_ledger_events",
+        description="Prepare (never execute) a transaction preview. Only use explicit user-provided amounts, dates and currencies. Missing values must be clarified. Review and confirmation happen on /ledger. Events: buy/sell (ticker exchange:code, currency, quantity, price, fee), deposit/withdrawal/dividend/fee (currency, amount; foreign cash flows need fx_rate in CNY), transfer, fx, split; fund_buy/fund_sell (amount and fee in CNY), fund_value (reconciled total amount in CNY). Each needs kind, date YYYY-MM-DD, account. Create opening balances in the UI first. Never claim a proposal was applied.",
+        parameters=[ToolParameter(name="events", type=ToolParameterType.ARRAY,
+                                  description="Transaction objects with explicit native currency amounts", items={"type": "object"})],
+        function=propose_ledger)

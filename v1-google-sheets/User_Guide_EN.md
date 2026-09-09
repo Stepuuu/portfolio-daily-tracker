@@ -1,3 +1,5 @@
+> Legacy archive: this directory retains Google Sheets scripts and guides, without populated Office attachments. New users should use the main application ledger. Existing users may configure their own blank workbook as described below.
+
 # User Guide (English)
 
 ## Table of Contents
@@ -54,7 +56,7 @@ Investment Portfolio Automation Tool is a Google Apps Script-based tool designed
 
 ### Step 2: Upload Template File
 
-1. Download `template/模板.xlsx` from this repository
+1. Use your own blank workbook as a template and configure it using this guide
 2. Upload it to your Google Drive folder
 3. **Do not rename the template file** - keep it as `模板`
 

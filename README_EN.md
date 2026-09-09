@@ -1,3 +1,7 @@
+> The ledger supports opening migration, trade preview and confirmation, CSV deduplication, reversals, backups and research notes. AI and image recognition do not automatically book trades. Docker is optional; run directly inside an existing container. See the [ledger guide](docs/LEDGER.md).
+
+> Upgrade: use Python 3.10+, Node.js 22.12+ and Bash 4.3+. After `make setup`, try `make demo` without API keys. Read [accounting conventions](docs/ACCOUNTING.md) and the [roadmap](docs/ROADMAP.md).
+
 <div align="center">
 
 # 📊 Portfolio Daily Tracker
@@ -5,7 +9,7 @@
 **A comprehensive self-hosted investment portfolio tracking & AI trading assistant**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
 [![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
@@ -376,13 +380,15 @@ This project ships a **complete multi-page AI trading assistant** — far beyond
 | New position | `New: Apple ticker:NASDAQ:AAPL qty:50 cost:175.5` | Add new position |
 | Cost adjust | `Aggressive cost basis 620000` | Adjust group cost basis |
 
+These legacy CLI parsing rules apply only before ledger activation. The ledger requires explicit transaction prices, quantities and native amounts.
+
 Multiple changes can be comma/semicolon separated. Supports the Chinese `万` (10k) suffix, and for cash/fund fields it also accepts shorthand decimals like `-44.273` or `15.635` as `-44.273万` / `15.635万`. If a newly added position omits `cost_price`, the parser will try to infer it from same-message cash/fund deltas.
 
 ### 📋 V1: Google Sheets Version
 
 The original V1 uses Google Sheets + Apps Script. Suitable for users who don't want to self-host:
 - `v1-google-sheets/code.gs` — Apps Script source
-- `v1-google-sheets/*.xlsx` — Spreadsheet templates
+- `v1-google-sheets/` — Legacy Google Sheets scripts and guides
 - `v1-google-sheets/User_Guide_EN.md` — English guide
 
 ### 🆚 Version Comparison

@@ -49,3 +49,14 @@ venv/
 
 # ── Docker ──
 .env
+.demo/
+.pytest_cache/
+engine/portfolio/transactions/
+
+.runtime/
+
+# Local account and research databases
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*

@@ -8,6 +8,7 @@
   - 反思分析: LLM 反思 + 规则分析
 """
 import json
+import re
 import logging
 import asyncio
 import inspect
@@ -447,7 +448,11 @@ async def get_strategy_source(strategy_id: str):
 @router.post("/strategies/upload", summary="上传自定义策略")
 async def upload_strategy(req: StrategyUploadModel):
     """上传自定义策略 Python 文件。要求: 文件中包含至少一个继承自 Strategy 的类。"""
+    if os.environ.get("TRACKER_ALLOW_CUSTOM_STRATEGIES") != "1":
+        raise HTTPException(status_code=403, detail="自定义策略会执行 Python，仅可信本地环境可设置 TRACKER_ALLOW_CUSTOM_STRATEGIES=1 启用")
     filename = req.filename
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.py)?", filename):
+        raise HTTPException(status_code=422, detail="策略文件名只允许字母、数字和下划线")
     if not filename.endswith(".py"):
         filename += ".py"
     filepath = CUSTOM_STRATEGY_DIR / filename

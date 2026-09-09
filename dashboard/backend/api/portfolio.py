@@ -35,6 +35,9 @@ def get_service():
 @router.get("")
 async def get_portfolio():
     """获取持仓列表"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, "账本已启用，请在交易账本查看和记录持仓；市值请查看每日跟踪快照。")
     service = get_service()
     return await service.get_portfolio()
 
@@ -42,6 +45,9 @@ async def get_portfolio():
 @router.get("/live")
 async def get_live_portfolio():
     """刷新行情后获取持仓列表"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, "账本已启用，请在交易账本查看和记录持仓；市值请查看每日跟踪快照。")
     service = get_service()
     await service.refresh_portfolio()
     return await service.get_portfolio()
@@ -50,6 +56,9 @@ async def get_live_portfolio():
 @router.post("/add")
 async def add_position(request: AddPositionRequest):
     """添加持仓"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, "账本已启用，请在交易账本查看和记录持仓；市值请查看每日跟踪快照。")
     service = get_service()
 
     await service.add_position(
@@ -66,6 +75,9 @@ async def add_position(request: AddPositionRequest):
 @router.put("/{symbol}")
 async def update_position(symbol: str, request: UpdatePositionRequest):
     """更新持仓"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, "账本已启用，请在交易账本查看和记录持仓；市值请查看每日跟踪快照。")
     service = get_service()
     await service.update_position(
         symbol=symbol,
@@ -78,6 +90,9 @@ async def update_position(symbol: str, request: UpdatePositionRequest):
 @router.delete("/{symbol}")
 async def remove_position(symbol: str):
     """删除持仓"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, "账本已启用，请在交易账本查看和记录持仓；市值请查看每日跟踪快照。")
     service = get_service()
     await service.remove_position(symbol)
     return {"message": f"已删除持仓: {symbol}"}
@@ -94,6 +109,9 @@ async def refresh_portfolio():
 @router.get("/summary")
 async def get_portfolio_summary():
     """获取持仓摘要"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, "账本已启用，请在交易账本查看和记录持仓；市值请查看每日跟踪快照。")
     service = get_service()
     portfolio = await service.get_portfolio()
 

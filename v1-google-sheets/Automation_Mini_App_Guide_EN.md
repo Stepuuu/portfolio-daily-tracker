@@ -1,22 +1,15 @@
 # Automation Mini App Guide (Must Read)
 
-This document is an English translation of `自动化小程序使用说明--必读.docx`.
-
-## Author
-
-- Xiaohongshu ID: `stepccc`
-
-## Tool Link
-
-- https://example.invalid/removed-private-share-link
+Historical setup notes for the Google Sheets script. Populated workbooks and
+hosted copies are not distributed. New users should use the main application ledger.
 
 ## Setup Flow
 
 1. Create your own folder in Google Drive.
 2. Open the folder in the browser and copy its folder ID from the URL:
-   - Example URL: `https://drive.google.com/drive/folders/xxxxxx`
-   - The folder ID is the last `xxxxxx` part.
-3. Open the provided folder `自动化投资记录分享-v0.1`, copy the template into your own folder, then edit it:
+   - Example URL: `https://drive.google.com/drive/folders/YOUR_FOLDER_ID`
+   - The folder ID is the last path segment.
+3. Create a blank workbook in your own folder and configure it:
    - Column A: replace with your holdings' company names.
    - Column B: fill stock symbols/tickers.
    - Column C: fill share counts.

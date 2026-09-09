@@ -1,3 +1,5 @@
+import { Navigate } from 'react-router-dom'
+import api from '@/services/api'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { TrendingUp, TrendingDown, RefreshCw, Edit2, Trash2, X, Save } from 'lucide-react'
@@ -83,7 +85,7 @@ function EditPositionDialog({ position, onClose, onSave }: EditPositionDialogPro
   )
 }
 
-export default function Portfolio() {
+function LegacyPortfolio() {
   const queryClient = useQueryClient()
   const [editingPosition, setEditingPosition] = useState<Position | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
@@ -289,4 +291,11 @@ export default function Portfolio() {
       )}
     </div>
   )
+}
+
+export default function Portfolio() {
+  const state = useQuery({ queryKey: ['ledger'], queryFn: async () => (await api.get('/ledger')).data })
+  if (state.isPending) return <p>正在读取账户…</p>
+  if (state.isError) return <p role="alert">账户状态读取失败。<button onClick={() => void state.refetch()}>重试</button></p>
+  return state.data?.revision ? <Navigate to="/ledger" replace /> : <LegacyPortfolio />
 }

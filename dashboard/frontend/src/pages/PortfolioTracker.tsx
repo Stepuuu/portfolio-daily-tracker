@@ -555,7 +555,7 @@ export default function PortfolioTracker() {
     queryFn: trackerService.getDates,
   })
 
-  const { data: snapshot, isLoading: snapshotLoading } = useQuery({
+  const { data: snapshot, isLoading: snapshotLoading, error: snapshotError, refetch: refetchSnapshot } = useQuery({
     queryKey: ['tracker-snapshot', selectedDate],
     queryFn: () => trackerService.getSnapshot(selectedDate),
     retry: 1,
@@ -601,7 +601,9 @@ export default function PortfolioTracker() {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-4">
         <BarChart3 className="h-16 w-16 text-slate-600" />
-        <p>暂无投资组合快照数据</p>
+        <p>{snapshotError && (snapshotError as { response?: { status?: number } }).response?.status !== 404
+          ? '快照加载失败，请检查后端服务后重试。' : '还没有投资组合快照。请先录入持仓并生成第一份快照。'}</p>
+        <button className="rounded border border-slate-600 px-4 py-2" onClick={() => refetchSnapshot()}>重新加载</button>
       </div>
     )
   }
@@ -609,9 +611,9 @@ export default function PortfolioTracker() {
   const s = snapshot.summary
 
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-full">
+    <div className="p-2 md:p-6 space-y-6 overflow-y-auto h-full">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center space-x-3">
           <Calendar className="h-5 w-5 text-primary-400" />
           <h1 className="text-xl font-bold">投资组合跟踪</h1>
@@ -634,23 +636,35 @@ export default function PortfolioTracker() {
         </div>
       </div>
 
+      {snapshot.demo && <div role="status" className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-4 text-sm text-sky-200">演示数据 · 所有价格、持仓和收益均为虚构，未连接真实账户。</div>}
+      {snapshot.synthetic && <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">当日完整快照缺失：资产汇总来自历史记录，持仓明细沿用 {snapshot.positions_as_of || '未知日期'}，不能作为当日成交或持仓证明。</div>}
+      {!!(snapshot.market_data?.cached_prices?.length || snapshot.market_data?.fx_fallbacks?.length) && (
+        <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          部分估值使用备用数据，请核对后再用于复盘。
+          {snapshot.market_data?.cached_prices?.map(item => <div key={item.ticker}>{item.ticker}：沿用 {item.snapshot_date} 价格</div>)}
+          {snapshot.market_data?.fx_fallbacks?.map(item => <div key={item.currency}>{item.currency} 汇率：{item.source}</div>)}
+        </div>
+      )}
+
       {/* KPI Cards */}
       {(() => {
         // Calculate leverage info from negative cash
         let totalMargin = 0
         let totalPositionsVal = 0
         for (const g of Object.values(snapshot.groups)) {
-          if (g.cash < 0) totalMargin += Math.abs(g.cash)
+          totalMargin += Object.values(g.cash_values_cny || { CNY: g.cash }).reduce(
+            (sum, value) => sum + (value < 0 ? Math.abs(value) : 0), 0
+          )
           totalPositionsVal += g.positions_value + (g.fund || 0)
         }
-        const leverageRatio = totalMargin > 0 ? (totalPositionsVal + totalMargin) / s.total_value : 1
+        const leverageRatio = s.total_value > 0 ? totalPositionsVal / s.total_value : 0
         const netAsset = s.total_value
         // Use market_daily_change (excludes capital injections) for rate display
         const mdc = s.market_daily_change ?? s.daily_change
-        const prevNetAsset = netAsset - mdc
-        const netDailyPct = prevNetAsset !== 0 ? (mdc / prevNetAsset) * 100 : 0
+        const prevNetAsset = s.prev_total_value ?? (netAsset - s.daily_change)
+        const netDailyPct = s.market_daily_change_pct ?? (prevNetAsset !== 0 ? (mdc / prevNetAsset) * 100 : 0)
         // Gross asset daily change rate (based on total positions incl. margin)
-        const grossAsset = totalPositionsVal + totalMargin
+        const grossAsset = totalPositionsVal
         const prevGrossAsset = grossAsset - mdc
         const grossDailyPct = prevGrossAsset !== 0 ? (mdc / prevGrossAsset) * 100 : 0
 
@@ -716,7 +730,7 @@ export default function PortfolioTracker() {
             {fmt(s.max_drawdown_pct, 2)}%
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            TWR 调整
+            资金流调整（近似）
           </div>
         </div>
       </div>
@@ -750,7 +764,13 @@ export default function PortfolioTracker() {
       {/* Position Tables per Group */}
       <div className="space-y-4">
         {Object.entries(snapshot.groups).map(([name, group]) => (
-          <PositionTable key={name} groupName={name} group={group} prevGroup={prevSnapshot?.groups?.[name]} />
+          <div key={name}>
+            {group.cash_balances && <div className="mb-2 text-xs text-slate-400">
+              {name} 原币现金：{Object.entries(group.cash_balances).map(([currency, amount]) => `${currency} ${fmt(amount)}`).join(' · ')}
+              <span className="ml-2">合计 CNY {fmt(group.cash)}</span>
+            </div>}
+            <PositionTable groupName={name} group={group} prevGroup={prevSnapshot?.groups?.[name]} />
+          </div>
         ))}
       </div>
 

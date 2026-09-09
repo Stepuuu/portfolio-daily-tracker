@@ -1,3 +1,5 @@
+> 账本启用后，`get_portfolio` 返回已确认的原币余额和平均成本，估值使用 `get_tracker_snapshot`。`propose_ledger_events` 仅生成待确认方案；请在 `/ledger` 核对并确认。对话工具不再直接更新持仓或运行推送。图片识别也不会自动写入余额。详见 [账本指南](../../docs/LEDGER.md)。
+
 # Agent 工具系统 (Agent Tools System)
 
 ## 功能概述

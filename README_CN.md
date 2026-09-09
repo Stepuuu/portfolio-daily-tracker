@@ -1,3 +1,7 @@
+> 交易账本：期初迁移、交易预览与确认、CSV 去重、冲销、备份和研究复盘已可使用。AI 和截图识别不会自动入账。无需 Docker；可直接在已有容器实例中启动。详见 [账本指南](docs/LEDGER.md)。
+
+> 升级说明：本地启动使用 Python 3.10+、Node.js 22.12+ 和 Bash 4.3+。先运行 `make setup`，再用 `make demo` 体验不需要 API Key 的虚构组合。多币种现金与收益口径见 [ACCOUNTING](docs/ACCOUNTING.md)，后续计划见 [ROADMAP](docs/ROADMAP.md)。
+
 <div align="center">
 
 # 📊 投资组合日报追踪器
@@ -5,7 +9,7 @@
 **全功能自托管投资组合追踪 & AI 交易助手**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
 [![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
@@ -375,13 +379,15 @@ nohup python engine/scripts/portfolio_scheduler.py &
 | 新增 | `新增 苹果 ticker:NASDAQ:AAPL 数量:50 成本:175.5` | 添加新股票 |
 | 成本调整 | `进攻成本调整为620000` | 修改组成本基础 |
 
+**以下为旧版 CLI 解析规则，启用账本后不再用于写入持仓。账本要求显式价格、数量和原币金额，不会反推成交价。**
+
 多条变更用逗号 `,` 或分号 `；` 分隔。数字支持 `万` 后缀；对现金/基金字段，像 `-44.273`、`15.635` 这类省略 `万` 的写法也会自动按“万”解析。若新增持仓未填写成本价，系统会尝试根据同一条消息里的现金/基金变动反推单股成本。
 
 ### 📋 V1：Google Sheets 版本
 
 V1 基于 Google Sheets + Apps Script，适合不想自托管的用户：
 - `v1-google-sheets/code.gs` — Apps Script 源码
-- `v1-google-sheets/*.xlsx` — Excel 模板
+- `v1-google-sheets/` — 历史 Google Sheets 脚本与指南
 - `v1-google-sheets/User_Guide_CN.md` — 中文使用指南
 
 ### 🆚 版本对比

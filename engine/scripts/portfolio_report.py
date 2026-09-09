@@ -9,7 +9,7 @@ import json, os, sys, argparse, glob
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PORTFOLIO_DIR = os.path.join(os.path.dirname(BASE_DIR), "portfolio")
+PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
 
 
 def load_snapshot(date_str):

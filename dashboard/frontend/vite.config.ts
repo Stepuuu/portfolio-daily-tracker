@@ -5,7 +5,7 @@ import path from 'path'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
   const frontendPort = Number(env.FRONTEND_PORT || '3000')
-  const backendPort = Number(env.BACKEND_PORT || '18000')
+  const backendPort = Number(env.BACKEND_PORT || '8000')
   const backendHost = env.BACKEND_HOST || '127.0.0.1'
 
   return {
@@ -17,7 +17,8 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: frontendPort,
-      host: '0.0.0.0',
+      host: env.FRONTEND_HOST || '127.0.0.1',
+      strictPort: true,
       proxy: {
         '/api': {
           target: `http://${backendHost}:${backendPort}`,

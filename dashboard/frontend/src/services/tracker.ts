@@ -21,6 +21,8 @@ export interface TrackerGroup {
   positions: TrackerPosition[]
   fund: number
   cash: number
+  cash_balances?: Record<string, number>
+  cash_values_cny?: Record<string, number>
   positions_value: number
   total_value: number
   profit: number
@@ -30,6 +32,13 @@ export interface TrackerGroup {
 export interface TrackerSnapshot {
   date: string
   generated_at: string
+  synthetic?: boolean
+  demo?: boolean
+  positions_as_of?: string | null
+  market_data?: {
+    cached_prices?: { ticker: string; snapshot_date: string }[]
+    fx_fallbacks?: { currency: string; source: string }[]
+  }
   fx_rates: Record<string, number>
   groups: Record<string, TrackerGroup>
   summary: {

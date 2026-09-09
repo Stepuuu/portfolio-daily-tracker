@@ -2,6 +2,7 @@
 FastAPI 后端主入口
 """
 import sys
+import os
 from pathlib import Path
 
 # 添加项目路径
@@ -12,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from backend.api import chat, portfolio, market, memory, suggestions, settings
-from backend.api import backtest, portfolio_tracker
+from backend.api import backtest, portfolio_tracker, ledger
 from backend.services.agent_service import AgentService
 
 
@@ -24,6 +25,10 @@ agent_service: AgentService = None
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global agent_service
+
+    if os.environ.get("TRACKER_DEMO_MODE") == "1":
+        yield
+        return
 
     # 启动时初始化服务
     print("正在初始化服务...")
@@ -40,9 +45,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="交易助手 API",
     description="智能股票交易辅助系统 API",
-    version="3.0.0",
+    version="3.1.0",
     lifespan=lifespan
 )
+
+# 配置 CORS
+@app.middleware("http")
+async def protect_demo_data(request, call_next):
+    if os.environ.get("TRACKER_DEMO_MODE") == "1" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"detail": "Demo mode is read-only"})
+    return await call_next(request)
+
 
 # 配置 CORS
 app.add_middleware(
@@ -61,6 +75,7 @@ app.include_router(memory.router, prefix="/api/memory", tags=["记忆"])
 app.include_router(suggestions.router, prefix="/api/suggestions", tags=["建议"])
 app.include_router(settings.router, prefix="/api/settings", tags=["设置"])
 app.include_router(backtest.router, tags=["回测"])
+app.include_router(ledger.router, prefix="/api/ledger", tags=["账本"])
 app.include_router(portfolio_tracker.router, prefix="/api/tracker", tags=["投资组合跟踪"])
 
 
@@ -69,7 +84,7 @@ async def root():
     """根路径"""
     return {
         "name": "交易助手 API",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "status": "running",
         "docs": "/docs"
     }

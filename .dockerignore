@@ -1,0 +1,13 @@
+# Only the standalone engine and its accounting module enter the root build context.
+**
+!engine/
+!engine/Dockerfile
+!engine/scripts/
+!engine/scripts/**
+!engine/portfolio/
+!engine/portfolio/config.example.json
+!dashboard/
+!dashboard/core/
+!dashboard/core/ledger.py
+**/__pycache__/
+**/*.pyc
