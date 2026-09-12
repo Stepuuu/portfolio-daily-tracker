@@ -1,23 +1,33 @@
-> The ledger supports opening migration, trade preview and confirmation, CSV deduplication, reversals, backups and research notes. AI and image recognition do not automatically book trades. Docker is optional; run directly inside an existing container. See the [ledger guide](docs/LEDGER.md).
-
-> Upgrade: use Python 3.10+, Node.js 22.12+ and Bash 4.3+. After `make setup`, try `make demo` without API keys. Read [accounting conventions](docs/ACCOUNTING.md) and the [roadmap](docs/ROADMAP.md).
-
 <div align="center">
 
 # 📊 Portfolio Daily Tracker
 
-**A comprehensive self-hosted investment portfolio tracking & AI trading assistant**
+**Self-hosted portfolio journaling and agent-driven stock research**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
 [![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
-[🇨🇳 中文文档](README_CN.md)
+[🇨🇳 中文文档](README_CN.md) · [🔬 Research guide](docs/RESEARCH.md) · [Feishu workbench](docs/FEISHU_WORKBENCH.md)
 
 </div>
 
 ---
+
+### News / Versions
+
+| Version | Date | Updates |
+|---|---|---|
+| [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | Added reproducible manual/Agent stock research, persistent jobs, model connections and CLI/HTTP/MCP extensions; a [Feishu card workbench](docs/FEISHU_WORKBENCH.md) adds one-click daily reports, confirmed multi-account batches, assets and research after setup. |
+| [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | Added a confirmed transaction ledger and research journal, with CSV deduplication, multi-currency accounting fixes and an offline demo. |
+| [V3 · AI assistant](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | Combined portfolio tracking with AI chat, a React dashboard, strategy backtesting and scheduled reports. |
+| [V2 · Self-hosted engine](CHANGELOG.md#v2--self-hosted-portfolio-engine) | 2026-03-08† | Moved tracking to Python with local JSON/CSV storage, multi-market quotes, risk metrics and automated reports. |
+| [V1 · Google Sheets](CHANGELOG.md#v1--google-sheets) | 2025-09-25† | Started with Google Sheets and Apps Script for daily snapshots, price updates, asset charts and monthly P&L. |
+
+† Historical milestones: V1 uses the earliest dated guide entry; V2 and V3 were first recorded together in the repository. These are not tagged release dates.
+
+[Full changelog](CHANGELOG.md) · [GitHub Releases](https://github.com/Stepuuu/portfolio-daily-tracker/releases) · [Roadmap](docs/ROADMAP.md)
 
 ### ✨ Features
 
@@ -28,11 +38,33 @@
 | 📈 **Quant Metrics** | Sharpe ratio, volatility, max drawdown, win rate, P&L ratio |
 | 💰 **Margin Tracking** | Negative cash = margin loan; auto-calculates leverage ratio |
 | 🤖 **AI Chat Assistant** | Natural language Q&A about positions, P&L, risk using GPT/Claude/DeepSeek |
+| 🔬 **Stock Research Workbench** | CSV/cache/market imports, manual and agent experiments, baselines, curves, persistent jobs and export |
 | 📊 **Web Dashboard** | React + TailwindCSS with 5 KPI cards, pie charts, equity curve, monthly P&L |
 | 📉 **Backtesting** | Strategy backtesting engine with MA cross, RSI, custom strategies |
 | 🔔 **Daily Push** | Auto-notify after market close → confirm changes → push report to Feishu/Telegram |
 | ⏰ **Auto Scheduling** | Python scheduler (no cron needed) — 18:00 notify, 19:00 failsafe pipeline |
 | 🦞 **OpenClaw Skill** | Published on [ClawHub](https://clawhub.ai) — install with `clawhub install portfolio-daily-tracker` |
+
+### 🔬 From a question to a reproducible experiment
+
+Explore momentum, mean-reversion and volatility templates with chronological training,
+validation and test splits, label-boundary purging, baseline errors and cost-aware
+simulation curves. Learn the workflow on synthetic data, then import CSV, existing
+cached daily bars or an explicitly requested market download. Synthetic results are
+not market evidence. Options surfaces, multi-leg options backtesting and live order
+execution are outside this release.
+
+Agent mode plans experiments, reviews validation evidence within a budget, freezes
+a candidate and evaluates its final test result. Connect OpenAI-compatible or
+Anthropic APIs, or an existing official Codex/Claude Code login. A connection check
+does not guarantee model access or subscription quota. Local job records and stage
+checkpoints support cancellation, retry, schedules and JSON export. CLI, HTTP, MCP
+and Python registration let other clients use and extend the same research engine.
+
+Data is stored locally, but remote models receive the selected research question,
+dataset metadata and computed evidence. Exports are **not automatically redacted**;
+inspect them before sharing. Read the [research guide](docs/RESEARCH.md),
+[中文研究指南](docs/RESEARCH_CN.md) and [extension guide](docs/RESEARCH_EXTENSIONS.md).
 
 ### 📁 Project Structure
 
@@ -79,7 +111,8 @@ portfolio-daily-tracker/
 │
 ├── v1-google-sheets/            # 📋 V1: Google Sheets version (archived)
 ├── docker-compose.yml
-├── Makefile                     # make setup / make start / make stop
+├── scripts/research.py          # Research job JSON CLI
+├── Makefile                     # make setup / make lab / make demo / make start
 ├── start.sh                     # Dev start script
 ├── stop.sh                      # Stop all services
 └── README.md
@@ -87,19 +120,33 @@ portfolio-daily-tracker/
 
 ### 🚀 Quick Start
 
+Local startup requires **Python 3.10+, Node.js 22.12+ and Bash 4.3+**.
+Run directly on a host or inside an existing container; Docker is optional.
+
 #### One-command setup (Recommended)
 
 ```bash
 git clone https://github.com/Stepuuu/portfolio-daily-tracker.git
 cd portfolio-daily-tracker
 
-make setup    # installs all deps, copies config templates
-# Edit dashboard/config.json — add your LLM API key
-# Edit engine/portfolio/config.json — set group names & cost basis
-
-make start    # starts backend (:8000) + frontend (:3000)
-# Open http://localhost:3000
+python3 -m venv .venv
+source .venv/bin/activate
+make setup    # install dependencies and copy config templates
+make lab      # research: backend 127.0.0.1:8000, frontend :3000
+# Open http://localhost:3000/lab
 ```
+
+Manual research requires no model key or account configuration. `make demo` uses
+isolated fictional portfolio and synthetic research data, with portfolio changes
+disabled. Configure your portfolio and chat model, then use `make start` for the
+full application, including research. The CLI connects to an existing backend:
+try `python scripts/research.py datasets`; more examples are in the
+[research guide](docs/RESEARCH.md).
+
+Trades require preview and confirmation; AI and image recognition do not
+automatically book entries. See the [ledger guide](docs/LEDGER.md) for opening
+migration, reversals and backups, and [accounting conventions](docs/ACCOUNTING.md)
+for multi-currency cash and performance calculations.
 
 #### Option 1: Engine Only (Portfolio Tracker)
 
@@ -129,7 +176,7 @@ cp config.example.json config.json
 # Edit config.json: add your AI API key (OpenAI / Claude / DeepSeek)
 
 # Start backend
-python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
 
 # Start frontend
 cd frontend && npm install && npm run dev
@@ -393,9 +440,9 @@ The original V1 uses Google Sheets + Apps Script. Suitable for users who don't w
 
 ### 🆚 Version Comparison
 
-| Feature | V1 (Google Sheets) | V2 (Self-hosted) |
+| Feature | V1 (Google Sheets) | Current self-hosted version |
 |---------|--------------------|-------------------|
-| Data Storage | Google Drive | Local JSON/CSV |
+| Data Storage | Google Drive | Local SQLite/JSON/CSV |
 | Price Source | Google Finance + Sina | Yahoo Finance + AKShare |
 | Multi-market | Partial | ✅ A + HK + US |
 | Quant Metrics | ❌ | ✅ Sharpe / Volatility / Drawdown |
@@ -403,7 +450,7 @@ The original V1 uses Google Sheets + Apps Script. Suitable for users who don't w
 | Backtesting | ❌ | ✅ Custom strategy engine |
 | Web Dashboard | Google Sheets charts | ✅ React + TailwindCSS |
 | Push Notifications | ❌ | ✅ Feishu / Telegram / Slack |
-| Privacy | Data on Google | ✅ Fully private |
+| Privacy | Data on Google | Local storage; remote models receive request context |
 | Docker | ❌ | ✅ One command deploy |
 
 ### 📄 License

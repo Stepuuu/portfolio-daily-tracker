@@ -10,6 +10,7 @@ PATTERNS = {
     'machine-specific path': re.compile(r'/' + r'Users/[^/\s]+/|/inspire/(?:hdd|ssd)/|/' + r'home/(?!user/|example/)[^/\s]+/'),
     'private key': re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
     'access token': re.compile(r'\b(?:ghp_[A-Za-z0-9]{25,}|github_pat_[A-Za-z0-9_]{25,}|sk-(?:proj-|ant-)[A-Za-z0-9_-]{30,})\b'),
+    'private cloud document link': re.compile(r'(?:docs\.google\.com/(?:document|spreadsheets|presentation)/d/|drive\.google\.com/(?:drive/(?:u/\d+/)?folders/|file/d/)|[A-Za-z0-9-]+\.(?:feishu\.cn|larksuite\.com)/(?:docx|wiki|sheets|base)/)[A-Za-z0-9_-]{20,}'),
     'messaging identifier': re.compile(r'\b(?:oc_|ou_)[a-f0-9]{20,}\b'),
 }
 PRIVATE_PARTS = {'.runtime', '.demo', '.secrets', '.omx', '.codex', 'node_modules', '__pycache__'}

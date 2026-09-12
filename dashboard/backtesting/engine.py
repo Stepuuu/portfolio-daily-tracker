@@ -18,6 +18,7 @@ from .data.feed import DataFeed
 from .data.loader import DataLoader
 from .data.cleaner import DataCleaner
 from .data.store import DataStore
+from .data.quality import validate_daily_bars, require_valid_daily_bars
 from .strategies.base import Strategy, Order, Position
 from .broker.simulated import SimulatedBroker, BrokerConfig
 from .analyzer.stats import BacktestStats
@@ -61,6 +62,7 @@ class BacktestEngine:
 
         self._run_id = str(uuid.uuid4())[:8]
         self._run_date: Optional[str] = None
+        self._data_quality_reports: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------ #
     #  配置接口
@@ -98,16 +100,23 @@ class BacktestEngine:
             else:
                 logger.info(f"[Engine] 从 AKShare 下载 {symbol} {start_date}~{end_date}")
                 df = self._loader.get_daily(symbol, start_date, end_date, adjust)
-                # 清洗
+                # Reject invalid provider output before features or cache writes.
+                require_valid_daily_bars(df, symbol=symbol, adjust=adjust)
                 df = (
                     DataCleaner(df)
-                    .fill_missing()
-                    .clip_price()
                     .add_returns()
+                    .add_derived_features()
+                    .add_feature_cache()
                     .result
                 )
                 # 存储到本地
                 self._store.save_daily(symbol, df, adjust)
+
+        quality_report = validate_daily_bars(df, symbol=symbol, adjust=adjust)
+        self._data_quality_reports[symbol] = quality_report
+        quality_report.raise_if_failed()
+        for warning in quality_report.warnings:
+            logger.warning("[Engine] 数据质量警告 %s: %s", symbol, warning)
 
         feed = DataFeed(symbol, df, warmup=warmup)
         self._data_feeds[symbol] = feed
@@ -159,7 +168,8 @@ class BacktestEngine:
             available = self.broker.cash * pct_cash
             cfg = self.broker.config
             max_qty = available / (current_price * (1 + cfg.commission_buy))
-            quantity = (int(max_qty) // cfg.lot_size) * cfg.lot_size
+            lot_size = cfg.lot_for(symbol)
+            quantity = (int(max_qty) // lot_size) * lot_size
             if quantity <= 0:
                 logger.warning(f"[Engine] 资金不足以买入 {symbol}")
                 return None
@@ -181,7 +191,9 @@ class BacktestEngine:
             timestamp=feed.current_bar.date,
         )
 
-        return self.broker.submit_order(order)
+        submitted = self.broker.submit_order(order)
+        strategy.on_order(submitted)
+        return submitted
 
     def get_position(self, symbol: str) -> Optional[Position]:
         return self.broker.get_position(symbol)
@@ -219,12 +231,18 @@ class BacktestEngine:
         for feed in self._data_feeds.values():
             feed.reset()
 
+        # Snapshot existing feed state; an engine instance represents one run.
+        if self.broker.trades or self.broker.equity_curve:
+            raise ValueError("Create a new engine for each independent run")
+
         # 主循环 - 以主标的日历驱动
         bar_count = 0
+        last_bars: Dict[str, Any] = {}
         while primary_feed.advance():
             current_bar = primary_feed.current_bar
             if current_bar is None:
                 continue
+            last_bars[self._primary_symbol] = current_bar
 
             # 同步其他标的 (如果有)
             date = current_bar.date
@@ -242,21 +260,28 @@ class BacktestEngine:
                         else:
                             break
 
-            # 处理上一 bar 的挂单 (昨信号今撮合)
-            trades = self.broker.process_bar(self._primary_symbol, current_bar)
-            for trade in trades:
-                self._strategy.on_trade(trade)
+            # 处理所有已同步标的的挂单 (昨信号今撮合)
+            current_prices: Dict[str, float] = {}
+            for sym, feed in self._data_feeds.items():
+                bar = feed.current_bar
+                if bar is None:
+                    continue
+                last_bars[sym] = bar
+                current_prices[sym] = bar.close
+                if bar.date != date:
+                    continue
+                trades, changed_orders = self.broker.process_bar(sym, bar)
+                for order in changed_orders:
+                    self._strategy.on_order(order)
+                for trade in trades:
+                    self._strategy.on_trade(trade)
 
-            # 更新持仓市值
-            self.broker.update_positions_price(
-                self._primary_symbol, current_bar.close
-            )
+            # 更新所有已同步持仓的当前市值
+            for sym, price in current_prices.items():
+                self.broker.update_positions_price(sym, price)
 
             # 记录净值
-            self.broker.record_equity(
-                date,
-                {self._primary_symbol: current_bar.close},
-            )
+            self.broker.record_equity(date, current_prices)
 
             # 调用策略 (跳过预热期)
             if not primary_feed.is_warmup:
@@ -264,12 +289,20 @@ class BacktestEngine:
 
             bar_count += 1
 
-        # 结束: 强制平仓 (可选)
-        pos = self.broker.get_position(self._primary_symbol)
-        if pos and pos.quantity > 0:
-            last_bar = primary_feed.current_bar
-            if last_bar:
-                self.broker.process_bar(self._primary_symbol, last_bar)
+        # 结束: 按最后一根K线收盘价强制平仓，便于得到完整已实现收益
+        final_prices: Dict[str, float] = {}
+        primary_last_bar = last_bars.get(self._primary_symbol)
+        final_date = primary_last_bar.date if primary_last_bar is not None else None
+        for sym, feed in self._data_feeds.items():
+            pos = self.broker.get_position(sym)
+            last_bar = last_bars.get(sym)
+            if pos and pos.quantity > 0 and last_bar is not None:
+                trade = self.broker.force_close(sym, last_bar.close, last_bar.date)
+                if trade:
+                    self._strategy.on_trade(trade)
+                    final_prices[sym] = last_bar.close
+        if final_prices and final_date is not None:
+            self.broker.record_equity(final_date, {sym: bar.close for sym, bar in last_bars.items()})
 
         self._strategy.on_stop()
         logger.info(
@@ -286,6 +319,7 @@ class BacktestEngine:
             broker=self.broker,
             strategy=self._strategy,
             data_feeds=self._data_feeds,
+            data_quality_reports=self._data_quality_reports,
         )
 
 
@@ -310,6 +344,7 @@ class BacktestResult:
         broker: SimulatedBroker,
         strategy: Strategy,
         data_feeds: Dict[str, DataFeed],
+        data_quality_reports: Optional[Dict[str, Any]] = None,
     ):
         self.run_id = run_id
         self.run_date = run_date
@@ -319,6 +354,7 @@ class BacktestResult:
         self._broker = broker
         self._strategy = strategy
         self._data_feeds = data_feeds
+        self.data_quality_reports = data_quality_reports or {}
 
         # 延迟计算统计
         self._stats: Optional[BacktestStats] = None
@@ -414,9 +450,15 @@ class BacktestResult:
             "max_drawdown": round(s.max_drawdown, 6),
             "total_trades": s.total_trades,
             "win_rate": round(s.win_rate, 4),
-            "profit_factor": round(s.profit_factor, 4),
+            "profit_factor": round(s.profit_factor, 4) if s.profit_factor != float("inf") else None,
             "avg_profit": round(s.avg_profit, 2),
             "avg_loss": round(s.avg_loss, 2),
             "max_single_profit": round(s.max_single_profit, 2),
             "max_single_loss": round(s.max_single_loss, 2),
+            "avg_holding_days": round(s.avg_holding_days, 2),
+            "data_quality": {symbol: {"errors": report.errors, "warnings": report.warnings,
+                                        "metrics": report.metrics} for symbol, report in self.data_quality_reports.items()},
+            "assumptions": {"frequency": "daily", "market_rules": self._broker.config.market,
+                            "end_of_run": "synthetic liquidation at last observed close",
+                            "cost_currency": "single quote currency; mixed currency portfolios need external conversion"},
         }

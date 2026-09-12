@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
+from collections import defaultdict
 
 
 @dataclass
@@ -81,6 +82,7 @@ class BacktestStats:
         )
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date").sort_index()
+        df = df[~df.index.duplicated(keep="last")]
         return df
 
     # ------------------------------------------------------------------ #
@@ -151,7 +153,7 @@ class BacktestStats:
         self.max_drawdown_duration = max_dd_dur
 
         # 年化波动率
-        self.volatility = float(daily_ret.std() * math.sqrt(252))
+        self.volatility = float(daily_ret.std(ddof=0) * math.sqrt(252))
 
         # VaR 95% (历史模拟法)
         self.var_95 = float(np.percentile(daily_ret, 5))
@@ -180,14 +182,15 @@ class BacktestStats:
 
         # 夏普比率
         excess = daily_ret - rf
-        if excess.std() > 0:
-            self.sharpe_ratio = float(excess.mean() / excess.std() * math.sqrt(252))
+        excess_std = float(excess.std())
+        if excess_std > 1e-12:
+            self.sharpe_ratio = float(excess.mean() / excess_std * math.sqrt(252))
         else:
             self.sharpe_ratio = 0.0
 
         # 索提诺比率 (用下行偏差)
         ann_ret = self.annualized_return
-        if self.downside_deviation > 0:
+        if self.downside_deviation > 1e-12:
             self.sortino_ratio = (ann_ret - 0.03) / self.downside_deviation
         else:
             self.sortino_ratio = 0.0
@@ -231,8 +234,34 @@ class BacktestStats:
         self.max_single_profit = float(max(pnls)) if pnls else 0.0
         self.max_single_loss = float(min(pnls)) if pnls else 0.0
 
-        # 平均持仓天数 (买卖配对)
-        self.avg_holding_days = 0.0  # TODO: 买卖配对计算
+        # 平均持仓天数 (按 symbol 做 FIFO 买卖配对)
+        holding_days_total = 0.0
+        matched_quantity = 0.0
+        buy_queues = defaultdict(list)
+        for trade in self.trades:
+            ts = pd.to_datetime(trade.timestamp)
+            if trade.direction == "buy":
+                buy_queues[trade.symbol].append([float(trade.quantity), ts])
+                continue
+            if trade.direction != "sell":
+                continue
+
+            remaining = float(trade.quantity)
+            queue = buy_queues[trade.symbol]
+            while remaining > 0 and queue:
+                buy_qty, buy_ts = queue[0]
+                matched = min(remaining, buy_qty)
+                days = max((ts - buy_ts).days, 0)
+                holding_days_total += days * matched
+                matched_quantity += matched
+                buy_qty -= matched
+                remaining -= matched
+                if buy_qty <= 1e-8:
+                    queue.pop(0)
+                else:
+                    queue[0][0] = buy_qty
+
+        self.avg_holding_days = holding_days_total / matched_quantity if matched_quantity else 0.0
 
     # ------------------------------------------------------------------ #
     #  报告格式化
@@ -255,9 +284,10 @@ class BacktestStats:
             "calmar_ratio": round(self.calmar_ratio, 4),
             "total_trades": self.total_trades,
             "win_rate": round(self.win_rate, 4),
-            "profit_factor": round(self.profit_factor, 4) if not math.isinf(self.profit_factor) else 9999,
+            "profit_factor": round(self.profit_factor, 4) if math.isfinite(self.profit_factor) else None,
             "avg_profit": round(self.avg_profit, 2),
             "avg_loss": round(self.avg_loss, 2),
             "max_single_profit": round(self.max_single_profit, 2),
             "max_single_loss": round(self.max_single_loss, 2),
+            "avg_holding_days": round(self.avg_holding_days, 2),
         }

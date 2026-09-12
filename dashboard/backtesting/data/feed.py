@@ -13,21 +13,44 @@ class Bar:
     """单根 K 线数据容器"""
     __slots__ = [
         "symbol", "date", "open", "high", "low", "close",
-        "volume", "amount", "pct_change", "turnover",
+        "volume", "amount", "pct_change", "turnover", "prev_close",
+        "change", "amplitude", "gap_pct", "intraday_return", "vwap",
+        "returns", "log_returns",
         "factors",  # 额外的因子值
     ]
 
     def __init__(self, symbol: str, date, row: pd.Series):
+        def _safe_float(value, default: float = 0.0) -> float:
+            if value is None:
+                return default
+            try:
+                if pd.isna(value):
+                    return default
+            except Exception:
+                pass
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
         self.symbol = symbol
         self.date = date
-        self.open = float(row.get("open", 0))
-        self.high = float(row.get("high", 0))
-        self.low = float(row.get("low", 0))
-        self.close = float(row.get("close", 0))
-        self.volume = float(row.get("volume", 0))
-        self.amount = float(row.get("amount", 0))
-        self.pct_change = float(row.get("pct_change", 0))
-        self.turnover = float(row.get("turnover", 0))
+        self.open = _safe_float(row.get("open", 0))
+        self.high = _safe_float(row.get("high", 0))
+        self.low = _safe_float(row.get("low", 0))
+        self.close = _safe_float(row.get("close", 0))
+        self.volume = _safe_float(row.get("volume", 0))
+        self.amount = _safe_float(row.get("amount", 0))
+        self.pct_change = _safe_float(row.get("pct_change", 0))
+        self.turnover = _safe_float(row.get("turnover", 0))
+        self.prev_close = _safe_float(row.get("prev_close", 0))
+        self.change = _safe_float(row.get("change", 0))
+        self.amplitude = _safe_float(row.get("amplitude", 0))
+        self.gap_pct = _safe_float(row.get("gap_pct", 0))
+        self.intraday_return = _safe_float(row.get("intraday_return", 0))
+        self.vwap = _safe_float(row.get("vwap", 0))
+        self.returns = _safe_float(row.get("returns", 0))
+        self.log_returns = _safe_float(row.get("log_returns", 0))
         self.factors: Dict[str, float] = {}
 
     def __repr__(self):
@@ -41,10 +64,10 @@ class Bar:
 class DataFeed:
     """
     数据馈送器
-    
+
     回测引擎通过此类遍历历史数据,策略通过
     self.data 访问当前 bar 和历史窗口.
-    
+
     使用示例:
         feed = DataFeed("600519", df)
         while not feed.is_done:
@@ -61,6 +84,8 @@ class DataFeed:
     ):
         self.symbol = symbol
         self._df = df.copy()
+        if "prev_close" not in self._df.columns:
+            self._df["prev_close"] = self._df["close"].shift(1)
         self.warmup = warmup
         self._cursor = -1  # 当前 bar 位置
         self._len = len(df)
@@ -115,6 +140,8 @@ class DataFeed:
         获取最近 n 根 K 线 (含当前 bar).
         返回 DataFrame, 最新的在最后一行.
         """
+        if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+            raise ValueError("Window length must be a positive integer")
         if self._cursor < 0:
             return pd.DataFrame()
         start = max(0, self._cursor - n + 1)
@@ -122,30 +149,40 @@ class DataFeed:
 
     def close(self, n: int = 0) -> float:
         """获取收盘价, n=0 当前, n=1 上一根, 以此类推"""
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("History offset must be a nonnegative integer")
         idx = self._cursor - n
         if idx < 0 or idx >= self._len:
             return float("nan")
         return float(self._df["close"].iloc[idx])
 
     def open(self, n: int = 0) -> float:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("History offset must be a nonnegative integer")
         idx = self._cursor - n
         if idx < 0 or idx >= self._len:
             return float("nan")
         return float(self._df["open"].iloc[idx])
 
     def high(self, n: int = 0) -> float:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("History offset must be a nonnegative integer")
         idx = self._cursor - n
         if idx < 0 or idx >= self._len:
             return float("nan")
         return float(self._df["high"].iloc[idx])
 
     def low(self, n: int = 0) -> float:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("History offset must be a nonnegative integer")
         idx = self._cursor - n
         if idx < 0 or idx >= self._len:
             return float("nan")
         return float(self._df["low"].iloc[idx])
 
     def volume(self, n: int = 0) -> float:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("History offset must be a nonnegative integer")
         idx = self._cursor - n
         if idx < 0 or idx >= self._len:
             return float("nan")
@@ -173,6 +210,8 @@ class DataFeed:
 
     def get_factor(self, name: str, n: int = 0) -> float:
         """获取某因子的当前值 (或历史值)"""
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("History offset must be a nonnegative integer")
         idx = self._cursor - n
         if name not in self._df.columns or idx < 0 or idx >= self._len:
             return float("nan")

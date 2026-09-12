@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Beaker,
   MessageSquare,
   Wallet,
   Brain,
@@ -14,6 +15,7 @@ import { clsx } from 'clsx'
 
 const navItems = [
   { icon: MessageSquare, label: '对话', path: '/' },
+  { icon: Beaker, label: '研究工作台', path: '/lab' },
   { icon: BookOpen, label: '账本', path: '/ledger' },
   { icon: Wallet, label: '持仓', path: '/portfolio' },
   { icon: LineChart, label: '跟踪', path: '/tracker' },

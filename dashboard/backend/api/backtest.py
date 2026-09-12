@@ -131,76 +131,82 @@ def _get_history_store():
     return BacktestHistoryStore()
 
 
+def _compute_legacy_backtest(run_id, req):
+    from backtesting.engine import BacktestEngine
+    from backtesting.broker.simulated import BrokerConfig
+
+    broker_cfg = BrokerConfig(
+        commission_buy=req.commission_buy,
+        commission_sell=req.commission_sell,
+        min_commission=req.min_commission,
+        slippage_pct=req.slippage_pct,
+        lot_size=req.lot_size,
+    )
+
+    engine = BacktestEngine(
+        initial_cash=req.initial_cash,
+        broker_config=broker_cfg,
+    )
+
+    _running_tasks[run_id]["progress"] = f"加载 {req.symbol} 数据..."
+    engine.add_data(
+        symbol=req.symbol,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        adjust=req.adjust,
+        warmup=req.warmup,
+    )
+
+    strategy_cls = _get_strategy_class(req.strategy)
+    engine.add_strategy(strategy_cls, **req.params)
+
+    _running_tasks[run_id]["progress"] = "执行回测..."
+    result = engine.run()
+
+    result_dict = result.to_dict()
+    result_dict["summary"] = result.summary()
+    result_dict["start_date"] = req.start_date
+    result_dict["end_date"] = req.end_date
+    result_dict["strategy_class"] = strategy_cls.__name__
+
+    # 净值曲线 (精简到最多300个点)
+    eq_df = result.equity_df
+    equity_curve_data = []
+    if not eq_df.empty:
+        step = max(1, len(eq_df) // 300)
+        for i, (date, row) in enumerate(eq_df.iterrows()):
+            if i % step == 0 or i == len(eq_df) - 1:
+                equity_curve_data.append({
+                    "date": str(date.date()),
+                    "net_value": round(float(row["net_value"]), 4),
+                    "drawdown": round(float(row["drawdown"]), 4),
+                })
+    result_dict["equity_curve"] = equity_curve_data
+
+    # 全部交易明细
+    trade_records = [
+        {
+            "date": str(t.timestamp),
+            "symbol": t.symbol,
+            "direction": t.direction,
+            "quantity": t.quantity,
+            "price": round(t.price, 2),
+            "pnl": round(t.pnl, 2),
+            "commission": round(t.commission, 2),
+        }
+        for t in result.trades
+    ]
+    result_dict["trade_records"] = trade_records
+
+    return result, result_dict, equity_curve_data, trade_records
+
+
 async def _run_backtest_task(run_id: str, req: BacktestRequest):
     """异步回测任务"""
     try:
         _running_tasks[run_id] = {"status": "running", "progress": "初始化引擎..."}
 
-        from backtesting.engine import BacktestEngine
-        from backtesting.broker.simulated import BrokerConfig
-
-        broker_cfg = BrokerConfig(
-            commission_buy=req.commission_buy,
-            commission_sell=req.commission_sell,
-            min_commission=req.min_commission,
-            slippage_pct=req.slippage_pct,
-            lot_size=req.lot_size,
-        )
-
-        engine = BacktestEngine(
-            initial_cash=req.initial_cash,
-            broker_config=broker_cfg,
-        )
-
-        _running_tasks[run_id]["progress"] = f"加载 {req.symbol} 数据..."
-        engine.add_data(
-            symbol=req.symbol,
-            start_date=req.start_date,
-            end_date=req.end_date,
-            adjust=req.adjust,
-            warmup=req.warmup,
-        )
-
-        strategy_cls = _get_strategy_class(req.strategy)
-        engine.add_strategy(strategy_cls, **req.params)
-
-        _running_tasks[run_id]["progress"] = "执行回测..."
-        result = engine.run()
-
-        result_dict = result.to_dict()
-        result_dict["summary"] = result.summary()
-        result_dict["start_date"] = req.start_date
-        result_dict["end_date"] = req.end_date
-        result_dict["strategy_class"] = strategy_cls.__name__
-
-        # 净值曲线 (精简到最多300个点)
-        eq_df = result.equity_df
-        equity_curve_data = []
-        if not eq_df.empty:
-            step = max(1, len(eq_df) // 300)
-            for i, (date, row) in enumerate(eq_df.iterrows()):
-                if i % step == 0 or i == len(eq_df) - 1:
-                    equity_curve_data.append({
-                        "date": str(date.date()),
-                        "net_value": round(float(row["net_value"]), 4),
-                        "drawdown": round(float(row["drawdown"]), 4),
-                    })
-        result_dict["equity_curve"] = equity_curve_data
-
-        # 全部交易明细
-        trade_records = [
-            {
-                "date": str(t.timestamp),
-                "symbol": t.symbol,
-                "direction": t.direction,
-                "quantity": t.quantity,
-                "price": round(t.price, 2),
-                "pnl": round(t.pnl, 2),
-                "commission": round(t.commission, 2),
-            }
-            for t in result.trades
-        ]
-        result_dict["trade_records"] = trade_records
+        result, result_dict, equity_curve_data, trade_records = await asyncio.to_thread(_compute_legacy_backtest, run_id, req)
 
         # LLM 反思
         reflection = None
@@ -351,15 +357,17 @@ async def preview_data(symbol: str, limit: int = 50, offset: int = 0, adjust: st
 
 
 @router.post("/data/download", summary="下载并缓存股票数据")
-async def download_data(req: DataDownloadRequest):
+def download_data(req: DataDownloadRequest):
     from backtesting.data.loader import DataLoader
     from backtesting.data.cleaner import DataCleaner
+    from backtesting.data.quality import require_valid_daily_bars
     from backtesting.data.store import DataStore
     loader = DataLoader(source="akshare")
     store = DataStore()
     try:
         df = loader.get_daily(req.symbol, req.start_date, req.end_date, req.adjust)
-        df = DataCleaner(df).fill_missing().clip_price().add_returns().result
+        require_valid_daily_bars(df, symbol=req.symbol, adjust=req.adjust)
+        df = DataCleaner(df).add_returns().result
         rows = store.save_daily(req.symbol, df, req.adjust)
         return {"symbol": req.symbol, "rows_saved": rows, "start_date": req.start_date, "end_date": req.end_date}
     except Exception as e:
@@ -564,7 +572,7 @@ async def all_lessons(limit: int = 100):
 # ================================================================== #
 
 @router.post("/quick-test", summary="合成数据快速测试")
-async def quick_test():
+def quick_test():
     import numpy as np
     import pandas as pd
     from backtesting.engine import BacktestEngine
@@ -582,6 +590,8 @@ async def quick_test():
         "volume": np.random.randint(1000000, 5000000, n).astype(float),
         "amount": price * np.random.randint(1000000, 5000000, n).astype(float),
     }, index=dates)
+    df["high"] = df[["open", "high", "close"]].max(axis=1)
+    df["low"] = df[["open", "low", "close"]].min(axis=1)
     df.index.name = "date"
 
     engine = BacktestEngine(initial_cash=500_000)

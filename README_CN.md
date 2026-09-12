@@ -1,23 +1,33 @@
-> 交易账本：期初迁移、交易预览与确认、CSV 去重、冲销、备份和研究复盘已可使用。AI 和截图识别不会自动入账。无需 Docker；可直接在已有容器实例中启动。详见 [账本指南](docs/LEDGER.md)。
-
-> 升级说明：本地启动使用 Python 3.10+、Node.js 22.12+ 和 Bash 4.3+。先运行 `make setup`，再用 `make demo` 体验不需要 API Key 的虚构组合。多币种现金与收益口径见 [ACCOUNTING](docs/ACCOUNTING.md)，后续计划见 [ROADMAP](docs/ROADMAP.md)。
-
 <div align="center">
 
 # 📊 投资组合日报追踪器
 
-**全功能自托管投资组合追踪 & AI 交易助手**
+**自托管投资组合记录与 Agent 股票研究工作台**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
 [![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
-[🇬🇧 English](README_EN.md) &nbsp;·&nbsp; [📖 完整使用指南 (CN)](docs/FULL_GUIDE_CN.md)
+[🇬🇧 English](README_EN.md) &nbsp;·&nbsp; [🔬 研究指南](docs/RESEARCH_CN.md) &nbsp;·&nbsp; [飞书工作台](docs/FEISHU_WORKBENCH.md) &nbsp;·&nbsp; [📖 完整使用指南 (CN)](docs/FULL_GUIDE_CN.md)
 
 </div>
 
 ---
+
+### News / Versions
+
+| 版本 | 日期 | 更新摘要 |
+|---|---|---|
+| [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | 新增可复查的手动与 Agent 股票研究、持久化任务、模型接入及 CLI/HTTP/MCP 扩展；[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)经配置后支持无变动一键更新、多账户变动清单统一确认、资产查看与研究任务。 |
+| [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | 新增需确认的交易账本与研究日志，支持 CSV 去重，修复多币种核算并提供离线演示。 |
+| [V3 · AI 助手](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | 整合投资组合追踪、AI 对话、React 面板、策略回测与定时日报。 |
+| [V2 · 自托管引擎](CHANGELOG.md#v2--self-hosted-portfolio-engine) | 2026-03-08† | 转为 Python 自托管，使用本地 JSON/CSV，支持多市场行情、风险指标与自动日报。 |
+| [V1 · Google Sheets](CHANGELOG.md#v1--google-sheets) | 2025-09-25† | 基于 Google Sheets 与 Apps Script，实现每日快照、行情更新、资产图表与月度盈亏记录。 |
+
+† 历史里程碑：V1 日期取自最早的指南更新记录；V2 与 V3 首次收录于同一次仓库提交。这些日期不代表正式 Release 发布日。
+
+[完整更新记录](CHANGELOG.md) · [GitHub Releases](https://github.com/Stepuuu/portfolio-daily-tracker/releases) · [后续计划](docs/ROADMAP.md)
 
 ### ✨ 功能特性
 
@@ -28,11 +38,20 @@
 | 📈 **量化指标** | 夏普比率、年化波动率、最大回撤、胜率、盈亏比 |
 | 💰 **融资杠杆** | 负现金自动识别融资额，计算杠杆比例 |
 | 🤖 **AI 对话助手** | 自然语言问持仓、盈亏、风险，支持 GPT/Claude/DeepSeek |
+| 🔬 **股票研究工作台** | CSV/缓存/行情导入，手动与 Agent 实验、基线比较、净值曲线、任务恢复与导出 |
 | 📊 **Web 面板** | React + TailwindCSS，5 KPI · 双饼图 · 净值曲线 · 月度收益 |
 | 📉 **策略回测** | 内置双均线/RSI/自定义策略回测引擎 |
 | 🔔 **每日推送** | 收盘后自动通知 → 确认变化 → 推送飞书/Telegram 日报 |
 | ⏰ **自动调度** | Python 调度器（无需 cron），18:00 通知，19:00 兜底管道 |
 | 🦞 **OpenClaw 技能** | 已发布到 [ClawHub](https://clawhub.ai)，安装命令：`clawhub install portfolio-daily-tracker` |
+
+### 🔬 从问题到可复查的实验
+
+研究工作台提供动量、均值回归和波动率三个股票日线学习模板，按时间划分训练、验证与测试，剔除跨分段边界的标签，并展示基线误差、成本假设和净值曲线。先用合成数据熟悉流程，再导入自己的 CSV、已有缓存或明确下载的市场数据。合成结果不代表真实市场证据，当前不包含期权曲面、多腿期权回测或实盘交易。
+
+Agent 模式可以在预算内规划实验、读取验证集反馈、有限迭代、冻结方案后评价最终测试结果。连接支持 OpenAI 兼容 API、Anthropic API 及已有官方 Codex/Claude Code 登录；登录检查不保证模型或订阅额度可用。任务、事件与阶段保存在本机，支持取消、重试、定时触发和 JSON 导出。CLI、HTTP、MCP 与 Python 注册表可复用和扩展研究能力。
+
+远程模型会收到研究问题、数据元信息和计算证据等上下文；本地存储不等于全程离线。导出**不会自动脱敏**，分享前请检查。方法假设、命令行示例与故障处理见 [研究指南](docs/RESEARCH_CN.md)，开发接口见 [扩展指南](docs/RESEARCH_EXTENSIONS.md)。
 
 ### 📁 项目结构
 
@@ -79,7 +98,8 @@ portfolio-daily-tracker/
 │
 ├── v1-google-sheets/            # 📋 V1：Google Sheets 版本（归档）
 ├── docker-compose.yml
-├── Makefile                     # make setup / make start / make stop
+├── scripts/research.py          # 研究任务 JSON CLI
+├── Makefile                     # make setup / make lab / make demo / make start
 ├── start.sh                     # 开发启动脚本
 ├── stop.sh                      # 停止所有服务
 └── README.md
@@ -87,19 +107,24 @@ portfolio-daily-tracker/
 
 ### 🚀 快速开始
 
+本地启动需要 **Python 3.10+、Node.js 22.12+ 和 Bash 4.3+**，无需 Docker，可直接在主机或已有容器内运行。
+
 #### 一键安装（推荐）
 
 ```bash
 git clone https://github.com/Stepuuu/portfolio-daily-tracker.git
 cd portfolio-daily-tracker
 
-make setup    # 安装所有依赖、复制配置模板
-# 编辑 dashboard/config.json — 填入 LLM API Key
-# 编辑 engine/portfolio/config.json — 设置分组名和成本基础
-
-make start    # 启动后端(:8000) + 前端(:3000)
-# 浏览器访问 http://localhost:3000
+python3 -m venv .venv
+source .venv/bin/activate
+make setup    # 安装依赖、复制配置模板
+make lab      # 研究模式：后端 127.0.0.1:8000，前端 :3000
+# 浏览器访问 http://localhost:3000/lab
 ```
+
+手动研究不需要 LLM 密钥或账户配置。`make demo` 提供隔离的虚构组合与合成研究数据，组合保持只读。配置自己的组合和对话模型后使用 `make start`；同样可以访问研究工作台。命令行连接已运行的后端，例如 `python scripts/research.py datasets`，完整示例见 [研究指南](docs/RESEARCH_CN.md)。
+
+交易入账需要预览和确认，AI 与截图识别不会自动入账。期初迁移、冲销与备份见 [账本指南](docs/LEDGER.md)，多币种现金与收益口径见 [核算说明](docs/ACCOUNTING.md)。
 
 #### 方式 1：仅引擎（投资组合追踪器）
 
@@ -129,7 +154,7 @@ cp config.example.json config.json
 # 编辑 config.json：添加 AI API Key（OpenAI / Claude / DeepSeek）
 
 # 启动后端
-python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
 
 # 启动前端
 cd frontend && npm install && npm run dev
@@ -392,9 +417,9 @@ V1 基于 Google Sheets + Apps Script，适合不想自托管的用户：
 
 ### 🆚 版本对比
 
-| 维度 | V1（Google Sheets） | V2（自托管） |
+| 维度 | V1（Google Sheets） | 当前自托管版 |
 |------|---------------------|-------------|
-| 数据存储 | Google Drive | 本地 JSON/CSV |
+| 数据存储 | Google Drive | 本地 SQLite/JSON/CSV |
 | 行情来源 | Google Finance + 新浪 | Yahoo Finance + AKShare |
 | 多市场 | 部分支持 | ✅ A 股 + 港股 + 美股 |
 | 量化指标 | ❌ | ✅ 夏普 / 波动率 / 回撤 |
@@ -402,7 +427,7 @@ V1 基于 Google Sheets + Apps Script，适合不想自托管的用户：
 | 策略回测 | ❌ | ✅ 自定义策略引擎 |
 | Web 面板 | Google Sheets 图表 | ✅ React + TailwindCSS |
 | 消息推送 | ❌ | ✅ 飞书 / Telegram / Slack |
-| 数据隐私 | 数据在 Google | ✅ 完全私有 |
+| 数据隐私 | 数据在 Google | 本地存储；远程模型接收请求上下文 |
 | Docker | ❌ | ✅ 一键部署 |
 
 ### 📄 许可证

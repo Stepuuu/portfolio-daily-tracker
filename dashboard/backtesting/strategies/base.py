@@ -222,6 +222,15 @@ class Strategy(ABC):
         """当前主 DataFeed"""
         return self._data
 
+    def get_data(self, symbol: str):
+        """获取指定标的的 DataFeed，用于多标的策略。"""
+        return self._all_data.get(symbol)
+
+    @property
+    def symbols(self) -> List[str]:
+        """当前回测已加载的标的列表。"""
+        return list(self._all_data.keys())
+
     def get_position(self, symbol: Optional[str] = None) -> Optional[Position]:
         """获取某标的持仓"""
         if self._engine is None:

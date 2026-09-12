@@ -263,7 +263,7 @@ class BacktestReflector:
                 f"策略总收益为负 ({stats.get('total_return', 0):.1%}), "
                 f"当前参数组合不适用于该市场环境"
             )
-        if stats.get("profit_factor", 0) < 1.0:
+        if stats.get("profit_factor") is not None and stats["profit_factor"] < 1.0:
             lessons.append(
                 "盈亏比小于1, 平均亏损大于平均盈利, 需调整持仓时间或止盈比例"
             )

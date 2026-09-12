@@ -1,294 +1,212 @@
-import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Settings as SettingsIcon, Server, Cpu, Save, DollarSign, Loader2 } from 'lucide-react'
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import {
+  ArrowRight,
+  BookOpen,
+  Loader2,
+  Save,
+  Settings as SettingsIcon,
+} from "lucide-react";
+import api, { getApiErrorMessage } from "@/services/api";
+import LabConnections from "@/components/lab/LabConnections";
+import {
+  buttonClass,
+  Failure,
+  Field,
+  inputClass,
+  Loading,
+  Panel,
+  primaryClass,
+} from "@/components/lab/LabUi";
 
 interface ModelInfo {
-  id: string
-  name: string
-  description: string
-  supports_vision: boolean
+  id: string;
+  name: string;
+  description: string;
+  supports_vision: boolean;
 }
-
-interface APIGroupInfo {
-  name: string
-  description: string
-  models: ModelInfo[]
-}
-
 interface ConfigResponse {
-  current_api_group: string
-  current_model: string
-  api_groups: { [key: string]: APIGroupInfo }
-  available_models: ModelInfo[]
+  current_api_group: string;
+  current_model: string;
+  api_groups: Record<
+    string,
+    { name: string; description: string; models: ModelInfo[] }
+  >;
+  available_models: ModelInfo[];
 }
-
 export default function Settings() {
-  const queryClient = useQueryClient()
-  const [apiUrl] = useState('http://localhost:8000')
-  const [selectedModel, setSelectedModel] = useState('')
-  const [selectedApiGroup, setSelectedApiGroup] = useState('')
-  const [cash, setCash] = useState(50000)
-  const [saveMessage, setSaveMessage] = useState('')
-
-  // 获取配置
-  const { data: config, isLoading } = useQuery<ConfigResponse>({
-    queryKey: ['settings'],
-    queryFn: async () => {
-      const res = await fetch('/api/settings/config')
-      return res.json()
-    }
-  })
-
-  // 获取持仓以获取当前现金
-  const { data: portfolio } = useQuery({
-    queryKey: ['portfolio'],
-    queryFn: async () => {
-      const res = await fetch('/api/portfolio')
-      return res.json()
-    }
-  })
-
-  // 初始化状态
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ["settings"],
+    queryFn: async () =>
+      (await api.get<ConfigResponse>("/settings/config")).data,
+  });
+  const [group, setGroup] = useState(""),
+    [model, setModel] = useState("");
+  const [dirty, setDirty] = useState(false),
+    [busy, setBusy] = useState(false);
+  const [error, setError] = useState(""),
+    [message, setMessage] = useState("");
   useEffect(() => {
-    if (config) {
-      setSelectedModel(config.current_model)
-      setSelectedApiGroup(config.current_api_group)
+    if (query.data && !dirty) {
+      setGroup(query.data.current_api_group);
+      setModel(query.data.current_model);
     }
-  }, [config])
-
-  useEffect(() => {
-    if (portfolio?.cash !== undefined) {
-      setCash(portfolio.cash)
+  }, [query.data, dirty]);
+  const models = query.data?.api_groups[group]?.models || [];
+  async function save() {
+    if (!query.data) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const changed: string[] = [];
+    async function update(path: string, body: Record<string, string>) {
+      const response = (await api.post(path, body)).data;
+      if (response?.success === false)
+        throw new Error(response.error || "配置更新失败");
     }
-  }, [portfolio])
-
-  // 当API组改变时，重置模型选择为该组的第一个模型
-  useEffect(() => {
-    if (config && selectedApiGroup) {
-      const group = config.api_groups[selectedApiGroup]
-      if (group?.models.length > 0) {
-        // 如果当前选择的模型不在新组中，选择新组的第一个模型
-        const modelExists = group.models.some(m => m.id === selectedModel)
-        if (!modelExists) {
-          setSelectedModel(group.models[0].id)
-        }
+    try {
+      if (group !== query.data.current_api_group) {
+        await update("/settings/api-group", { group_name: group });
+        changed.push("API 组");
       }
-    }
-  }, [selectedApiGroup, config])
-
-  // 切换API组
-  const switchApiGroupMutation = useMutation({
-    mutationFn: async (groupName: string) => {
-      const res = await fetch('/api/settings/api-group', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ group_name: groupName })
-      })
-      return res.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setSaveMessage('API组切换成功！已自动重载配置')
-      setTimeout(() => setSaveMessage(''), 3000)
-    }
-  })
-
-  // 切换模型
-  const switchModelMutation = useMutation({
-    mutationFn: async (modelId: string) => {
-      const res = await fetch('/api/settings/model', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: modelId })
-      })
-      return res.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setSaveMessage('模型切换成功！已自动重载配置')
-      setTimeout(() => setSaveMessage(''), 3000)
-    }
-  })
-
-  // 更新现金
-  const updateCashMutation = useMutation({
-    mutationFn: async (newCash: number) => {
-      const res = await fetch('/api/settings/cash', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cash: newCash })
-      })
-      return res.json()
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio'] })
-      setSaveMessage('现金余额更新成功！')
-      setTimeout(() => setSaveMessage(''), 3000)
-    }
-  })
-
-  const handleSave = () => {
-    if (selectedApiGroup !== config?.current_api_group) {
-      switchApiGroupMutation.mutate(selectedApiGroup)
-    }
-    if (selectedModel !== config?.current_model) {
-      switchModelMutation.mutate(selectedModel)
-    }
-    if (cash !== portfolio?.cash) {
-      updateCashMutation.mutate(cash)
+      if (model !== query.data.current_model || changed.length) {
+        await update("/settings/model", { model_id: model });
+        changed.push("模型");
+      }
+      setDirty(false);
+      await client.invalidateQueries({ queryKey: ["settings"] });
+      setMessage(
+        changed.length ? `${changed.join("、")}已更新` : "没有需要保存的改动",
+      );
+    } catch (e) {
+      setError(
+        `${changed.length ? `${changed.join("、")}已更新，但后续保存失败：` : ""}${getApiErrorMessage(e)}`,
+      );
+      await client.invalidateQueries({ queryKey: ["settings"] });
+    } finally {
+      setBusy(false);
     }
   }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
-      </div>
-    )
-  }
-
-  const currentGroup = config?.api_groups[selectedApiGroup]
-  const availableModels = currentGroup?.models || config?.available_models || []
-
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold flex items-center">
-        <SettingsIcon className="h-6 w-6 mr-2" />
-        设置
-      </h1>
-
-      {/* 保存消息 */}
-      {saveMessage && (
-        <div className="bg-green-500/10 border border-green-500 rounded-lg p-4 text-green-400">
-          {saveMessage}
-        </div>
-      )}
-
-      {/* API 设置 */}
-      <div className="bg-slate-800 rounded-lg p-6">
-        <h2 className="text-xl font-semibold flex items-center mb-4">
-          <Server className="h-5 w-5 mr-2" />
-          API 设置
-        </h2>
+    <div className="mx-auto max-w-5xl space-y-5 text-slate-100">
+      <header className="border-b border-slate-700 pb-5">
+        <h1 className="flex items-center gap-3 text-2xl font-semibold">
+          <SettingsIcon className="text-cyan-300" />
+          设置
+        </h1>
+        <p className="mt-3 text-sm text-slate-400">
+          管理研究模型接入与对话默认模型。
+        </p>
+      </header>
+      <LabConnections />
+      <Panel
+        title="对话默认模型"
+        detail="这些设置用于对话助手。研究工作台使用每个实验选择的模型连接。"
+      >
         <div className="space-y-4">
-          <div>
-            <label className="text-sm text-slate-400">后端 API 地址</label>
-            <input
-              type="text"
-              value={apiUrl}
-              disabled
-              className="w-full mt-1 bg-slate-700/50 rounded-lg px-4 py-2 text-slate-500"
+          {query.isPending && <Loading />}
+          {query.isError && (
+            <Failure
+              message={getApiErrorMessage(query.error)}
+              retry={() => void query.refetch()}
             />
-          </div>
-          <div>
-            <label className="text-sm text-slate-400 mb-2 block">API 组</label>
-            <select
-              value={selectedApiGroup}
-              onChange={(e) => setSelectedApiGroup(e.target.value)}
-              className="w-full bg-slate-700 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              {config && Object.entries(config.api_groups).map(([key, group]) => (
-                <option key={key} value={key}>
-                  {group.name} - {group.description}
-                </option>
-              ))}
-            </select>
-            <div className="text-xs text-slate-500 mt-2">
-              选择不同的API提供商（切换后自动重载，无需重启）
-            </div>
-          </div>
-          <div>
-            <label className="text-sm text-slate-400 mb-2 block">当前 API 组信息</label>
-            <div className="bg-slate-700 rounded-lg px-4 py-3">
-              <div className="font-medium">{currentGroup?.name}</div>
-              <div className="text-sm text-slate-400 mt-1">{currentGroup?.description}</div>
-              <div className="text-xs text-slate-500 mt-2">
-                可用模型: {currentGroup?.models.length || 0} 个
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 现金设置 */}
-      <div className="bg-slate-800 rounded-lg p-6">
-        <h2 className="text-xl font-semibold flex items-center mb-4">
-          <DollarSign className="h-5 w-5 mr-2" />
-          现金余额
-        </h2>
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm text-slate-400 mb-2 block">可用现金（元）</label>
-            <input
-              type="number"
-              value={cash}
-              onChange={(e) => setCash(parseFloat(e.target.value) || 0)}
-              step="1000"
-              className="w-full bg-slate-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            />
-            <div className="text-xs text-slate-500 mt-2">
-              设置账户中的可用现金余额，用于资产统计和建议计算
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 模型设置 */}
-      <div className="bg-slate-800 rounded-lg p-6">
-        <h2 className="text-xl font-semibold flex items-center mb-4">
-          <Cpu className="h-5 w-5 mr-2" />
-          模型设置
-        </h2>
-        <div className="space-y-3">
-          {availableModels.map((m) => (
-            <label
-              key={m.id}
-              className={`flex items-center p-4 rounded-lg cursor-pointer transition-colors ${
-                selectedModel === m.id ? 'bg-primary-600/20 border border-primary-500' : 'bg-slate-700 hover:bg-slate-600'
-              }`}
-            >
-              <input
-                type="radio"
-                name="model"
-                value={m.id}
-                checked={selectedModel === m.id}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="sr-only"
-              />
-              <div className="flex-1">
-                <div className="font-medium flex items-center">
-                  {m.name}
-                  {m.supports_vision && (
-                    <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">
-                      支持图片
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm text-slate-400">{m.description}</div>
-              </div>
-              {selectedModel === m.id && (
-                <div className="w-4 h-4 bg-primary-500 rounded-full" />
-              )}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* 保存按钮 */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          disabled={switchModelMutation.isPending || updateCashMutation.isPending}
-          className="flex items-center px-6 py-3 bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors disabled:opacity-50"
-        >
-          {(switchModelMutation.isPending || updateCashMutation.isPending) ? (
-            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-          ) : (
-            <Save className="h-5 w-5 mr-2" />
           )}
-          保存设置
-        </button>
-      </div>
+          {error && <Failure message={error} />}
+          {message && (
+            <p
+              role="status"
+              className="rounded-xl bg-cyan-500/10 p-3 text-sm text-cyan-100"
+            >
+              {message}
+            </p>
+          )}
+          {query.data && (
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void save();
+              }}
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="API 组">
+                  <select
+                    className={inputClass}
+                    value={group}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setGroup(e.target.value);
+                      setModel(
+                        query.data!.api_groups[e.target.value]?.models[0]?.id ||
+                          "",
+                      );
+                      setDirty(true);
+                      setMessage("");
+                    }}
+                  >
+                    {Object.entries(query.data.api_groups).map(
+                      ([key, value]) => (
+                        <option key={key} value={key}>
+                          {value.name}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </Field>
+                <Field label="模型">
+                  <select
+                    className={inputClass}
+                    value={model}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setModel(e.target.value);
+                      setDirty(true);
+                      setMessage("");
+                    }}
+                  >
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                        {m.supports_vision ? " · 支持图片" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <p className="text-xs leading-6 text-slate-500">
+                {models.find((m) => m.id === model)?.description ||
+                  query.data.api_groups[group]?.description}
+              </p>
+              <button
+                className={primaryClass}
+                disabled={busy || !group || !model}
+              >
+                {busy ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Save size={15} />
+                )}
+                保存对话设置
+              </button>
+            </form>
+          )}
+        </div>
+      </Panel>
+      <Panel
+        title="账户记录"
+        detail="现金与持仓通过账本记录，并在确认前展示变化。"
+      >
+        <Link className={buttonClass} to="/ledger">
+          <BookOpen size={16} />
+          前往交易账本
+          <ArrowRight size={14} />
+        </Link>
+      </Panel>
+      <p className="text-xs text-slate-500">
+        后端连接使用当前站点的 /api，遵循启动时设置的端口与代理。
+      </p>
     </div>
-  )
+  );
 }

@@ -60,3 +60,8 @@ engine/portfolio/transactions/
 *.sqlite3-*
 *.db
 *.db-*
+
+# Messaging workbench credentials, wherever initialized
+**/feishu-workbench/config.json
+**/feishu-workbench/bridge.token
+**/.portfolio-update.lock

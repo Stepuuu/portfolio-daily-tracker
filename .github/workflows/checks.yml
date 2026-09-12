@@ -27,6 +27,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: dashboard/frontend/package-lock.json
+      - run: node --test openclaw/feishu-workbench-bridge.test.mjs
       - run: npm ci
         working-directory: dashboard/frontend
       - run: npm run build
@@ -66,3 +67,4 @@ jobs:
       - run: npm ci
         working-directory: dashboard/frontend
       - run: python tests/browser_smoke.py
+      - run: python tests/browser_lab_smoke.py

@@ -24,6 +24,8 @@ Usage:
 """
 
 import json, os, sys, argparse, glob, copy
+from portfolio_write_lock import portfolio_write_locked
+
 from datetime import datetime
 
 from portfolio_accounting import atomic_text_writer, atomic_json_dump, cash_balances, set_cash_balance
@@ -227,6 +229,7 @@ def cmd_set_cost(args):
     print(f"   保存到: {path}")
 
 
+@portfolio_write_locked(lambda: PORTFOLIO_DIR)
 def main():
     parser = argparse.ArgumentParser(description="Portfolio holdings manager")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="Target date")

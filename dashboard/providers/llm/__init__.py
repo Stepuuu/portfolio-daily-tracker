@@ -52,3 +52,8 @@ __all__ = [
     "create_llm_provider",
     "DEFAULT_MODELS"
 ]
+
+# The research registry is explicit and does not alter existing chat providers.
+from .research import make_research_provider, provider_capabilities, probe_research_provider, register_research_provider
+
+__all__ += ["make_research_provider", "provider_capabilities", "probe_research_provider", "register_research_provider"]

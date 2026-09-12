@@ -6,8 +6,9 @@ import { portfolioService } from '@/services'
 
 export default function Header() {
   const pathname = useLocation().pathname
-  const ledgerState = useQuery({ queryKey: ['ledger'], queryFn: async () => (await api.get('/ledger')).data })
-  const onTracker = pathname === '/tracker' || pathname === '/ledger' || Boolean(ledgerState.data?.revision)
+  const onLab = pathname === '/lab' || pathname === '/settings'
+  const ledgerState = useQuery({ queryKey: ['ledger'], queryFn: async () => (await api.get('/ledger')).data, enabled: !onLab })
+  const onTracker = onLab || pathname === '/tracker' || pathname === '/ledger' || Boolean(ledgerState.data?.revision)
   const queryClient = useQueryClient()
   const { data: portfolio, refetch, isRefetching } = useQuery({
     queryKey: ['portfolio', 'live'],
@@ -28,7 +29,7 @@ export default function Header() {
     <header className="flex h-16 items-center justify-between border-b border-slate-700 bg-slate-800 px-6">
       {/* 账户概览 */}
       <div className="flex items-center space-x-8">
-        {onTracker && <span className="text-sm text-slate-400">账户记录 · 市值以跟踪快照日期为准</span>}
+        {onTracker && <span className="text-sm text-slate-400">{onLab ? '研究工作台 · 每次实验都有记录' : '账户记录 · 市值以跟踪快照日期为准'}</span>}
         {!onTracker && portfolio && (
           <>
             <div>
@@ -66,7 +67,7 @@ export default function Header() {
       {/* 操作按钮 */}
       <div className="flex items-center space-x-4">
         <button
-          onClick={() => onTracker ? queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith('tracker-') }) : refetch()}
+          onClick={() => onLab ? queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith('lab-') }) : onTracker ? queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith('tracker-') }) : refetch()}
           disabled={isRefetching}
           className="flex items-center px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
           title="刷新数据"

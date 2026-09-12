@@ -25,6 +25,8 @@ Usage:
 """
 
 import json, os, sys, argparse, glob, copy, subprocess, re
+from portfolio_write_lock import portfolio_write_locked
+
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -501,6 +503,11 @@ def send_feishu_notification(date_str, holdings, config):
         print("  ⚠️ 未配置 feishu_chat_id，跳过飞书通知")
         return False
     
+    from feishu_workbench_notify import try_daily_card
+    if try_daily_card(date_str, chat_id):
+        print("  ✅ 每日更新卡片已进入发送队列")
+        return True
+
     # Build a summary of current holdings
     groups_summary = []
     for gname, gdata in holdings.get("groups", {}).items():
@@ -617,36 +624,54 @@ def run_report(date_str):
         return None
 
 
-def run_pipeline(date_str, send_report=True):
-    """Full pipeline: snapshot → report → push Feishu → sync QR."""
+def run_pipeline(date_str, send_report=True, *, resume=False):
+    """Checkpoint snapshot/report stages and never resend an uncertain push."""
+    import hashlib
     config = load_config()
-    
-    print(f"\n🚀 运行完整管道 — {date_str}")
-    
-    # Step 1: Generate snapshot
-    print("\n[1/3] 生成快照...")
-    if not run_snapshot(date_str):
+    holdings_file = HOLDINGS_DIR / f"{date_str}.json"
+    if not holdings_file.is_file():
         return False
-    
-    # Step 2: Generate report  
-    print("\n[2/3] 生成报告...")
-    report_file = run_report(date_str)
-    
-    # Step 3: Push to Feishu
-    if send_report and report_file:
-        print("\n[3/3] 推送飞书...")
-        report_content = report_file.read_text()
-        send_feishu_report(date_str, report_content, config)
-    else:
-        print("\n[3/3] 跳过推送")
-    
-    print(f"\n✅ 管道完成！日期: {date_str}")
-    
-    # Check if QR sync happened (it's done inside snapshot engine)
-    qr_path = config.get("qr_portfolio_path", "")
-    if qr_path and os.path.exists(qr_path):
-        print(f"  📱 QR Dashboard 数据已同步")
-    
+    digest = hashlib.sha256(holdings_file.read_bytes()).hexdigest()
+    checkpoint_path = PORTFOLIO_DIR / "pipeline-state" / f"{date_str}.json"
+    state = {}
+    if checkpoint_path.exists():
+        try:
+            state = json.loads(checkpoint_path.read_text())
+        except (OSError, ValueError):
+            return False
+    if state.get('holdings_hash') != digest:
+        if resume:
+            return False
+        state = {'holdings_hash': digest, 'snapshot': False, 'report': False, 'push': 'not_started'}
+    def save():
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_json_dump(state, checkpoint_path)
+    save()
+    if not state.get('snapshot'):
+        if not run_snapshot(date_str):
+            return False
+        state['snapshot'] = True
+        save()
+    report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
+    if not state.get('report') or not report_file.is_file():
+        report_file = run_report(date_str)
+        if not report_file or not report_file.is_file():
+            return False
+        state['report'] = True
+        save()
+    if send_report and state.get('push') != 'complete':
+        if state.get('push') == 'uncertain':
+            # A process can die after Feishu accepts the message. Require
+            # reconciliation instead of silently publishing a second copy.
+            return False
+        state['push'] = 'uncertain'
+        save()
+        if not send_feishu_report(date_str, report_file.read_text(), config):
+            return False
+        state['push'] = 'complete'
+        save()
+    state['complete'] = not send_report or state.get('push') == 'complete'
+    save()
     return True
 
 
@@ -718,6 +743,7 @@ def action_auto_pipeline(date_str):
     return run_pipeline(date_str)
 
 
+@portfolio_write_locked(lambda: PORTFOLIO_DIR)
 def main():
     parser = argparse.ArgumentParser(description="Portfolio daily update system")
     parser.add_argument("--action", required=True,

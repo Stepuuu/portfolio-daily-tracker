@@ -4,6 +4,7 @@
 from typing import Optional, AsyncIterator, List
 from datetime import datetime
 import json
+import asyncio
 
 from core.llm.base import LLMProvider
 from core.models import (
@@ -23,7 +24,9 @@ class TraderAgent:
         self.llm = llm_provider
         self.conversation: Optional[Conversation] = None
         self.tool_executor = tool_executor
-        self.max_tool_iterations = 5  # 防止无限循环
+        self.max_tool_iterations = 5  # Includes the final model response
+        self.max_tool_calls = 20
+        self.tool_timeout_seconds = 30
 
     def start_conversation(self, conversation_id: str = "default") -> Conversation:
         """开始新对话"""
@@ -40,182 +43,107 @@ class TraderAgent:
         context: Optional[AgentContext] = None,
         stream: bool = False
     ):
-        """
-        与 Agent 对话（支持工具调用）
+        """Yield a reply after a bounded multi-round tool conversation.
 
-        Args:
-            user_message: 用户消息
-            context: 上下文信息（持仓、市场等）
-            stream: 是否流式返回
-
-        Returns:
-            如果 stream=False，返回完整回复字符串
-            如果 stream=True，返回 async generator
+        Streaming and buffered requests use the same loop. Only the registered
+        tools can run, and cancellation propagates to the active model/tool call.
         """
         if not self.conversation:
             self.start_conversation()
-
-        # 添加用户消息
         self.conversation.add_message(MessageRole.USER, user_message)
-
-        # 构建消息列表
         messages = self._build_messages(context)
+        tools = self.tool_executor.get_tool_schemas() if self.tool_executor else None
+        transcript = []
+        total_calls = 0
+        terminal = ""
 
-        # 如果有工具，添加工具定义
-        tools = None
-        if self.tool_executor:
-            tools = self.tool_executor.get_tool_schemas()
-
-        # 工具调用循环
-        iteration = 0
-        final_response = ""
-
-        while iteration < self.max_tool_iterations:
-            iteration += 1
-
-            # 调用 LLM
-            if stream and iteration == 1:
-                # 流式模式：只在第一次迭代流式返回
-                response_text = ""
-                stop_reason = None
-                tool_calls = []
-
+        for iteration in range(self.max_tool_iterations):
+            response_text, tool_calls, stop_reason = "", [], None
+            if stream:
+                emitted_text = False
                 async for chunk in self.llm.chat_stream(messages, tools=tools):
                     if isinstance(chunk, dict):
-                        # 处理流式响应中的元数据
                         if "stop_reason" in chunk:
                             stop_reason = chunk["stop_reason"]
                         if "tool_calls" in chunk:
-                            tool_calls = chunk["tool_calls"]
-                    else:
+                            tool_calls = chunk["tool_calls"] or []
+                    elif isinstance(chunk, str):
+                        if chunk and not emitted_text:
+                            if transcript:
+                                yield "\n\n"
+                            emitted_text = True
                         response_text += chunk
+                        if len(response_text) > 100000:
+                            raise RuntimeError("模型回复超过本轮长度限制")
                         yield chunk
-
-                # 检查是否需要调用工具
-                if stop_reason == "tool_use" and tool_calls:
-                    # 暂停流式输出，执行工具
-                    assistant_content = []
-                    if response_text:
-                        assistant_content.append({"type": "text", "text": response_text})
-
-                    for tool_call in tool_calls:
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": tool_call["id"],
-                            "name": tool_call["name"],
-                            "input": tool_call["input"]
-                        })
-
-                    messages.append({
-                        "role": "assistant",
-                        "content": assistant_content
-                    })
-
-                    # 执行所有工具调用
-                    tool_results = []
-                    for tool_call in tool_calls:
-                        tool_name = tool_call["name"]
-                        tool_input = tool_call["input"]
-
-                        print(f"[Tool] 调用工具: {tool_name}({tool_input})")
-                        result = await self.tool_executor.execute_tool(tool_name, tool_input)
-                        print(f"[Tool] 工具结果: {result}")
-
-                        tool_results.append({
-                            "role": "user",  # Claude expects tool results in a user message
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_call["id"],
-                                    "content": json.dumps(result, ensure_ascii=False)
-                                }
-                            ]
-                        })
-
-                    # 添加工具结果到消息
-                    messages.extend(tool_results)
-
-                    # 继续非流式模式获取最终回复
-                    response = await self.llm.chat(messages, tools=tools)
-                    final_text = response.content
-                    yield f"\n\n{final_text}"
-
-                    final_response = response_text + "\n\n" + final_text
-                    break
-                else:
-                    final_response = response_text
-                    break
-
+                    else:
+                        raise RuntimeError("模型流返回了无法识别的数据")
             else:
-                # 非流式模式或后续迭代
                 response = await self.llm.chat(messages, tools=tools)
-                response_text = response.content
+                response_text = response.content or ""
+                tool_calls = response.tool_calls or []
+                stop_reason = response.stop_reason or response.finish_reason
+            if stop_reason in {"length", "max_tokens"}:
+                raise RuntimeError("模型达到输出长度限制，本轮回复尚未完成")
+            if response_text:
+                transcript.append(response_text)
+            if not tool_calls:
+                if not response_text.strip():
+                    raise RuntimeError("模型返回空回复，本轮未完成")
+                if stop_reason in {"tool_use", "tool_calls"}:
+                    raise RuntimeError("模型请求工具，但没有提供完整的工具调用")
+                terminal = response_text
+                break
+            if not self.tool_executor:
+                raise RuntimeError("当前对话未配置可执行工具")
+            if not isinstance(tool_calls, list):
+                raise RuntimeError("工具调用必须是列表")
+            if iteration + 1 >= self.max_tool_iterations or total_calls + len(tool_calls) > self.max_tool_calls:
+                terminal = "已达到本轮研究工具调用上限，尚未完成全部核查；请缩小问题范围后继续。"
+                if stream:
+                    yield ("\n\n" if transcript else "") + terminal
+                transcript.append(terminal)
+                break
+            call_ids = set()
+            assistant_content = [{"type": "text", "text": response_text}] if response_text else []
+            for call in tool_calls:
+                if (not isinstance(call, dict) or not isinstance(call.get("id"), str) or not call["id"]
+                        or call["id"] in call_ids or not isinstance(call.get("name"), str)
+                        or not isinstance(call.get("input", {}), dict)):
+                    raise RuntimeError("模型返回了不完整或重复的工具调用")
+                call_ids.add(call["id"])
+                assistant_content.append({"type": "tool_use", "id": call["id"], "name": call["name"], "input": call.get("input", {})})
+            messages.append({"role": "assistant", "content": assistant_content})
+            results = []
+            for call in tool_calls:
+                total_calls += 1
+                try:
+                    result = await asyncio.wait_for(self.tool_executor.execute_tool(call["name"], call.get("input", {})),
+                                                    timeout=self.tool_timeout_seconds)
+                except asyncio.TimeoutError:
+                    result = {"error": "工具调用超时；本轮未自动重试，请根据已获取的信息说明限制。"}
+                except Exception:
+                    result = {"error": "工具调用失败；请说明信息缺口，不能把失败当作成功。"}
+                try:
+                    serialized = json.dumps(result, ensure_ascii=False, allow_nan=False)
+                    if len(serialized) > 64000:
+                        result = {"error": "工具结果过大，请缩小查询范围。"}
+                        serialized = json.dumps(result, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    result = {"error": "工具没有返回有效的结构化数据。"}
+                    serialized = json.dumps(result, ensure_ascii=False)
+                results.append({"type": "tool_result", "tool_use_id": call["id"], "content": serialized,
+                                "is_error": isinstance(result, dict) and bool(result.get("error"))})
+            messages.append({"role": "user", "content": results})
+        else:
+            terminal = "已达到本轮研究工具调用上限，尚未完成全部核查。"
+            transcript.append(terminal)
+            if stream:
+                yield terminal
 
-                # 检查是否需要调用工具
-                if hasattr(response, 'stop_reason') and response.stop_reason == "tool_use":
-                    # 有工具调用
-                    tool_calls = getattr(response, 'tool_calls', [])
-
-                    if not tool_calls:
-                        # 没有工具调用，直接返回
-                        final_response = response_text
-                        break
-
-                    # 添加助手消息（包含工具调用）
-                    assistant_content = []
-                    if response_text:
-                        assistant_content.append({"type": "text", "text": response_text})
-
-                    for tool_call in tool_calls:
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": tool_call.get("id"),
-                            "name": tool_call.get("name"),
-                            "input": tool_call.get("input", {})
-                        })
-
-                    messages.append({
-                        "role": "assistant",
-                        "content": assistant_content
-                    })
-
-                    # 执行所有工具调用
-                    tool_results = []
-                    for tool_call in tool_calls:
-                        tool_name = tool_call.get("name")
-                        tool_input = tool_call.get("input", {})
-                        tool_id = tool_call.get("id")
-
-                        print(f"[Tool] 调用工具: {tool_name}({tool_input})")
-                        result = await self.tool_executor.execute_tool(tool_name, tool_input)
-                        print(f"[Tool] 工具结果: {result}")
-
-                        tool_results.append({
-                            "role": "user",  # Claude expects tool results in a user message
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": json.dumps(result, ensure_ascii=False)
-                                }
-                            ]
-                        })
-
-                    # 添加工具结果到消息
-                    messages.extend(tool_results)
-
-                    # 继续下一次迭代
-                    continue
-
-                else:
-                    # 没有工具调用，正常回复
-                    final_response = response_text
-                    break
-
-        # 保存助手回复
+        final_response = "\n\n".join(transcript) if stream else terminal
         self.conversation.add_message(MessageRole.ASSISTANT, final_response)
-
-        if not stream or iteration > 1:
+        if not stream:
             yield final_response
 
     def _build_messages(self, context: Optional[AgentContext] = None) -> list:

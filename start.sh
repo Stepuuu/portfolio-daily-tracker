@@ -53,7 +53,7 @@ PY
         kill -0 "$pid" 2>/dev/null || { echo 'Backend exited during startup.' >&2; exit 1; }
         if "$TRACKER_PYTHON" - "$BACKEND_PORT" <<'PY' >/dev/null 2>&1
 import urllib.request, sys
-urllib.request.urlopen('http://127.0.0.1:' + sys.argv[1] + '/health', timeout=1)
+urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:' + sys.argv[1] + '/health', timeout=1)
 PY
         then ready=1; break; fi
         sleep 1

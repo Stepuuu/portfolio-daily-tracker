@@ -10,7 +10,7 @@
 #   make docker    — Start with Docker Compose
 #   make clean     — Remove __pycache__, node_modules, etc.
 
-.PHONY: setup start stop snapshot docker clean help backend frontend cli test demo
+.PHONY: setup start stop snapshot docker clean help backend frontend cli test demo lab
 
 help:
 	@echo ""
@@ -23,6 +23,7 @@ help:
 	@echo "  make frontend   Start frontend only"
 	@echo "  make cli        Start CLI trading assistant"
 	@echo "  make snapshot   Generate today's portfolio snapshot"
+	@echo "  make lab        Open the stock research workbench without account services"
 	@echo "  make demo       Explore fictional data, without API keys"
 	@echo "  make test       Run offline regression tests"
 	@echo "  make docker     Start with Docker Compose"
@@ -59,7 +60,11 @@ test:
 demo:
 	@[ -d .demo/portfolio ] || python3 engine/scripts/create_demo.py --output .demo/portfolio
 	@echo "Open http://localhost:$${FRONTEND_PORT:-3000}/tracker — fictional data only"
-	PORTFOLIO_DIR="$(CURDIR)/.demo/portfolio" TRACKER_DEMO_MODE=1 bash start.sh
+	PORTFOLIO_DIR="$(CURDIR)/.demo/portfolio" TRACKER_LAB_DIR="$(CURDIR)/.demo/research" TRACKER_DEMO_MODE=1 bash start.sh
+
+lab:
+	@echo "Open http://localhost:$${FRONTEND_PORT:-3000}/lab"
+	TRACKER_LAB_ONLY=1 bash start.sh
 
 # ── Development ──
 start:

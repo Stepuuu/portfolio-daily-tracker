@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import pandas as pd
+from backtesting.data.quality import require_valid_daily_bars
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,10 @@ class DataLoader:
                 "换手率": "turnover",
             }
             df = df.rename(columns=col_map)
+            # stock_zh_a_hist reports A-share volume in lots (100 shares).
+            # Convert only at this provider boundary, never on cached frames.
+            df["volume"] = pd.to_numeric(df["volume"], errors="raise").astype(float) * 100
+            df.attrs["volume_unit"] = "shares"
             df["symbol"] = clean_symbol
             return df
 
@@ -189,8 +194,7 @@ class DataLoader:
         标准化 DataFrame:
           - date 列转为 DatetimeIndex
           - 数值列转 float
-          - 按日期升序排列
-          - 去重
+          - 拒绝乱序、重复日期及无效 OHLCV；不静默修复行情
         """
         required_cols = ["date", "open", "high", "low", "close", "volume"]
         missing = [c for c in required_cols if c not in df.columns]
@@ -210,10 +214,7 @@ class DataLoader:
         if "amount" in df.columns:
             df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
 
-        # 排序 + 去重
-        df = df.sort_values("date").drop_duplicates(subset=["date"]).reset_index(drop=True)
-
         # 设置日期为 index
         df = df.set_index("date")
-
+        require_valid_daily_bars(df)
         return df

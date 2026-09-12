@@ -5,6 +5,7 @@ Agent 工具定义
 from typing import List, Dict, Any, Callable, Optional
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 def _normalize_market(market: str) -> str:
@@ -376,7 +377,7 @@ def get_tracker_snapshot_tool() -> Tool:
 
 def update_holdings_tool() -> Tool:
     """更新每日持仓工具 — 支持自然语言描述持仓变化"""
-    async def update_holdings(date: str, changes_text: str) -> Dict:
+    def _update_holdings(date: str, changes_text: str) -> Dict:
         """
         根据用户自然语言描述更新当日持仓文件。
 
@@ -392,42 +393,48 @@ def update_holdings_tool() -> Tool:
         
         from portfolio_daily_update import (
             clone_holdings, load_holdings, save_holdings,
-            parse_and_apply_changes
+            parse_and_apply_changes, PORTFOLIO_DIR
         )
+        from portfolio_write_lock import portfolio_write_lock
 
-        # Ensure today's holdings exist
-        path, is_new = clone_holdings(date)
-        if not path:
-            return {"error": "无法创建今日持仓文件", "success": False}
+        with portfolio_write_lock(PORTFOLIO_DIR):
+            # Ensure today's holdings exist
+            path, is_new = clone_holdings(date)
+            if not path:
+                return {"error": "无法创建今日持仓文件", "success": False}
 
-        holdings = load_holdings(date)
-        if not holdings:
-            return {"error": "无法加载今日持仓", "success": False}
+            holdings = load_holdings(date)
+            if not holdings:
+                return {"error": "无法加载今日持仓", "success": False}
 
-        # Parse and apply changes
-        changes = parse_and_apply_changes(holdings, changes_text)
+            # Parse and apply changes
+            changes = parse_and_apply_changes(holdings, changes_text)
 
-        changes_desc = [c["description"] for c in changes]
-        has_real_changes = any(c["action"] not in ("no_change", "unknown") for c in changes)
-        has_unknown = any(c["action"] == "unknown" for c in changes)
+            changes_desc = [c["description"] for c in changes]
+            has_real_changes = any(c["action"] not in ("no_change", "unknown") for c in changes)
+            has_unknown = any(c["action"] == "unknown" for c in changes)
 
-        if has_real_changes:
-            save_holdings(holdings, date)
+            if has_real_changes:
+                save_holdings(holdings, date)
 
-        return {
-            "success": True,
-            "date": date,
-            "changes_applied": changes_desc,
-            "holdings_updated": has_real_changes,
-            "has_unrecognized": has_unknown,
-            "message": (
-                f"已更新 {date} 持仓: {'; '.join(changes_desc)}"
-                if has_real_changes
-                else f"持仓未变化" if any(c["action"] == "no_change" for c in changes)
-                else f"未识别变更: {'; '.join(changes_desc)}"
-            ),
-            "next_step": "调用 run_portfolio_pipeline 生成快照和日报" if not has_unknown else "请重新描述未识别的变更"
-        }
+            return {
+                "success": True,
+                "date": date,
+                "changes_applied": changes_desc,
+                "holdings_updated": has_real_changes,
+                "has_unrecognized": has_unknown,
+                "message": (
+                    f"已更新 {date} 持仓: {'; '.join(changes_desc)}"
+                    if has_real_changes
+                    else f"持仓未变化" if any(c["action"] == "no_change" for c in changes)
+                    else f"未识别变更: {'; '.join(changes_desc)}"
+                ),
+                "next_step": "调用 run_portfolio_pipeline 生成快照和日报" if not has_unknown else "请重新描述未识别的变更"
+            }
+
+    async def update_holdings(date: str, changes_text: str) -> Dict:
+        import asyncio
+        return await asyncio.to_thread(_update_holdings, date, changes_text)
 
     return Tool(
         name="update_holdings",
@@ -450,7 +457,7 @@ def update_holdings_tool() -> Tool:
 
 def run_portfolio_pipeline_tool() -> Tool:
     """运行投资组合完整管道 — 快照+报告+推送+同步QR"""
-    async def run_portfolio_pipeline(date: str, send_report: bool = True) -> Dict:
+    def _run_portfolio_pipeline(date: str, send_report: bool = True) -> Dict:
         """
         运行完整的投资组合管道：生成快照 → 报告 → 推送飞书 → 同步 QR Dashboard。
 
@@ -464,43 +471,48 @@ def run_portfolio_pipeline_tool() -> Tool:
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "engine" / "scripts"))
         
-        from portfolio_daily_update import clone_holdings, run_pipeline
+        from portfolio_daily_update import clone_holdings, run_pipeline, PORTFOLIO_DIR
+        from portfolio_write_lock import portfolio_write_lock
 
-        # Ensure holdings exist
-        clone_holdings(date)
+        with portfolio_write_lock(PORTFOLIO_DIR):
+            # Ensure holdings exist
+            clone_holdings(date)
 
-        # Run full pipeline
-        success = run_pipeline(date, send_report=send_report)
+            # Run full pipeline
+            success = run_pipeline(date, send_report=send_report)
 
-        if success:
-            # Read the generated snapshot for summary
-            from pathlib import Path
-            snap_file = Path(os.environ.get("PORTFOLIO_DIR", str(Path(__file__).parent.parent.parent / "engine" / "portfolio"))) / "snapshots" / f"{date}.json"
-            summary = {}
-            if snap_file.exists():
-                import json
-                snap = json.loads(snap_file.read_text())
-                s = snap.get("summary", {})
-                summary = {
-                    "total_value": s.get("total_value"),
-                    "total_profit": s.get("total_profit"),
-                    "daily_change": s.get("daily_change"),
-                    "daily_change_pct": s.get("daily_change_pct"),
-                    "sharpe_ratio": s.get("sharpe_ratio"),
+            if success:
+                # Read the generated snapshot for summary
+                snap_file = Path(PORTFOLIO_DIR) / "snapshots" / f"{date}.json"
+                summary = {}
+                if snap_file.exists():
+                    import json
+                    snap = json.loads(snap_file.read_text())
+                    s = snap.get("summary", {})
+                    summary = {
+                        "total_value": s.get("total_value"),
+                        "total_profit": s.get("total_profit"),
+                        "daily_change": s.get("daily_change"),
+                        "daily_change_pct": s.get("daily_change_pct"),
+                        "sharpe_ratio": s.get("sharpe_ratio"),
+                    }
+
+                return {
+                    "success": True,
+                    "date": date,
+                    "message": f"✅ {date} 管道完成：快照已生成，报告{'已推送飞书' if send_report else '已生成'}，QR Dashboard 已同步",
+                    "summary": summary,
+                }
+            else:
+                return {
+                    "success": False,
+                    "date": date,
+                    "message": f"❌ {date} 管道执行失败，请检查日志",
                 }
 
-            return {
-                "success": True,
-                "date": date,
-                "message": f"✅ {date} 管道完成：快照已生成，报告{'已推送飞书' if send_report else '已生成'}，QR Dashboard 已同步",
-                "summary": summary,
-            }
-        else:
-            return {
-                "success": False,
-                "date": date,
-                "message": f"❌ {date} 管道执行失败，请检查日志",
-            }
+    async def run_portfolio_pipeline(date: str, send_report: bool = True) -> Dict:
+        import asyncio
+        return await asyncio.to_thread(_run_portfolio_pipeline, date, send_report)
 
     return Tool(
         name="run_portfolio_pipeline",

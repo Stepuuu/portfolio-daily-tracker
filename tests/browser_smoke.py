@@ -34,7 +34,7 @@ def ready(url, process):
         if process.poll() is not None:
             raise RuntimeError('Preview process exited before readiness')
         try:
-            urllib.request.urlopen(url, timeout=1).close()
+            urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=1).close()
             return
         except OSError:
             time.sleep(.1)

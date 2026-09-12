@@ -10,6 +10,7 @@ const Memory = lazy(() => import('./pages/Memory'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Help = lazy(() => import('./pages/Help'))
 const Backtest = lazy(() => import('./pages/Backtest'))
+const ResearchLab = lazy(() => import('./pages/ResearchLab'))
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
           <Route path="market" element={<Market />} />
           <Route path="memory" element={<Memory />} />
           <Route path="backtest" element={<Backtest />} />
+          <Route path="lab" element={<ResearchLab />} />
           <Route path="settings" element={<Settings />} />
           <Route path="help" element={<Help />} />
         </Route>
