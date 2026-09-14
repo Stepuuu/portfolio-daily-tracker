@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="交易助手 API",
     description="智能股票交易辅助系统 API",
-    version="3.2.0",
+    version="3.2.1",
     lifespan=lifespan
 )
 
@@ -114,7 +114,7 @@ async def root():
     """根路径"""
     return {
         "name": "交易助手 API",
-        "version": "3.2.0",
+        "version": "3.2.1",
         "status": "running",
         "docs": "/docs"
     }

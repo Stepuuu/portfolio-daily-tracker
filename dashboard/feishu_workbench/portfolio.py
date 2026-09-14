@@ -31,8 +31,8 @@ class PortfolioError(ValueError):
     """A validated, user-facing accounting error."""
 
 
-_ACTIONS = {"no_change", "buy", "sell", "set_cash", "set_fund"}
-_FIELDS = {"action", "operation", "account", "date", "ticker", "quantity", "price", "fee", "currency", "amount", "name"}
+_ACTIONS = {"no_change", "buy", "sell", "set_cash", "set_fund", "deposit", "withdraw", "set_cost_basis"}
+_FIELDS = {"action", "operation", "account", "date", "ticker", "quantity", "price", "fee", "currency", "amount", "name", "principal_cny"}
 
 
 def _encode(value):
@@ -229,7 +229,8 @@ class PortfolioAdapter:
             cash = self._cash(group)
             accounts.append({"label": account, "value": account,
                              "cash_balances": {key: _text(value) for key, value in cash.items()},
-                             "fund": _text(group.get("fund", 0))})
+                             "fund": _text(group.get("fund", 0)),
+                             **({"cost_basis": _text(group["cost_basis"])} if "cost_basis" in group else {})})
             for position in group.get("positions", []):
                 ticker = _ticker(position.get("ticker"))
                 positions.append({"label": str(position.get("name") or ticker), "value": ticker,
@@ -282,12 +283,12 @@ class PortfolioAdapter:
             raise PortfolioError("操作类型冲突，请重新选择。")
         action = fields.get("action", fields.get("operation"))
         if action not in _ACTIONS:
-            raise PortfolioError("请选择无变化、买入、卖出、现金对账或基金估值更新。")
+            raise PortfolioError("请选择有效的变动类型。")
         changes = []
         if action == "no_change":
             if any(fields.get(key) not in (None, "") for key in _FIELDS - {"action", "operation", "date"}):
                 raise PortfolioError("无变化操作不能同时包含金额、证券或账户变更。")
-            changes.append("确认今日持仓、现金和基金均无变化。")
+            changes.append("确认今日持仓、现金、基金和投入本金均无变化。")
         else:
             account = fields.get("account")
             if not isinstance(account, str) or account not in after["groups"]:
@@ -297,7 +298,40 @@ class PortfolioAdapter:
             unit = fields.get("currency")
             if unit not in {"CNY", "HKD", "USD"}:
                 raise PortfolioError("请明确选择 CNY、HKD 或 USD 币种。")
-            if action in {"set_cash", "set_fund"}:
+            if action not in {'deposit', 'withdraw'} and fields.get('principal_cny') not in (None, ''):
+                raise PortfolioError('只有资金转入、转出可填写折合人民币本金。')
+            if action in {'deposit', 'withdraw', 'set_cost_basis'}:
+                if any(fields.get(key) not in (None, '') for key in ('ticker', 'quantity', 'price', 'fee', 'name')):
+                    raise PortfolioError('资金与本金变动不能同时包含证券交易字段。')
+                if 'cost_basis' not in group:
+                    raise PortfolioError('该账户尚未登记投入本金，请先在 QR 中初始化本金。')
+                previous = _decimal(group['cost_basis'])
+                if action == 'set_cost_basis':
+                    if unit != 'CNY':
+                        raise PortfolioError('账户投入本金以人民币登记，请填写 CNY 金额。')
+                    amount = _decimal(fields.get('amount'))
+                    group['cost_basis'] = _stored_number(amount)
+                    changes.append(f'{account}：投入本金 {_text(previous)} → {_text(amount)} CNY；只核对本金，不改变现金或股票成本。')
+                else:
+                    amount = _decimal(fields.get('amount'), positive=True)
+                    capital = fields.get('principal_cny')
+                    if unit == 'CNY':
+                        if capital not in (None, '') and _decimal(capital, positive=True) != amount:
+                            raise PortfolioError('人民币转入或转出的本金必须与金额一致。')
+                        capital = amount
+                    else:
+                        if capital in (None, ''):
+                            raise PortfolioError('外币转入或转出请填写本次折合人民币本金；不会自动套用当前汇率。')
+                        capital = _decimal(capital, positive=True)
+                    sign = 1 if action == 'deposit' else -1
+                    cash_before = balances.get(unit, Decimal(0))
+                    balances[unit] = cash_before + sign * amount
+                    group['cost_basis'] = _stored_number(previous + sign * capital)
+                    self._set_cash(group, balances)
+                    label = '转入' if action == 'deposit' else '转出'
+                    changes.append(f'{account}：资金{label} {_text(amount)} {unit}，折合本金 {_text(capital)} CNY。')
+                    changes.append(f'现金 {_text(cash_before)} → {_text(balances[unit])} {unit}；投入本金 {_text(previous)} → {_text(group["cost_basis"])} CNY。')
+            elif action in {"set_cash", "set_fund"}:
                 if any(fields.get(key) not in (None, "") for key in ("ticker", "quantity", "price", "fee", "name")):
                     raise PortfolioError("余额对账不能同时包含交易字段。")
                 amount = _decimal(fields.get("amount"), nonnegative=action == "set_fund")
@@ -376,7 +410,7 @@ class PortfolioAdapter:
                                   fields.get('action', fields.get('operation')))
 
     def plan_batch(self, day, items):
-        """Trades retain their order; cash and fund entries are final balances."""
+        """Trades and capital flows retain their order; reconciliations are final balances."""
         day = _day(day)
         if not isinstance(items, list) or not items or len(items) > 30:
             raise PortfolioError("每次更新请添加 1–30 项变动。")
@@ -386,14 +420,14 @@ class PortfolioAdapter:
         for item in items:
             if not isinstance(item, dict) or item.get('operation') not in _ACTIONS - {'no_change'}:
                 raise PortfolioError("变动清单中包含无效操作。")
-            if item.get('operation') in {'set_cash', 'set_fund'}:
+            if item.get('operation') in {'set_cash', 'set_fund', 'set_cost_basis'}:
                 key = (item.get('account'), item['operation'], item.get('currency'))
                 if key in reconciliations:
-                    raise PortfolioError("同一账户的同币种现金或基金估值只需核对一次，请修改已有记录。")
+                    raise PortfolioError("同一账户的同币种现金、基金估值或投入本金只需核对一次，请修改已有记录。")
                 reconciliations.add(key)
         details = []
-        ordered = [i for i in items if i['operation'] in {'buy', 'sell'}]
-        ordered += [i for i in items if i['operation'] in {'set_cash', 'set_fund'}]
+        ordered = [i for i in items if i['operation'] in {'buy', 'sell', 'deposit', 'withdraw'}]
+        ordered += [i for i in items if i['operation'] in {'set_cash', 'set_fund', 'set_cost_basis'}]
         for item in ordered:
             fields = {key: value for key, value in item.items() if key != 'id'}
             fields['date'] = day
@@ -411,6 +445,8 @@ class PortfolioAdapter:
             lines = [f"{unit} 现金 {_text(previous_cash.get(unit, 0))} → {_text(final_cash.get(unit, 0))}"
                      for unit in sorted(set(previous_cash) | set(final_cash))]
             lines.append(f"CNY 基金估值 {_text(old.get('fund', 0))} → {_text(new.get('fund', 0))}")
+            if 'cost_basis' in old or 'cost_basis' in new:
+                lines.append(f"CNY 投入本金 {_text(old.get('cost_basis', 0))} → {_text(new.get('cost_basis', 0))}")
             totals.append(account + '：' + '；'.join(lines))
         untouched = [a for a in before['groups'] if a not in touched]
         changes = totals + details

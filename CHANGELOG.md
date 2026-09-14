@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.2.1 — 2026-09-14
+
+### Feishu capital flows
+
+- Add funds entering or leaving an account to the daily change list, updating
+  native-currency cash and CNY contributed capital together. Existing positions
+  and their per-share costs are preserved.
+- Reconcile account principal separately when cash has already been updated.
+  Final cash and principal reconciliations apply after trades and capital flows,
+  avoiding duplicate changes when entries share a batch.
+- Show contributed capital in account cards and full before/after previews.
+  Foreign-currency flows require an explicit CNY capital amount; no current FX
+  rate is silently substituted. Existing drafts survive the upgrade.
+- Regression checks cover account isolation, duplicate confirmation, interrupted
+  writes, and deposits/withdrawals remaining separate from investment returns.
+
 ## 3.2.0 — 2026-09-12
 
 ### Feishu workbench

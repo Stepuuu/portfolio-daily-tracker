@@ -1,8 +1,8 @@
 # Feishu workbench / 飞书工作台
 
-Part of **v3.2.0**. Use native cards in a bot's private chat to record daily portfolio changes, inspect assets, and run stock research. Setup is required: installing the repository or ClawHub skill does **not** automatically install an event handler, publish a bot menu, or validate your application's callbacks.
+Introduced in **v3.2.0**; capital-flow entries added in **v3.2.1**. Use native cards in a bot's private chat to record daily portfolio changes, inspect assets, and run stock research. Setup is required: installing the repository or ClawHub skill does **not** automatically install an event handler, publish a bot menu, or validate your application's callbacks.
 
-本功能整合在 **v3.2.0**：通过机器人私聊中的原生卡片完成每日组合记录、资产查看和股票研究。需要先配置本机服务与飞书应用；安装仓库或 ClawHub 技能**不会自动接入事件、发布菜单或完成当前应用的回调验收**。
+本功能自 **v3.2.0** 提供，**v3.2.1** 增加资金与本金变动：通过机器人私聊中的原生卡片完成每日组合记录、资产查看和股票研究。需要先配置本机服务与飞书应用；安装仓库或 ClawHub 技能**不会自动接入事件、发布菜单或完成当前应用的回调验收**。
 
 ## Architecture / 接入方式
 
@@ -217,6 +217,14 @@ The list supports up to **30 entries**, editing, deleting, changing the common d
 清单最多 **30 项**，可以修改、删除、调整记账日期，退出工作台后也能继续填写。加入清单不会修改实际持仓。买卖按清单顺序计算；**现金对账始终表示所有买卖后的最终余额**，与加入清单的先后顺序无关。每个账户、每种币种只填写一次最终余额，需要更正时修改该项。基金估值仅更新该账户的 CNY 基金合计，现金单独记录，不表示申购或赎回；场内 ETF 买卖使用买入、卖出入口。最终现金为负时会明确提示核对，不会向券商申请融资。
 
 点击 **核对全部变动**，检查每笔买卖及各账户最终现金、基金估值，再统一保存并生成一份日报。未添加变动的账户保持原样。保存中断时，重新打开清单后点击 **继续处理**，会恢复同一次更新，避免重复入账。预览后持仓或清单发生变化时，需要重新核对。
+
+**Capital flows (v3.2.1):** use **资金转入（增加本金）** or **资金转出（减少本金）** for new funding or withdrawals. Each changes native-currency cash and account contributed capital together, without changing position costs. CNY flows use the same amount for cash and capital; USD/HKD flows require the explicit CNY capital amount recorded for that transfer. Use **本金核对（只改本金）** for the final account principal if cash has already been updated. This is account net contributed capital, not a stock's per-share cost; changing it also changes the legacy inferred capital flow. It may be negative when cumulative withdrawals exceed deposits. The legacy percentage return is not a meaningful return-on-capital measure with zero or negative net capital; consult the [accounting conventions](ACCOUNTING.md) for the daily approximation.
+
+A final cash reconciliation overrides all trade/flow cash movements in the batch. A final principal reconciliation likewise overrides the principal after flows; do not enter a principal increment into this final-total field. Only one final principal entry per account is allowed. Existing accounts must have a recorded principal before capital-flow entries can be used; missing principal is not assumed to be zero.
+
+**资金与本金（v3.2.1）：**新增资金选 **资金转入（增加本金）**，提取资金选 **资金转出（减少本金）**，两者同时调整现金和账户投入本金，不修改持仓成本。人民币按相同金额登记；美元或港元需明确填写这次资金流对应的人民币本金。现金已经更新过时，可以用 **本金核对（只改本金）** 填写更新后的本金总额。这里是账户净投入本金，不是某只股票的成本价；它的变化会影响原有日报推算的资金流。累计转出超过转入时，净投入可能为负，零或负本金下的累计收益率不能作为有效的本金回报率。
+
+同一清单的现金对账始终使用买卖、资金转入转出后的最终余额；本金核对也使用这些变动后的最终本金总额，不能填写“增加了多少”。每个账户只添加一项本金核对。账户缺少初始本金时需要先初始化，不会默认按零处理。已加入清单的记录会保留。
 
 The card edits the existing **dated JSON holdings** workflow. It does not place broker orders. When the transaction ledger is active, the legacy adapter refuses to overwrite holdings; use the existing [ledger preview and confirmation UI](LEDGER.md). Card updates do not provide a second ledger implementation. Assets reflect saved records; opening or refreshing the asset card does not fetch live quotes or invent missing valuations.
 

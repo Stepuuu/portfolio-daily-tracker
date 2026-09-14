@@ -19,6 +19,7 @@
 
 | Version | Date | Updates |
 |---|---|---|
+| [v3.2.1](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.1) | 2026-09-14 | Feishu daily batches now support deposits, withdrawals and principal reconciliation, with linked cash/capital updates and final-balance overrides. |
 | [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | Added reproducible manual/Agent stock research, persistent jobs, model connections and CLI/HTTP/MCP extensions; a [Feishu card workbench](docs/FEISHU_WORKBENCH.md) adds one-click daily reports, confirmed multi-account batches, assets and research after setup. |
 | [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | Added a confirmed transaction ledger and research journal, with CSV deduplication, multi-currency accounting fixes and an offline demo. |
 | [V3 · AI assistant](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | Combined portfolio tracking with AI chat, a React dashboard, strategy backtesting and scheduled reports. |

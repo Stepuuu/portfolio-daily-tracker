@@ -6,7 +6,7 @@ from .cards import (_button, _buttons, _escape, _field, _highlight, _input,
 def start(model, context):
     count = len(model.get('items', []))
     return [
-        _highlight(model['today'], '没有买卖，现金和基金也没有变化时，可直接更新日报。'),
+        _highlight(model['today'], '持仓、现金、基金和投入本金均无变化时，可直接更新日报。'),
         _buttons(_button(context, 'daily.unchanged', '今日无变动，更新日报', primary=not count, disabled=bool(count)),
                  _button(context, 'daily.batch', f'继续填写（{count} 项）' if count else '有变动', primary=bool(count))),
         _markdown('清单内有未保存的变动。' if count else '每项变动分别选账户，支持多个产品一起更新。', caption=True),
@@ -16,14 +16,14 @@ def start(model, context):
 
 def batch(model, context):
     entries = model.get('entries', [])
-    elements = [_highlight(model['date'] + ' · 变动清单', f'已添加 {len(entries)} 项，尚未入账。' if entries else '添加买卖、现金余额或基金估值。')]
+    elements = [_highlight(model['date'] + ' · 变动清单', f'已添加 {len(entries)} 项，尚未入账。' if entries else '添加买卖、资金转入转出，或核对现金、基金、本金。')]
     if entries:
         elements.append(_markdown('\n'.join(f"{n}. {_escape(e['label'])}" for n, e in enumerate(entries, 1))))
     elements += [
         _buttons(_button(context, 'daily.add', '再添加一项' if entries else '添加变动', primary=not entries,
                          disabled=len(entries) >= 30),
                  _button(context, 'daily.batch.preview', '核对全部变动', primary=bool(entries), disabled=not entries)),
-        _markdown('买卖自动计算现金。另填现金余额时，以核对后的余额为准；基金估值单独记录。', caption=True),
+        _markdown('转入转出同时调整现金和本金。现金、基金、本金核对均以填写的最终金额为准。', caption=True),
     ]
     if entries:
         elements.append({'tag': 'form', 'name': 'daily_manage_form', 'elements': [
@@ -74,6 +74,20 @@ def item(model, context):
         ]
         note = '按已成交的数量、单价和手续费记录。'
         disabled = not options
+    elif operation in {'deposit', 'withdraw', 'set_cost_basis'}:
+        if operation == 'set_cost_basis':
+            controls.append(_input('amount', '核对后的投入本金（人民币元）', model.get('amount', ''), required=True))
+            note = '只更正账户投入本金，不改变现金或股票成本。现金已经更新过时可用此项；新转入资金请选“资金转入”。'
+        else:
+            label = '本次转入金额' if operation == 'deposit' else '本次转出金额'
+            controls.append(_input('amount', label, model.get('amount', ''), required=True))
+            controls += _field('币种', _select('currency', [{'label': v, 'value': v} for v in ('CNY', 'HKD', 'USD')], model.get('currency', 'CNY'), required=True))
+            controls.append(_input('principal_cny', '本次折合人民币本金（外币必填，人民币留空）', model.get('principal_cny', '')))
+            note = '填写这次转入或转出的金额，会同时调整现金和投入本金。已填现金对账时，以对账后的余额为准，不重复增减现金。'
+        account = next((a for a in model.get('accounts', []) if a['value'] == model['account']), {})
+        if 'cost_basis' in account:
+            note += ' 已保存投入本金：' + str(account['cost_basis']) + ' CNY。'
+        disabled = False
     else:
         label = '核对后现金余额（所选币种）' if operation == 'set_cash' else '该账户基金合计估值（元）'
         controls.append(_input('amount', label, model.get('amount', ''), required=True))
@@ -102,7 +116,7 @@ def change_date(model, context):
 
 def preview(model, context):
     return [
-        _highlight('核对全部变动', '请核对买卖数量及每个账户的最终现金、基金估值。'),
+        _highlight('核对全部变动', '请核对买卖数量及每个账户的最终现金、基金估值、投入本金。'),
         *_preview_text(model),
         _buttons(_button(context, 'daily.batch.confirm', '保存全部变动并更新日报', primary=True, confirm=True),
                  _button(context, 'daily.batch', '返回修改')),

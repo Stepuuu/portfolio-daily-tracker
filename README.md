@@ -24,6 +24,7 @@
 
 | Version / 版本 | Date / 日期 | Updates / 更新摘要 |
 |---|---|---|
+| [v3.2.1](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.1) | 2026-09-14 | Feishu daily batches now support deposits, withdrawals and principal reconciliation, with linked cash/capital updates and final-balance overrides.<br>飞书每日清单新增资金转入、转出及本金核对；现金与本金联动，最终余额对账避免重复计算。 |
 | [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | Added reproducible manual/Agent stock research, persistent jobs, model connections and CLI/HTTP/MCP extensions; a [Feishu card workbench](docs/FEISHU_WORKBENCH.md) adds one-click daily reports, confirmed multi-account batches, assets and research after setup.<br>新增可复查的手动与 Agent 股票研究、持久化任务、模型接入及 CLI/HTTP/MCP 扩展；[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)经配置后支持无变动一键更新、多账户变动清单统一确认、资产查看与研究任务。 |
 | [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | Added a confirmed transaction ledger and research journal, with CSV deduplication, multi-currency accounting fixes and an offline demo.<br>新增需确认的交易账本与研究日志，支持 CSV 去重，修复多币种核算并提供离线演示。 |
 | [V3 · AI assistant / AI 助手](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | Combined portfolio tracking with AI chat, a React dashboard, strategy backtesting and scheduled reports.<br>整合投资组合追踪、AI 对话、React 面板、策略回测与定时日报。 |

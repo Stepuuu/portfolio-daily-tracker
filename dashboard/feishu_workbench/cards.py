@@ -218,6 +218,7 @@ def _home(model: Mapping, context: CardContext) -> list[dict]:
 _OPERATIONS = {
     "no_change": "今日无变动", "buy": "买入", "sell": "卖出",
     "set_cash": "现金对账", "set_fund": "基金估值",
+    "deposit": "资金转入（增加本金）", "withdraw": "资金转出（减少本金）", "set_cost_basis": "本金核对（只改本金）",
 }
 
 
@@ -230,7 +231,8 @@ def _daily_select(model: Mapping, context: CardContext) -> list[dict]:
     elements = _field("记账日期", picker)
     elements += _field("账户", _select("account", accounts, model.get("account", ""), required=True,
                                       placeholder="选择账户"))
-    operations = [{"value": value, "label": label} for value, label in _OPERATIONS.items()]
+    operations = [{"value": value, "label": label} for value, label in _OPERATIONS.items()
+                  if value in {"no_change", "buy", "sell", "set_cash", "set_fund"}]
     elements += _field("操作", _select("operation", operations, model.get("operation", "no_change"), required=True))
     elements.append(_submit(context, "daily.choose", "继续", disabled=not accounts))
     return [
@@ -310,6 +312,9 @@ def _assets(model: Mapping, context: CardContext) -> list[dict]:
         if "fund" in account:
             balance_rows.append({"account": label, "kind": "基金估值 · CNY",
                                  "amount": _string(account["fund"])})
+        if "cost_basis" in account:
+            balance_rows.append({"account": label, "kind": "投入本金 · CNY",
+                                 "amount": _string(account["cost_basis"])})
     position_rows = []
     for position in _list(model, "positions"):
         position_rows.append({
@@ -328,7 +333,7 @@ def _assets(model: Mapping, context: CardContext) -> list[dict]:
     elements = [metric]
     if balance_rows:
         metric["columns"][0]["elements"].append(_markdown(
-            "余额按账户及原币列示，不跨币种相加；基金为 CNY 合计估值。", caption=True))
+            "余额按账户及原币列示，不跨币种相加；本金不计入资产合计。", caption=True))
         elements.append({"tag": "table", "page_size": 5, "freeze_first_column": True,
                          "columns": [
                              {"name": "account", "display_name": "账户", "data_type": "text"},

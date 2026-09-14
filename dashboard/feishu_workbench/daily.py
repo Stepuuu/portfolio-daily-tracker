@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .drafts import Drafts
-from .portfolio import PortfolioError, _day, _ticker, _MARKETS
+from .portfolio import PortfolioError, _day, _ticker, _MARKETS, _ACTIONS
 from .store import Rejected
 
 
@@ -20,9 +20,12 @@ def today():
 
 
 def item_label(item):
-    labels = {'buy': '买入', 'sell': '卖出', 'set_cash': '现金余额', 'set_fund': '基金估值'}
+    labels = {'buy': '买入', 'sell': '卖出', 'set_cash': '现金余额', 'set_fund': '基金估值',
+              'deposit': '资金转入', 'withdraw': '资金转出', 'set_cost_basis': '本金核对'}
     detail = (f"{item.get('ticker', '')} · {item.get('quantity', '')} 股 × {item.get('price', '')}"
               if item['operation'] in {'buy', 'sell'} else item.get('amount', ''))
+    if item.get('principal_cny'):
+        detail += f"（折合本金 {item['principal_cny']} CNY）"
     return f"{item['account']} · {labels[item['operation']]} · {detail} {item['currency']}"
 
 
@@ -154,7 +157,7 @@ class DailyWorkflow:
         if action == 'daily.item.choose':
             if set(fields) != {'account', 'operation'}:
                 raise Rejected('请选择账户和变动类型。')
-            if fields['account'] not in {a['value'] for a in self.model(draft)['accounts']} or fields['operation'] not in {'buy', 'sell', 'set_cash', 'set_fund'}:
+            if fields['account'] not in {a['value'] for a in self.model(draft)['accounts']} or fields['operation'] not in _ACTIONS - {'no_change'}:
                 raise Rejected('请选择有效的账户和变动类型。')
             return self.w.render(command, 'daily_item_form', self.item_form(draft, dict(fields)))
         if action in {'daily.item.edit', 'daily.item.remove'}:
@@ -201,6 +204,8 @@ class DailyWorkflow:
         operation = selection['operation']
         allowed = ({'product', 'new_ticker', 'quantity', 'quantity_mode', 'price', 'fee'}
                    if operation in {'buy', 'sell'} else {'amount', 'currency'})
+        if operation in {'deposit', 'withdraw'}:
+            allowed |= {'principal_cny'}
         if set(fields) - allowed:
             raise Rejected('表单包含不支持的字段，请重新选择变动类型。')
         result = {k: selection[k] for k in ('account', 'operation')}
@@ -227,5 +232,7 @@ class DailyWorkflow:
             result.update(ticker=ticker, quantity=quantity, price=fields.get('price', ''),
                           fee=fields.get('fee', '').strip() or '0', currency=_MARKETS[ticker.split(':')[0]])
         else:
-            result.update(amount=fields.get('amount', ''), currency='CNY' if operation == 'set_fund' else fields.get('currency'))
+            result.update(amount=fields.get('amount', ''), currency='CNY' if operation in {'set_fund', 'set_cost_basis'} else fields.get('currency'))
+            if operation in {'deposit', 'withdraw'} and fields.get('principal_cny', '').strip():
+                result['principal_cny'] = fields['principal_cny'].strip()
         return result

@@ -27,7 +27,7 @@ def handle(message, invoke):
             if version not in {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}:
                 version = "2025-11-25"
             result = {"protocolVersion": version, "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "portfolio-research", "version": "3.2.0"},
+                      "serverInfo": {"name": "portfolio-research", "version": "3.2.1"},
                       "instructions": "Research only. Import datasets in the workbench first. Preserve failed experiments and use validation before final holdout."}
         elif method == "ping":
             result = {}
