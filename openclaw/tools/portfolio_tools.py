@@ -39,7 +39,7 @@ def get_propose_events_tool(portfolio_dir: str = '') -> Dict:
     async def propose(events: List[Dict]) -> Dict:
         directory = Path(portfolio_dir) if portfolio_dir else portfolio_directory()
         proposal = Ledger(directory / 'ledger.sqlite3').propose(events)
-        return {**proposal, 'status': 'awaiting_user_confirmation', 'review_url': '/ledger'}
+        return {**proposal, 'status': 'awaiting_user_confirmation', 'review_url': '/ledger?proposal=' + proposal['id']}
 
     return {'name': 'propose_ledger_events',
             'description': 'Prepare a transaction preview. No balances change until the user confirms on /ledger. Use explicit dates, accounts, currencies, quantities, prices and fees; ask for missing values. See docs/LEDGER.md for event fields.',

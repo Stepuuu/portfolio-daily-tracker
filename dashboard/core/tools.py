@@ -565,7 +565,7 @@ def propose_ledger_tool() -> Tool:
     async def propose_ledger(events: List[Dict]) -> Dict:
         from core.ledger import Ledger, portfolio_directory
         proposal = Ledger(portfolio_directory() / 'ledger.sqlite3').propose(events)
-        return {**proposal, "status": "awaiting_user_confirmation", "review_url": "/ledger",
+        return {**proposal, "status": "awaiting_user_confirmation", "review_url": "/ledger?proposal=" + proposal["id"],
                 "message": "Nothing has been booked. Ask the user to review and confirm this proposal on the ledger page."}
 
     return Tool(

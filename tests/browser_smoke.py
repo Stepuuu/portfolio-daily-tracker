@@ -98,6 +98,30 @@ with ExitStack() as stack:
      expect(page.get_by_text('1 笔待入账',exact=False)).to_be_visible()
      page.get_by_role('button',name='确认入账',exact=True).click()
      expect(page.get_by_role('status')).to_contain_text('已确认 1 笔')
+     # A proposal prepared by an agent is visible in chat without relying on
+     # the model to echo a URL. Review the exact plan, confirm, then reload it.
+     pending = page.request.post(f'http://127.0.0.1:{backend_port}/api/ledger/proposals', data={'events':[
+      {'kind':'buy','date':'2026-09-04','account':'长期账户','ticker':'NASDAQ:EXAMPLE','currency':'USD','quantity':'0.5','price':'100','fee':'1'}
+     ]}).json()
+     page.goto(f'http://127.0.0.1:{frontend_port}/')
+     expect(page.get_by_role('region',name='待确认账本方案')).to_contain_text('尚未入账')
+     page.get_by_role('link',name='核对方案',exact=False).first.click()
+     expect(page).to_have_url(f'http://127.0.0.1:{frontend_port}/ledger?proposal={pending["id"]}')
+     expect(page.get_by_label('确认预览')).to_contain_text('898')
+     page.get_by_role('button',name='确认入账',exact=True).click()
+     expect(page.get_by_role('status')).to_contain_text('已确认 1 笔')
+     expect(page.get_by_label('确认预览')).to_contain_text('USD 现金')
+     expect(page.get_by_role('button',name='已入账',exact=True)).to_be_disabled()
+     revision = page.request.get(f'http://127.0.0.1:{backend_port}/api/ledger').json()['revision']
+     page.reload()
+     expect(page.get_by_role('button',name='已入账',exact=True)).to_be_disabled()
+     expect(page.get_by_label('确认预览')).to_contain_text('898')
+     assert page.request.get(f'http://127.0.0.1:{backend_port}/api/ledger').json()['revision']==revision
+     # An invalid link cannot accidentally select another pending transaction.
+     page.goto(f'http://127.0.0.1:{frontend_port}/ledger?proposal=missing')
+     expect(page.get_by_role('alert')).to_contain_text('方案不存在')
+     expect(page.get_by_role('button',name='确认入账',exact=True)).to_have_count(0)
+     page.goto(f'http://127.0.0.1:{frontend_port}/ledger')
      page.get_by_role('tab',name='研究复盘').click()
      page.get_by_label('标的',exact=True).fill('NASDAQ:EXAMPLE')
      page.get_by_label('投资逻辑 / 本次复盘结论').fill('虚构研究示例：检验产品需求是否持续。')
@@ -117,5 +141,5 @@ with ExitStack() as stack:
      page.screenshot(path=str(out/'ledger-reloaded-mobile.png'),full_page=True)
      assert page.evaluate('document.body.scrollWidth')==390
      assert not errors,errors
-     print(json.dumps({'desktop':'passed','mobile_width':390,'migration':'passed','trade':'passed','csv_dedup':'passed','reversal':'passed','journal':'passed','legacy_redirect':'passed','reload':'passed','page_errors':errors}))
+     print(json.dumps({'desktop':'passed','mobile_width':390,'migration':'passed','trade':'passed','csv_dedup':'passed','reversal':'passed','journal':'passed','legacy_redirect':'passed','reload':'passed','chat_proposal_handoff':'passed','durable_receipt':'passed','missing_link':'passed','page_errors':errors}))
      browser.close()

@@ -1,4 +1,5 @@
-import { cloneElement, useState } from "react";
+import { cloneElement, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { FormEvent, ReactElement } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Check, Download, RefreshCw, Undo2 } from "lucide-react";
@@ -41,6 +42,7 @@ type Proposal = {
   events: Event[];
   duplicates: number;
   warnings: string[];
+  receipt?: { proposal_id: string; revision: number; applied: number; duplicates: number; state: State } | null;
 };
 type LedgerData = State & { revision: number; pending: Proposal[] };
 type JournalEntry = {
@@ -202,6 +204,14 @@ function Changes({ proposal }: { proposal: Proposal }) {
 
 export default function Ledger() {
   const client = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const proposalId = searchParams.get("proposal") || "";
+  const linkedProposal = useQuery({
+    queryKey: ["ledger-proposal", proposalId],
+    queryFn: async () => (await api.get<Proposal>(`/ledger/proposals/${encodeURIComponent(proposalId)}`)).data,
+    enabled: Boolean(proposalId),
+    retry: false,
+  });
   const query = useQuery({
     queryKey: ["ledger"],
     queryFn: async () => (await api.get<LedgerData>("/ledger")).data,
@@ -226,6 +236,22 @@ export default function Ledger() {
   const [openingCount, setOpeningCount] = useState(1);
   const [source, setSource] = useState("broker-csv");
   const [migrationDate, setMigrationDate] = useState(today());
+  const showProposal = (next: Proposal | null) => {
+    setProposal(next);
+    setSearchParams(next ? { proposal: next.id } : {}, { replace: true });
+  };
+  useEffect(() => {
+    setProposal(null);
+    setError("");
+    setMessage("");
+    if (proposalId) setTab("record");
+  }, [proposalId]);
+  useEffect(() => {
+    if (linkedProposal.data?.id === proposalId) setProposal(linkedProposal.data);
+  }, [proposalId, linkedProposal.data]);
+  useEffect(() => {
+    if (linkedProposal.error) setError(getApiErrorMessage(linkedProposal.error));
+  }, [linkedProposal.error]);
   const data = query.data;
   const accounts = Object.keys(data?.accounts || {});
   const selectedKind = accounts.length ? kind : "opening";
@@ -249,7 +275,7 @@ export default function Ledger() {
   };
   const preview = async (events: Record<string, unknown>[]) => {
     const result = await api.post<Proposal>("/ledger/proposals", { events });
-    setProposal(result.data);
+    showProposal(result.data);
     await refresh();
   };
   const submit = (e: FormEvent<HTMLFormElement>) => {
@@ -391,7 +417,7 @@ export default function Ledger() {
                   className={button}
                   onClick={() =>
                     void run(async () => {
-                      setProposal(
+                      showProposal(
                         (
                           await api.post<Proposal>("/ledger/opening-preview", {
                             date: migrationDate,
@@ -789,7 +815,7 @@ export default function Ledger() {
                           void run(async () => {
                             if (file.size > 2000000)
                               throw new Error("CSV 不能超过 2 MB");
-                            setProposal(
+                            showProposal(
                               (
                                 await api.post<Proposal>(
                                   "/ledger/csv-preview",
@@ -818,7 +844,7 @@ export default function Ledger() {
                   {proposal ? (
                     <>
                       <p className="text-sm text-slate-400 mb-4">
-                        {proposal.events.length} 笔待入账 · 跳过{" "}
+                        {proposal.receipt ? `${proposal.receipt.applied} 笔已入账 · 版本 ${proposal.receipt.revision}` : `${proposal.events.length} 笔待入账`} · 跳过{" "}
                         {proposal.duplicates} 笔重复记录
                       </p>
                       <div className="max-h-48 overflow-auto mb-4 text-sm space-y-2">
@@ -841,7 +867,7 @@ export default function Ledger() {
                           {w}
                         </p>
                       ))}
-                      {proposal.revision !== data.revision && (
+                      {!proposal.receipt && proposal.revision !== data.revision && (
                         <p role="alert" className="text-amber-300 text-sm mt-4">
                           账本已变化，此预览已过期。请重新录入或导入以核对最新差异。
                         </p>
@@ -849,7 +875,7 @@ export default function Ledger() {
                       <div className="flex flex-wrap gap-2 mt-6">
                         <button
                           className={primary}
-                          disabled={busy || proposal.revision !== data.revision}
+                          disabled={busy || Boolean(proposal.receipt) || proposal.revision !== data.revision}
                           onClick={() =>
                             void run(async () => {
                               const receipt = (
@@ -860,35 +886,34 @@ export default function Ledger() {
                               setMessage(
                                 `已确认 ${receipt.applied} 笔，账本版本 ${receipt.revision}。重复点击不会再次入账。每日跟踪快照需另行更新行情后生成。`,
                               );
-                              setProposal(null);
+                              const confirmed = { ...proposal, receipt };
+                              client.setQueryData(["ledger-proposal", proposal.id], confirmed);
+                              showProposal(confirmed);
                               await refresh();
                             })
                           }
                         >
                           <Check size={16} />
-                          确认入账
+                          {proposal.receipt ? "已入账" : "确认入账"}
                         </button>
                         <button
                           className={button}
                           disabled={busy}
                           onClick={() =>
                             void run(async () => {
-                              await api.delete(
-                                `/ledger/proposals/${proposal.id}`,
-                              );
-                              setProposal(null);
+                              if (!proposal.receipt) await api.delete(`/ledger/proposals/${proposal.id}`);
+                              showProposal(null);
                               await refresh();
                             })
                           }
                         >
-                          放弃预览
+                          {proposal.receipt ? "关闭结果" : "放弃预览"}
                         </button>
                       </div>
                     </>
                   ) : (
                     <p className="text-slate-400 text-sm leading-relaxed">
-                      提交一笔记录、导入流水，或选择下方 AI
-                      生成的待确认方案。这里会展示每个账户的现金、股数和成本变化。
+                      {linkedProposal.isFetching ? "正在读取方案…" : "提交一笔记录、导入流水，或选择下方待确认方案。这里会展示每个账户的现金、股数和成本变化。"}
                     </p>
                   )}
                 </section>
@@ -900,7 +925,7 @@ export default function Ledger() {
                         <div key={p.id} className="flex gap-2">
                           <button
                             className={`${button} flex-1 justify-start text-left`}
-                            onClick={() => setProposal(p)}
+                            onClick={() => showProposal(p)}
                           >
                             {p.events[0]?.date || "重复导入"} ·{" "}
                             {p.events.length} 笔{" "}
@@ -913,7 +938,7 @@ export default function Ledger() {
                             onClick={() =>
                               void run(async () => {
                                 await api.delete(`/ledger/proposals/${p.id}`);
-                                if (proposal?.id === p.id) setProposal(null);
+                                if (proposal?.id === p.id) showProposal(null);
                                 await refresh();
                               })
                             }

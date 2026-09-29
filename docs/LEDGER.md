@@ -27,6 +27,36 @@ ledger writes. Stop the demo and use `make start` to create your own ledger.
 人民币记录。AI 仅生成待确认方案；图片识别只返回识别结果。任何识别不清的币种、价格或
 数量都应先核对，不能直接当作真实成交。确认页面显示的是账务变化，不是最新市值。
 
+## From AI chat to a confirmed entry
+
+After opening balances are confirmed, describe a transaction with an explicit
+account, date, ticker, currency, quantity, price and fee. For example:
+“Example account: on 2026-09-01, buy 2 NASDAQ:EXAMPLE shares at USD 100,
+with a USD 2 fee.” These are fictional values; use your executed trade details.
+
+1. The AI calls `propose_ledger_events`. This saves a preview, not a transaction.
+2. The chat displays pending ledger proposals from the server, independently of
+   the model's reply. **核对方案** opens the exact proposal on `/ledger?proposal=…`.
+3. Review native cash, quantities and costs before selecting **确认入账**.
+4. The saved result retains the before/after comparison and receipt. Reloading
+   its link shows the same result; another confirmation cannot book it twice.
+   Expired proposals require a fresh preview, and discarded links show an error.
+
+中文：先核对期初余额，再向 AI 描述已发生的交易。聊天中的待确认提示来自账本，
+不依赖 AI 是否在回复里附上链接。点击“核对方案”查看指定方案，确认后才能入账；
+结果保留现金、股数和成本的前后对比，刷新后仍可查看。
+
+The model must support tool calls and successfully create a proposal. A text reply
+alone is not evidence of a write. If there is no pending proposal, no corresponding
+transaction has been prepared. Missing or ambiguous amounts should be clarified.
+
+Confirmed events are stored in `ledger.sqlite3`; dated holdings used for valuation
+are derived from those events. Snapshots are separate saved valuations and are not
+silently relabeled as current after a trade. Run `make snapshot` to fetch quotes
+and FX rates for a new valuation. Foreign cash remains in its original currency;
+only its reported CNY value changes with FX. See [accounting conventions](ACCOUNTING.md)
+for quote/FX fallback behavior.
+
 ## Accounting conventions
 
 | Event | Required values in addition to `kind`, `date`, `account` |
@@ -117,6 +147,7 @@ activation; generate snapshots separately until it supports ledger proposals.
 ## API and AI integrations
 
 - `POST /api/ledger/proposals` with `{"events": [...]}` prepares a preview.
+- `GET /api/ledger/proposals/{id}` reads the exact preview and its receipt, if confirmed.
 - `POST /api/ledger/proposals/{id}/confirm` confirms the exact preview.
 - `GET /api/ledger`, `/events`, `/journal` read balances, history and research.
 - `GET /api/ledger/backup.sqlite3` downloads the complete ledger backup.

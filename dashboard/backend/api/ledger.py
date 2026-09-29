@@ -58,6 +58,14 @@ def propose(request: ProposalRequest):
     return attempt(lambda: get_ledger().propose(request.events))
 
 
+@router.get('/proposals/{proposal_id}')
+def proposal(proposal_id: str):
+    result = get_ledger().proposal(proposal_id)
+    if result is None:
+        raise HTTPException(404, '方案不存在或已被放弃。请打开待确认方案列表。')
+    return result
+
+
 @router.post('/opening-preview')
 def opening(request: OpeningRequest):
     return attempt(lambda: get_ledger().propose(opening_events(portfolio_directory(), request.date)))

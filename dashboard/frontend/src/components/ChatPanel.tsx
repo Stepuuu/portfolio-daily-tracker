@@ -7,6 +7,7 @@ import { useAppStore } from '@/store'
 import { chatService } from '@/services'
 import { getApiErrorMessage } from '@/services/chat'
 import ConversationHistory from './ConversationHistory'
+import LedgerProposals from './LedgerProposals'
 import type { ChatMessage } from '@/types'
 
 export default function ChatPanel() {
@@ -219,6 +220,7 @@ export default function ChatPanel() {
         content: `抱歉，请求失败：${getApiErrorMessage(error)}`,
       })
     } finally {
+      void queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith('ledger') })
       setLoading(false)
       setCurrentResponse('')
     }
@@ -335,6 +337,8 @@ export default function ChatPanel() {
           </button>
         </div>
       </div>
+
+      <LedgerProposals />
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto px-4 py-4">

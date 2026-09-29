@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Show pending ledger proposals in chat and link directly to the selected preview.
+- Preserve the before/after comparison and durable receipt after confirmation;
+  the same link remains readable after a reload or backend restart.
+- Add end-to-end regressions for AI tool proposals, explicit confirmation,
+  duplicate requests, account isolation, native-currency cash and FX valuation.
+
+
 ## 3.2.1 — 2026-09-14
 
 ### Feishu capital flows

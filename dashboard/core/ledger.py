@@ -318,6 +318,16 @@ class Ledger:
             return [{'id': row['id'], 'revision': row['revision'], 'created_at': row['created_at'], **json.loads(row['payload'])}
                     for row in db.execute('SELECT * FROM proposals WHERE receipt IS NULL ORDER BY created_at DESC LIMIT 30')]
 
+    def proposal(self, proposal_id):
+        """Read the exact preview and durable receipt, including after a restart."""
+        with self.connect() as db:
+            row = db.execute('SELECT * FROM proposals WHERE id=?', (proposal_id,)).fetchone()
+            if row is None:
+                return None
+            return {'id': row['id'], 'revision': row['revision'], 'created_at': row['created_at'],
+                    **json.loads(row['payload']),
+                    'receipt': json.loads(row['receipt']) if row['receipt'] else None}
+
     def propose(self, raw_events):
         if not isinstance(raw_events, list) or not 1 <= len(raw_events) <= 1000:
             raise LedgerError("Submit between 1 and 1000 events per proposal")
