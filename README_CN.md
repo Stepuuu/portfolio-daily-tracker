@@ -7,7 +7,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
-[![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
 [🇬🇧 English](README_EN.md) &nbsp;·&nbsp; [🔬 研究指南](docs/RESEARCH_CN.md) &nbsp;·&nbsp; [飞书工作台](docs/FEISHU_WORKBENCH.md) &nbsp;·&nbsp; [📖 完整使用指南 (CN)](docs/FULL_GUIDE_CN.md)
 
@@ -19,10 +18,7 @@
 
 | 版本 | 日期 | 更新摘要 |
 |---|---|---|
-| [v3.2.1](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.1) | 2026-09-14 | 飞书每日清单新增资金转入、转出及本金核对；现金与本金联动，最终余额对账避免重复计算。 |
-| [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | 新增可复查的手动与 Agent 股票研究、持久化任务、模型接入及 CLI/HTTP/MCP 扩展；[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)经配置后支持无变动一键更新、多账户变动清单统一确认、资产查看与研究任务。 |
-| [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | 新增需确认的交易账本与研究日志，支持 CSV 去重，修复多币种核算并提供离线演示。 |
-| [V3 · AI 助手](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | 整合投资组合追踪、AI 对话、React 面板、策略回测与定时日报。 |
+| [V3.x](CHANGELOG.md) | 2026-03-08† → 2026-09-14 | 从组合追踪、AI 对话与回测，扩展到需确认的交易账本、手动与 Agent 股票研究及[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)。 |
 | [V2 · 自托管引擎](CHANGELOG.md#v2--self-hosted-portfolio-engine) | 2026-03-08† | 转为 Python 自托管，使用本地 JSON/CSV，支持多市场行情、风险指标与自动日报。 |
 | [V1 · Google Sheets](CHANGELOG.md#v1--google-sheets) | 2025-09-25† | 基于 Google Sheets 与 Apps Script，实现每日快照、行情更新、资产图表与月度盈亏记录。 |
 
@@ -44,7 +40,6 @@
 | 📉 **策略回测** | 内置双均线/RSI/自定义策略回测引擎 |
 | 🔔 **每日推送** | 收盘后自动通知 → 确认变化 → 推送飞书/Telegram 日报 |
 | ⏰ **自动调度** | Python 调度器（无需 cron），18:00 通知，19:00 兜底管道 |
-| 🦞 **OpenClaw 技能** | 已发布到 [ClawHub](https://clawhub.ai)，安装命令：`clawhub install portfolio-daily-tracker` |
 
 ### 🔬 从问题到可复查的实验
 
@@ -92,7 +87,7 @@ portfolio-daily-tracker/
 │           ├── components/            # ChatPanel/Layout/Sidebar 等组件
 │           └── services/              # API 客户端层
 │
-├── openclaw/                    # 🦞 OpenClaw Agent 集成
+├── openclaw/                    # 可选 OpenClaw 消息接入
 │   ├── tools/portfolio_tools.py       # Agent 工具定义
 │   ├── skills/SKILL.md                # 完整技能指南（中文）
 │   └── examples/config.example.json
@@ -185,16 +180,17 @@ cd dashboard && python3 main.py
 # 支持 /portfolio, /add, /import, /refresh, /models 等命令
 ```
 
-### 🦞 OpenClaw 技能（ClawHub）
+### 可选消息接入
 
-本项目已作为 [OpenClaw](https://openclaw.ai) Agent 技能发布到 **ClawHub**。
+组合追踪、网页、回测和手动／Agent 研究均可独立运行，无需 OpenClaw。
+研究能力也可通过 CLI、HTTP 或 MCP 接入其他客户端。
 
-**安装：**
-```bash
-clawhub install portfolio-daily-tracker
-```
+仓库保留了 OpenClaw 工具适配器和飞书事件桥接。工具适配器可读取组合记录、
+生成待确认的交易方案，入账需在账本页面确认。当前飞书日报发送器调用 OpenClaw CLI，
+卡片工作台复用已有 OpenClaw 飞书连接；这些消息功能需要单独配置。
 
-该技能使 AI Agent 能通过自然语言管理你的投资组合 — 买卖持仓、生成日报、更新基金/现金余额、运行完整的快照→报告→推送管道。详见 [openclaw/skills/SKILL.md](openclaw/skills/SKILL.md)。
+参见[飞书工作台指南](docs/FEISHU_WORKBENCH.md)、
+[工具适配器](openclaw/tools/portfolio_tools.py)与[Agent 技能说明](openclaw/skills/SKILL.md)。
 
 ### 🏗 系统架构
 
@@ -222,7 +218,7 @@ clawhub install portfolio-daily-tracker
                          └─────────────────────────────┘
                                         ▲
                          ┌─────────────────────────────┐
-                         │  OpenClaw 🦞 AI Agent        │
+                         │  OpenClaw（可选消息接入）     │
                          │  飞书 / Telegram 推送         │
                          └─────────────────────────────┘
 ```
@@ -438,8 +434,7 @@ MIT — 详见 [LICENSE](LICENSE)
 ---
 
 <div align="center">
-  <b>📊 用代码管理你的投资 · OpenClaw 🦞 驱动</b><br>
+  <b>📊 用代码管理你的投资</b><br>
   <a href="https://github.com/Stepuuu/portfolio-daily-tracker">GitHub</a> ·
-  <a href="https://clawhub.ai">ClawHub 技能</a> ·
   MIT License
 </div>

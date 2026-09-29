@@ -4,6 +4,14 @@ Introduced in **v3.2.0**; capital-flow entries added in **v3.2.1**. Use native c
 
 本功能自 **v3.2.0** 提供，**v3.2.1** 增加资金与本金变动：通过机器人私聊中的原生卡片完成每日组合记录、资产查看和股票研究。需要先配置本机服务与飞书应用；安装仓库或 ClawHub 技能**不会自动接入事件、发布菜单或完成当前应用的回调验收**。
 
+This messaging integration currently uses an existing OpenClaw Feishu connection.
+The portfolio engine, web dashboard and stock research workbench run independently
+of OpenClaw; using environment variables for credentials does not replace the
+bridge's event connection.
+
+当前消息接入复用已有 OpenClaw 飞书连接。组合引擎、网页与股票研究工作台可独立运行；
+用环境变量提供凭证，也仍需配置桥接所用的事件连接。
+
 ## Architecture / 接入方式
 
 ```mermaid

@@ -7,7 +7,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
-[![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
 [🇨🇳 中文文档](README_CN.md) · [🔬 Research guide](docs/RESEARCH.md) · [Feishu workbench](docs/FEISHU_WORKBENCH.md)
 
@@ -19,10 +18,7 @@
 
 | Version | Date | Updates |
 |---|---|---|
-| [v3.2.1](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.1) | 2026-09-14 | Feishu daily batches now support deposits, withdrawals and principal reconciliation, with linked cash/capital updates and final-balance overrides. |
-| [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | Added reproducible manual/Agent stock research, persistent jobs, model connections and CLI/HTTP/MCP extensions; a [Feishu card workbench](docs/FEISHU_WORKBENCH.md) adds one-click daily reports, confirmed multi-account batches, assets and research after setup. |
-| [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | Added a confirmed transaction ledger and research journal, with CSV deduplication, multi-currency accounting fixes and an offline demo. |
-| [V3 · AI assistant](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | Combined portfolio tracking with AI chat, a React dashboard, strategy backtesting and scheduled reports. |
+| [V3.x](CHANGELOG.md) | 2026-03-08† → 2026-09-14 | Portfolio tracking, AI chat and backtesting, expanded with a confirmed ledger, manual/Agent stock research and a [Feishu card workbench](docs/FEISHU_WORKBENCH.md). |
 | [V2 · Self-hosted engine](CHANGELOG.md#v2--self-hosted-portfolio-engine) | 2026-03-08† | Moved tracking to Python with local JSON/CSV storage, multi-market quotes, risk metrics and automated reports. |
 | [V1 · Google Sheets](CHANGELOG.md#v1--google-sheets) | 2025-09-25† | Started with Google Sheets and Apps Script for daily snapshots, price updates, asset charts and monthly P&L. |
 
@@ -44,7 +40,6 @@
 | 📉 **Backtesting** | Strategy backtesting engine with MA cross, RSI, custom strategies |
 | 🔔 **Daily Push** | Auto-notify after market close → confirm changes → push report to Feishu/Telegram |
 | ⏰ **Auto Scheduling** | Python scheduler (no cron needed) — 18:00 notify, 19:00 failsafe pipeline |
-| 🦞 **OpenClaw Skill** | Published on [ClawHub](https://clawhub.ai) — install with `clawhub install portfolio-daily-tracker` |
 
 ### 🔬 From a question to a reproducible experiment
 
@@ -105,7 +100,7 @@ portfolio-daily-tracker/
 │           ├── components/            # ChatPanel, Layout, Sidebar...
 │           └── services/              # API client layer
 │
-├── openclaw/                    # 🦞 OpenClaw Agent Integration
+├── openclaw/                    # Optional OpenClaw messaging integration
 │   ├── tools/portfolio_tools.py       # Agent tool definitions
 │   ├── skills/SKILL.md                # Comprehensive skill guide
 │   └── examples/config.example.json
@@ -207,16 +202,20 @@ cd dashboard && python3 main.py
 # Interactive terminal with /portfolio, /add, /import, /refresh, /models
 ```
 
-### 🦞 OpenClaw Skill (ClawHub)
+### Optional messaging integration
 
-This project is published as an [OpenClaw](https://openclaw.ai) agent skill on **ClawHub**.
+Portfolio tracking, the dashboard, backtesting and manual/Agent research run
+without OpenClaw. Research clients can also use the CLI, HTTP or MCP interfaces.
 
-**Install:**
-```bash
-clawhub install portfolio-daily-tracker
-```
+For messaging, this repository includes an OpenClaw tool adapter and Feishu event
+bridge. The tool adapter reads portfolio records and prepares transaction
+proposals for confirmation in the ledger UI. The current Feishu daily-report
+sender uses the OpenClaw CLI; the card workbench reuses an existing OpenClaw
+Feishu connection. These integrations require separate setup.
 
-The skill enables AI agents to manage your portfolio via natural language — buy/sell positions, generate daily reports, update fund/cash balances, and run the full snapshot→report→push pipeline. See [openclaw/skills/SKILL.md](openclaw/skills/SKILL.md) for full documentation.
+See the [Feishu workbench guide](docs/FEISHU_WORKBENCH.md),
+[tool adapter](openclaw/tools/portfolio_tools.py) and
+[agent skill](openclaw/skills/SKILL_EN.md).
 
 ### 🏗 Architecture
 
@@ -245,7 +244,7 @@ The skill enables AI agents to manage your portfolio via natural language — bu
                          └─────────────────────────────┘
                                         ▲
                          ┌─────────────────────────────┐
-                         │  OpenClaw 🦞 AI Agent        │
+                         │  OpenClaw (optional)         │
                          │  Feishu / Telegram push      │
                          └─────────────────────────────┘
 ```
@@ -461,8 +460,7 @@ MIT — see [LICENSE](LICENSE)
 ---
 
 <div align="center">
-  <b>📊 Manage your investments with code · Powered by OpenClaw 🦞</b><br>
+  <b>📊 Manage your investments with code</b><br>
   <a href="https://github.com/Stepuuu/portfolio-daily-tracker">GitHub</a> ·
-  <a href="https://clawhub.ai">ClawHub Skill</a> ·
   MIT License
 </div>

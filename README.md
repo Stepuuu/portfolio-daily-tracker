@@ -10,7 +10,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
-[![ClawHub Skill](https://img.shields.io/badge/ClawHub-portfolio--daily--tracker-orange)](https://clawhub.ai)
 
 **📖 Documentation / 文档**
 
@@ -24,10 +23,7 @@
 
 | Version / 版本 | Date / 日期 | Updates / 更新摘要 |
 |---|---|---|
-| [v3.2.1](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.1) | 2026-09-14 | Feishu daily batches now support deposits, withdrawals and principal reconciliation, with linked cash/capital updates and final-balance overrides.<br>飞书每日清单新增资金转入、转出及本金核对；现金与本金联动，最终余额对账避免重复计算。 |
-| [v3.2.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.2.0) | 2026-09-12 | Added reproducible manual/Agent stock research, persistent jobs, model connections and CLI/HTTP/MCP extensions; a [Feishu card workbench](docs/FEISHU_WORKBENCH.md) adds one-click daily reports, confirmed multi-account batches, assets and research after setup.<br>新增可复查的手动与 Agent 股票研究、持久化任务、模型接入及 CLI/HTTP/MCP 扩展；[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)经配置后支持无变动一键更新、多账户变动清单统一确认、资产查看与研究任务。 |
-| [v3.1.0](https://github.com/Stepuuu/portfolio-daily-tracker/releases/tag/v3.1.0) | 2026-09-09 | Added a confirmed transaction ledger and research journal, with CSV deduplication, multi-currency accounting fixes and an offline demo.<br>新增需确认的交易账本与研究日志，支持 CSV 去重，修复多币种核算并提供离线演示。 |
-| [V3 · AI assistant / AI 助手](CHANGELOG.md#v3--ai-trading-assistant) | 2026-03-08† | Combined portfolio tracking with AI chat, a React dashboard, strategy backtesting and scheduled reports.<br>整合投资组合追踪、AI 对话、React 面板、策略回测与定时日报。 |
+| [V3.x](CHANGELOG.md) | 2026-03-08† → 2026-09-14 | Portfolio tracking, AI chat and backtesting, expanded with a confirmed ledger, manual/Agent stock research and a [Feishu card workbench](docs/FEISHU_WORKBENCH.md).<br>从组合追踪、AI 对话与回测，扩展到需确认的交易账本、手动与 Agent 股票研究及[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)。 |
 | [V2 · Self-hosted engine / 自托管引擎](CHANGELOG.md#v2--self-hosted-portfolio-engine) | 2026-03-08† | Moved tracking to Python with local JSON/CSV storage, multi-market quotes, risk metrics and automated reports.<br>转为 Python 自托管，使用本地 JSON/CSV，支持多市场行情、风险指标与自动日报。 |
 | [V1 · Google Sheets](CHANGELOG.md#v1--google-sheets) | 2025-09-25† | Started with Google Sheets and Apps Script for daily snapshots, price updates, asset charts and monthly P&L.<br>基于 Google Sheets 与 Apps Script，实现每日快照、行情更新、资产图表与月度盈亏记录。 |
 
@@ -47,7 +43,6 @@
 | 📊 | Transaction ledger and research journal | 交易账本与研究复盘 |
 | 📉 | Strategy backtesting engine | 策略回测引擎 |
 | 🔔 | Auto daily report → Feishu / Telegram | 每日自动推送日报 |
-| 🦞 | OpenClaw agent skill on ClawHub | OpenClaw 技能已发布 |
 
 ### Try it with fictional data / 先体验演示数据
 
@@ -115,10 +110,14 @@ For users with a Docker host:
 docker compose up -d
 ```
 
-**OpenClaw Skill:**
-```bash
-clawhub install portfolio-daily-tracker
-```
+### Messaging integrations / 消息接入
+
+Portfolio tracking, the dashboard and stock research run without OpenClaw.
+The current Feishu report sender and card bridge use OpenClaw; see the
+[setup guide](docs/FEISHU_WORKBENCH.md) if you want this integration.
+
+组合追踪、网页和股票研究可独立运行。当前飞书日报发送器与卡片桥接使用 OpenClaw，
+需要消息接入时再按[配置指南](docs/FEISHU_WORKBENCH.md)启用。
 
 See full documentation: [English](README_EN.md) · [中文](README_CN.md)
 
@@ -154,8 +153,6 @@ If this project helps your research or workflow, please cite it:
 
 <div align="center">
   <b>📊 Manage your investments with code · 用代码管理你的投资</b><br>
-  <b>Powered by OpenClaw 🦞</b><br>
   <a href="https://github.com/Stepuuu/portfolio-daily-tracker">GitHub</a> ·
-  <a href="https://clawhub.ai">ClawHub</a> ·
   MIT License
 </div>

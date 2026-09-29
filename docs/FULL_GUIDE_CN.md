@@ -26,18 +26,18 @@ GitHub: https://github.com/Stepuuu/portfolio-daily-tracker
 
 ## 1. 功能模块概览
 
-本项目有三个层次，可以按需使用：
+本项目有三个层次，可以按需使用。组合引擎、网页、回测和研究工作台不依赖 OpenClaw；下面的第三层是可选的消息接入。
 
 ```
 层次 1 ── 纯引擎（无界面，无 AI）
           只需 Python + requests
           功能：拉取股价 → 计算市值/盈亏 → 生成日报文本
 
-层次 2 ── Web 面板（有界面，有 AI 对话）
-          需要 Python + Node.js + AI API Key
-          功能：React 面板 + AI 问答 + 回测 + 7个功能页
+层次 2 ── Web 面板与研究工作台
+          需要 Python + Node.js；使用 AI 时另配模型连接
+          功能：组合面板、AI 问答、回测、手动与 Agent 研究
 
-层次 3 ── OpenClaw Agent 技能
+层次 3 ── 可选消息接入（OpenClaw）
           需要安装 OpenClaw + 飞书/Telegram Bot
           功能：自然语言对话管理持仓，每日自动推送日报
 ```
@@ -461,7 +461,7 @@ make start          # 启动服务
 # → Backtest 测试你想加仓的股票
 ```
 
-### OpenClaw Agent 流程（全自动）
+### 可选消息交互流程（OpenClaw）
 
 ```
 18:00 Bot 发消息："今日有什么变化？"
