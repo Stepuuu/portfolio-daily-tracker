@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check tracked files for common private artifacts without printing matched values."""
 from pathlib import Path
+import ast
 import re
 import subprocess
 import sys
@@ -15,6 +16,35 @@ PATTERNS = {
 }
 PRIVATE_PARTS = {'.runtime', '.demo', '.secrets', '.omx', '.codex', 'node_modules', '__pycache__'}
 PRIVATE_SUFFIXES = {'.sqlite3', '.db', '.log', '.xlsx', '.docx'}
+
+
+def default_credential_findings(content):
+    """Reject credentials in shipped Python defaults, regardless of token format.
+
+    Parse without importing the configuration (which could write runtime files).
+    Only return line numbers/categories, never the matched values.
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return [(1, 'configuration cannot be parsed')]
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != '_default_config':
+            continue
+        for mapping in ast.walk(node):
+            if not isinstance(mapping, ast.Dict):
+                continue
+            for key, value in zip(mapping.keys, mapping.values):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                    continue
+                if key.value.lower() not in {'api_key', 'authorization', 'x-api-key', 'secret_key', 'password', 'token'}:
+                    continue
+                # Defaults must be empty; environment credentials are read at use time.
+                empty = isinstance(value, ast.Constant) and value.value in ('', None, 'Bearer ')
+                if not empty:
+                    findings.append((value.lineno, 'credential in shipped default configuration'))
+    return findings
 
 
 def main():
@@ -35,6 +65,9 @@ def main():
             content = path.read_text()
         except UnicodeError:
             continue
+        if relative.as_posix() == 'dashboard/config/settings.py':
+            for line_no, category in default_credential_findings(content):
+                failures.append(f'{relative}:{line_no}: {category}')
         for line_no, line in enumerate(content.splitlines(), 1):
             for category, pattern in PATTERNS.items():
                 if pattern.search(line):
