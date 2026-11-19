@@ -9,9 +9,12 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional
 import asyncio
+import logging
 import xml.etree.ElementTree as ET
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class RSSNewsProvider:
@@ -98,11 +101,13 @@ class RSSNewsProvider:
                 "items": items,
             }
         except Exception as e:
+            # The feed's or the library's own words go to the log; the result carries a fixed text.
+            from core.provider_errors import log_failure
             return {
                 "source": source_name,
                 "category": category,
                 "status": "error",
-                "error": str(e),
+                "error": log_failure(logger, f"news feed {source_name}", e),
                 "items": [],
             }
 
