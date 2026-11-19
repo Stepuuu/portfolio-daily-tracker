@@ -69,7 +69,9 @@ jobs:
       - run: npm ci
         working-directory: dashboard/frontend
       - run: |
+          failed=""
           for smoke in tests/browser_*smoke.py; do
             echo "== $smoke"
-            python "$smoke" || exit 1
+            python "$smoke" || failed="$failed $smoke"
           done
+          [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }

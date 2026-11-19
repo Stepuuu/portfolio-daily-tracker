@@ -221,9 +221,11 @@ with ExitStack() as stack:
         dialog.get_by_label("止损").press("Enter")
         page.wait_for_timeout(800)
         assert len(creates) == 1, f"one save sent {len(creates)} creates"
+        # Let the held create go before its route is removed: newer Playwright answers a request still held
+        # when its route goes away, and continuing it afterwards is an error.
+        held[0].continue_()
         page.unroute(creating, hold)
         page.remove_listener("request", count)
-        held[0].continue_()
         done = page.get_by_role("dialog", name="计划已启用")
         expect(done).to_be_visible()
         rules = done.get_by_role("list", name="提醒规则")
