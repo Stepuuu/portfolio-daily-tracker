@@ -3,14 +3,30 @@
 Holdings.cash is the legacy CNY balance. When cash_balances is present it is
 authoritative and cash, if present, must mirror its CNY component. Snapshot.cash
 is the converted CNY total for compatibility with existing reports.
+
+Dates and times are Shanghai's (``SHANGHAI_ZONE``), whatever the server's own time zone: the app's trading
+calendar counts days on that clock (``core.market.calendar``) and its readers are in China.
 """
 import math
 import json
 import os
 import tempfile
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from contextlib import contextmanager
+
+SHANGHAI_ZONE = timezone(timedelta(hours=8))   # China keeps no daylight saving time
+
+
+def market_today():
+    """Today's date (``YYYY-MM-DD``) on Shanghai's clock: the trading day a script's ``--date`` defaults to."""
+    return datetime.now(SHANGHAI_ZONE).strftime("%Y-%m-%d")
+
+
+def beijing_time_text(moment):
+    """``2026-11-20 15:40:12（北京时间）`` for an aware ``moment``; a naive one is this machine's local time."""
+    return f"{moment.astimezone(SHANGHAI_ZONE):%Y-%m-%d %H:%M:%S}（北京时间）"
 
 
 @contextmanager

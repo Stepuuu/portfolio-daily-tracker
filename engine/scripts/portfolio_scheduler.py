@@ -8,7 +8,7 @@ Usage:
     # Start scheduler (background)
     nohup python3 portfolio_scheduler.py &
 
-    # Or with specific times (the machine's local time, like the dates it uses)
+    # Or with specific times (Beijing time, like the dates it uses, whatever the machine's time zone)
     python3 portfolio_scheduler.py --notify-time 18:00 --pipeline-time 19:00
 
     # Optional: run the daily scripts inside a conda environment
@@ -29,6 +29,7 @@ BASE_DIR = Path(__file__).parent
 PID_FILE = BASE_DIR.parent / "logs" / "scheduler.pid"
 LOG_DIR = BASE_DIR.parent / "logs"
 from portfolio_daily_update import python_command
+from portfolio_accounting import SHANGHAI_ZONE
 
 # Track what we've done today to avoid re-running
 daily_state = {
@@ -40,11 +41,11 @@ running = True
 
 
 def log(msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] {msg}"
+    now = datetime.now(SHANGHAI_ZONE)
+    line = f"[{now:%Y-%m-%d %H:%M:%S}] {msg}"
     print(line, flush=True)
     try:
-        log_file = LOG_DIR / f"scheduler-{datetime.now().strftime('%Y%m%d')}.log"
+        log_file = LOG_DIR / f"scheduler-{now:%Y%m%d}.log"
         with open(log_file, "a") as f:
             f.write(line + "\n")
     except:
@@ -69,8 +70,8 @@ HOLIDAYS = {
 
 
 def is_trading_day(now=None):
-    """Check if a day (default: today, local time) is a weekday and not an exchange holiday."""
-    now = now or datetime.now()
+    """Check if a day (default: today in Beijing) is a weekday and not an exchange holiday."""
+    now = now or datetime.now(SHANGHAI_ZONE)
     if now.weekday() >= 5:  # Saturday=5, Sunday=6
         return False
     return now.strftime("%Y-%m-%d") not in HOLIDAYS
@@ -79,7 +80,7 @@ def is_trading_day(now=None):
 def run_action(action, date_str=None):
     """Run a portfolio action via the update script."""
     if date_str is None:
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.now(SHANGHAI_ZONE).strftime("%Y-%m-%d")
     
     script = str(BASE_DIR / "portfolio_daily_update.py")
     # Current interpreter by default; ``conda run -n $CONDA_ENV`` when CONDA_ENV is set.
@@ -103,11 +104,11 @@ def run_action(action, date_str=None):
 
 
 def check_and_run(notify_hour, notify_min, pipeline_hour, pipeline_min):
-    """Check current time and run appropriate actions."""
-    now = datetime.now()
+    """Check the current Beijing time and run the actions due (dates and times are Beijing's: the trading day)."""
+    now = datetime.now(SHANGHAI_ZONE)
     today = now.strftime("%Y-%m-%d")
     
-    if not is_trading_day():
+    if not is_trading_day(now):
         return
     
     current_time = now.hour * 60 + now.minute
@@ -136,9 +137,9 @@ def signal_handler(sig, frame):
 def main():
     parser = argparse.ArgumentParser(description="Portfolio daily scheduler")
     parser.add_argument("--notify-time", default="18:00",
-                        help="Notify time (HH:MM, local time of this machine)")
+                        help="Notify time (HH:MM, Beijing time)")
     parser.add_argument("--pipeline-time", default="19:00",
-                        help="Auto-pipeline time (HH:MM, local time of this machine)")
+                        help="Auto-pipeline time (HH:MM, Beijing time)")
     parser.add_argument("--check-interval", type=int, default=60, help="Check interval in seconds")
     args = parser.parse_args()
     

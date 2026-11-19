@@ -843,7 +843,8 @@ def test_a_report_the_snapshot_engine_holds_back_waits_for_the_time_it_names(boo
     _, receipt = book_items(w, [item('deposit')], day=DAY)
     result = w.portfolio.run_report(receipt)
     assert result['report_status'] == 'waiting' and calls == [DAY]
-    assert result['summary'] == ledger_book.WAITING.format(booked='账本已入账。', day=DAY, until='次日 06:10')
+    assert result['summary'] == ledger_book.WAITING.format(booked='账本已入账。', day=DAY,
+                                                           reason='等待美股收盘价确定，次日 06:10 后记入')
     assert w.portfolio.due_reports() == []
     assert w.portfolio.due_reports(at('2026-11-19T06:10:00+08:00')) == [receipt['operation_id']]
     monkeypatch.setattr(ledger_book, '_now', lambda: at('2026-11-19T06:10:00+08:00'))
@@ -1231,7 +1232,9 @@ def test_before_the_days_closes_an_entry_is_booked_and_its_report_waits(waiting)
     clock['now'] = at('2026-11-18T06:00:00+08:00')         # before the mainland opens: yesterday's prices only
     sid = entered_on(w, DAY)
     receipt = w.store.session(sid)
-    expected = ledger_book.WAITING.format(booked='账本已入账。', day=DAY, until='次日 05:30')
+    # The day books the mainland's and Hong Kong's sessions of the day itself; New York's of the night before
+    # is final already (05:30).
+    expected = ledger_book.WAITING.format(booked='账本已入账。', day=DAY, reason='等待A股、港股收盘价确定，16:10 后记入')
     assert receipt['view'] == 'daily_receipt' and receipt['model']['notice'] == expected
     assert account(ledger)['contributed_cny'] == '120100'
     run_reports(w)
@@ -1247,11 +1250,17 @@ def test_before_the_days_closes_an_entry_is_booked_and_its_report_waits(waiting)
     _, unchanged = book_items(w, [item('set_cash', account='Reserve', amount='2000')], day=DAY, operation='early')
     result = w.portfolio.run_report(unchanged)
     assert result['report_status'] == 'waiting' and ran == []
-    assert result['summary'] == ledger_book.WAITING.format(booked='账本没有新增记录。', day=DAY, until='次日 05:30')
-    # Only the markets the ledger holds count: with the US position sold, the day waits for Hong Kong only.
+    assert result['summary'] == ledger_book.WAITING.format(booked='账本没有新增记录。', day=DAY,
+                                                           reason='等待A股、港股收盘价确定，16:10 后记入')
+    # Only the markets the ledger holds count: once New York's evening session is under way the day waits for it,
+    # and with the US position sold it does not.
+    evening = at('2026-11-18T22:31:00+08:00')
+    assert ledger_book.waits_until(w.portfolio, DAY, evening) == ledger_book.Wait(at('2026-11-19T05:30:00+08:00'), ('US',))
     book_items(w, [item('sell', ticker='NASDAQ:EXAMPLE', currency='USD', quantity='10', price='9', fee='1')],
                day=DAY, operation='sold')
-    assert ledger_book.waits_until(w.portfolio, DAY, at('2026-11-18T16:00:00+08:00')) == at('2026-11-18T16:10:00+08:00')
+    assert ledger_book.waits_until(w.portfolio, DAY, evening) is None
+    assert ledger_book.waits_until(w.portfolio, DAY, at('2026-11-18T16:00:00+08:00')) == ledger_book.Wait(
+        at('2026-11-18T16:10:00+08:00'), ('HK',))
     assert ledger_book.waits_until(w.portfolio, DAY, at('2026-11-18T16:10:00+08:00')) is None
 
 
@@ -1323,3 +1332,70 @@ def test_the_service_starts_its_report_timer(book):
             await w.stop()
     assert 'report_timer' in asyncio.run(started())
 
+
+
+# -- the card and the snapshot engine agree on when a day can be made -----------------------------------------
+
+@pytest.mark.parametrize('moment, waits', [
+    # Hong Kong's close of the day is final at 16:10; New York's of the night before was final at 05:30.
+    ('2026-11-18T15:00:00+08:00', ('2026-11-18T16:10:00+08:00', '等待港股收盘价确定，16:10 后记入')),
+    ('2026-11-18T16:15:00+08:00', None),        # the day is complete
+    ('2026-11-18T21:00:00+08:00', None),        # an evening entry makes the day's report again at once
+    # After midnight the entry is still dated the day before, whose window runs to 09:00: New York's session of
+    # that date is under way, and a snapshot made now would wait for it.
+    ('2026-11-19T02:00:00+08:00', ('2026-11-19T05:30:00+08:00', '等待美股收盘价确定，次日 05:30 后记入')),
+])
+def test_a_day_with_a_us_holding_waits_exactly_as_the_engine_does(waiting, moment, waits):
+    w, _, clock, ran = waiting
+    clock['now'] = at(moment)
+    sid = entered_on(w, DAY)
+    run_reports(w)
+    notice = w.store.session(sid)['model']['notice']
+    if waits is None:
+        assert ran == [DAY] and notice == '账本已入账。日报正在更新，可从“日报”查看进度。'
+        return
+    until, reason = waits
+    assert ran == [] and notice == ledger_book.WAITING.format(booked='账本已入账。', day=DAY, reason=reason)
+    clock['now'] = at(until)
+    assert w.release_due_reports() == 1
+    run_reports(w)
+    assert ran == [DAY]
+
+
+def newest_close(ticker, moment):
+    """The quote a source shows at ``moment``: the close of the newest session whose close is final by then."""
+    from core.market.calendar import SessionClock
+    from core.market.instruments import parse
+    clock, instrument = SessionClock(lambda: moment), parse(ticker)
+    session = clock.session_of(instrument.market)
+    while moment < clock.close_settled(instrument.market, session):
+        session = clock.previous_trading_day(instrument.market, session)
+    stamp = clock.close_print(instrument.market, session)
+    return {'regularMarketPrice': 10.5, 'currency': instrument.currency, 'regularMarketTime': int(stamp.timestamp())}
+
+
+MOMENTS = ['03:00', '05:29', '05:31', '09:00', '14:59', '15:00', '16:09', '16:10', '21:00', '22:29', '22:31',
+           '+02:00', '+05:31', '+08:59']   # Beijing time on the day; + the next morning
+
+
+@pytest.mark.parametrize('day, tickers', [
+    ('2026-11-18', ['SHA:600000']),                                   # mainland only
+    ('2026-11-18', ['SHA:600000', 'HKG:00700']),                      # with Hong Kong
+    ('2026-11-18', ['SHA:600000', 'HKG:00700', 'NASDAQ:EXAMPLE']),    # with New York
+    ('2026-10-02', ['SHA:600000', 'HKG:00700', 'NASDAQ:EXAMPLE']),    # a mainland holiday; the others trade
+    ('2026-11-26', ['SHA:600000', 'NASDAQ:EXAMPLE']),                 # Thanksgiving: New York is closed
+])
+def test_the_card_waits_for_exactly_what_the_snapshot_engine_waits_for(day, tickers):
+    import portfolio_snapshot as snapshot
+    state = {'accounts': {'Example': {'positions': {ticker: {} for ticker in tickers}}}}
+    following = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+    for when in MOMENTS:
+        moment = at(f"{following}T{when[1:]}:00+08:00" if when.startswith('+') else f'{day}T{when}:00+08:00')
+        engine = []
+        for ticker in tickers:
+            problem, wait, _estimate, _look = snapshot._quote_check(ticker, newest_close(ticker, moment), day, moment)
+            assert wait is not None or problem is None, (ticker, moment, problem)   # booked, or waiting
+            if wait is not None:
+                engine.append(wait)
+        card = ledger_book.closes_final_at(state, day, moment)
+        assert (card.until if card else None) == (max(engine) if engine else None), (day, when, card, engine)

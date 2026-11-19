@@ -15,6 +15,10 @@
   when the variable is set) and never takes the API down. Demo mode loads none;
   lab-only mode mounts their routes but starts no background task. Extensions
   run with the backend's privileges. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+- `TRACKER_REPORTS_DIR`: the directory of the daily Markdown reports, by default `engine/reports` beside
+  the code, as before. The pipeline saves them there, and the close snapshot, the extensions' close reports
+  and the Feishu workbench (its 日报 card and the pipeline it starts) read them there, so they can be kept
+  inside the portfolio directory and its backups.
 - `BACKEND_START_TIMEOUT`: how many seconds `start.sh` waits for the backend's
   `/health` (default 30, as before; 1 to 3600), named in the message printed
   when it gives up. Compose uses it as the backend health check's
@@ -68,6 +72,33 @@
   transfer), and the menu entry 更正数量、成本或本金, which explains how to reverse
   and re-enter in the web app.
 
+### Fixed
+
+- **A day's snapshot is never made from the day before's prices.** Run before the day's session had closed
+  (the Feishu card's pipeline after an entry dated today, at 02:46), the snapshot booked the mainland's and
+  Hong Kong's previous close as the day's, without an estimate mark, and the close pipeline then only
+  completed that snapshot, so the day never got its close. Each market's price must now be the close of
+  the session the day books (the mainland's and Hong Kong's of that day, New York's of the night before);
+  before it is final the snapshot waits, as for any close not final yet, by every route that makes it. A
+  market closed that day carries its last close, as before. A snapshot an older version saved that way
+  (made before a close it books was final, by its `generated_at`) is made again by the pipeline, with its
+  history row, report and push.
+
+- **`--action pipeline` works with a ledger.** It cloned a legacy holdings file first, which the ledger
+  refuses, so the command the docs and the auto pipeline's notice give after a late entry failed with a
+  traceback on every ledger portfolio. With a ledger it now makes the day from the ledger without cloning,
+  as `auto-pipeline` and `notify` do; `--action clone` has nothing to clone and succeeds, and `--action update`
+  says that holdings change through a confirmed ledger proposal instead of failing with a traceback. Like
+  `auto-pipeline`, `--action pipeline` pushes the report only when `feishu_chat_id` is configured: without it
+  the report is saved and the run succeeds, instead of exiting 1 with the push left uncertain.
+- **Dates and times are Shanghai's whatever the server's time zone.** The engine scripts' `--date` default
+  (snapshot, report, daily update, holdings manager), the shell scripts' dates and `portfolio_scheduler.py`'s
+  days and times (`--notify-time` and `--pipeline-time` are now Beijing time) were the server's local date
+  and time: on a server set to UTC the default day was the day before for eight hours. The snapshot's
+  `generated_at` is stored with its offset (`+08:00`), and the report footer's 生成时间 is shown in Beijing
+  time with its zone (`2026-11-20 15:40:12（北京时间）`); an older snapshot's time without a zone is read as
+  the local time of the machine, as it was written.
+
 ### Changed
 
 - The card stays exactly-once on the ledger: its operations are keyed on the
@@ -95,10 +126,13 @@
   holdings file elsewhere while that directory has an active ledger.
 - A confirmation that books nothing (今日无变动, a list already booked) no longer
   makes and pushes a finished day's report again.
-- Before the day's own closes are final for the markets the ledger holds (the app's
-  market calendar), a card entry or 今日无变动 is booked but no snapshot is made:
-  one made then would record the previous session's prices as the day's close. The
-  receipt says the report follows after that time and 日报 shows it as 等待收盘. The
+- Until the snapshot engine would book the day's closes for the markets the ledger
+  holds (the engine's own rule, `core.market.calendar.snapshot_wait`, shared by both:
+  New York's session of the night before counts for the day, and a session still
+  under way is waited for), a card entry or 今日无变动 is booked but no snapshot is
+  made: one made then would record the previous session's prices as the day's close.
+  The receipt says which close it waits for and that the report follows after it, and
+  日报 shows it as 等待收盘. The
   card service runs the job itself when the time comes (also when the snapshot
   engine says a close is not final yet), once, from its stored state so a restart
   keeps it, until 09:00 the next morning; 重试日报 stays and never runs it twice.

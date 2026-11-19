@@ -337,11 +337,11 @@ def one_day(*sources):
     recorded = {ticker: source for ticker, source in zip(tickers, sources) if source is not None}
     saved = snapshot.calculate_snapshot(holdings, {ticker: 10.0 for ticker in tickers}, {}, {'CNY': 1.0}, None, [],
                                         priced_by=recorded)
-    return {**saved, 'generated_at': '2026-11-19T15:41:00.123456'}
+    return {**saved, 'generated_at': '2026-11-19T15:41:00.123456+08:00'}
 
 
 def test_a_day_priced_from_yahoo_alone_gives_the_report_it_always_had():
-    footer = '*数据来源: Yahoo Finance | 生成时间: 2026-11-19T15:41:00*'
+    footer = '*数据来源: Yahoo Finance | 生成时间: 2026-11-19 15:41:00（北京时间）*'
     assert report_footer(one_day('yahoo', 'yahoo')) == footer
     assert report_footer(one_day(None, None)) == footer             # a snapshot made before sources were recorded
     assert report.generate_report(one_day('yahoo', 'yahoo')) == report.generate_report(one_day(None, None))
@@ -349,9 +349,9 @@ def test_a_day_priced_from_yahoo_alone_gives_the_report_it_always_had():
 
 
 def test_a_day_priced_partly_from_tencent_names_both_sources():
-    assert report_footer(one_day('yahoo', 'tencent')) == '*数据来源: Yahoo Finance、腾讯 | 生成时间: 2026-11-19T15:41:00*'
-    assert report_footer(one_day('tencent', None)) == '*数据来源: Yahoo Finance、腾讯 | 生成时间: 2026-11-19T15:41:00*'
-    assert report_footer(one_day('tencent')) == '*数据来源: 腾讯 | 生成时间: 2026-11-19T15:41:00*'
+    assert report_footer(one_day('yahoo', 'tencent')) == '*数据来源: Yahoo Finance、腾讯 | 生成时间: 2026-11-19 15:41:00（北京时间）*'
+    assert report_footer(one_day('tencent', None)) == '*数据来源: Yahoo Finance、腾讯 | 生成时间: 2026-11-19 15:41:00（北京时间）*'
+    assert report_footer(one_day('tencent')) == '*数据来源: 腾讯 | 生成时间: 2026-11-19 15:41:00（北京时间）*'
     saved = one_day('yahoo', 'tencent')
     assert [position['price_source'] for position in saved['groups']['E']['positions']] == ['yahoo', 'tencent']
 

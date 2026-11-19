@@ -471,13 +471,14 @@ def test_scheduler_trading_days_in_2026(day, trading):
     assert scheduler.is_trading_day(datetime.fromisoformat(day + 'T18:00:00')) is trading
 
 
-def test_scheduler_times_are_documented_as_local_time(capsys, monkeypatch):
+def test_scheduler_times_are_documented_as_beijing_time(capsys, monkeypatch):
+    # Its days are the trading days (Shanghai's dates), so its times are Beijing's too, whatever the machine's zone.
     monkeypatch.setattr(sys, 'argv', ['portfolio_scheduler.py', '--help'])
     with pytest.raises(SystemExit):
         scheduler.main()
     text = capsys.readouterr().out
-    assert 'Beijing' not in text
-    assert text.count('local time') == 2
+    assert 'local time' not in text
+    assert text.count('Beijing time') == 2
 
 
 @pytest.mark.parametrize('clock, runs', [

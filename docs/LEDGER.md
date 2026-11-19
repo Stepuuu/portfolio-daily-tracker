@@ -245,8 +245,10 @@ answer 409 (they are removed in the next release), and the engine's
 holdings-writing scripts refuse changes. The Feishu card records into the ledger
 instead (see [FEISHU_WORKBENCH.md](FEISHU_WORKBENCH.md#with-the-transaction-ledger--启用交易账本后)).
 Snapshot generation reads the confirmed ledger; `portfolio_daily_update.py
---action auto-pipeline` works with an active ledger, and `--action notify` sends
-the evening card without cloning a holdings file.
+--action auto-pipeline` and `--action pipeline` work with an active ledger without
+cloning a holdings file, `--action notify` sends the evening card without cloning
+one, `--action clone` has nothing to clone, and `--action update` says that
+holdings change through a confirmed ledger proposal instead.
 
 ## API and AI integrations
 

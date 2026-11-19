@@ -36,6 +36,7 @@ import logging
 from pathlib import Path
 import re
 import time
+from typing import NamedTuple
 import uuid
 from zoneinfo import ZoneInfo
 
@@ -84,18 +85,18 @@ BACKDATED = '这是 {day} 的补记：按账本规则，补记不会自动重做
 UNBOOKED_OLD = '账本没有新增记录；{day} 的快照和日报只在次日 09:00 前重做，这次不会重新生成。'
 # A report that must wait for the day's closes: the card service runs the job itself at that time (``due_reports``,
 # ``Workbench.release_due_reports``), and the close snapshot may make it first; either way it is made once.
-WAITING = ('{booked}{day} 的收盘价要到 {until} 才确定，日报会在那之后自动生成（同一持仓不会重复生成或推送）；'
+# ``reason`` is the close snapshot's own words for the wait (``close_snapshot.wait_reason``): 等待港股收盘价确定，16:10
+# 后记入; 等待美股收盘价确定，次日 05:30 后记入 (New York's evening session, which a snapshot made then waits for).
+WAITING = ('{booked}{reason}；{day} 的日报会在那之后自动生成（同一持仓不会重复生成或推送），'
            '也可以届时在“日报”里点“重试日报”。')
 EXPIRED = '{day} 的日报没能在次日 09:00 前生成，之后不再自动重试；账本记录不受影响。'
 PENDING = '账本已入账，日报尚未完成；可以在“日报”里重试，不会重复入账。'
 SAVED = '日报已按入账后的持仓生成并保存；未配置飞书推送目标（feishu_chat_id），按收盘流程的规则不推送。'
 UNCHANGED = '账本没有新增记录，{day} 的日报已经完成，不会重做或再次推送。'
 REVERSED_LATER = '{day} · 已入账 {applied} 笔账本记录，其中 {count} 笔后来已在网页 流水 中冲销'
-CLOSE_WAIT = re.compile(r'CLOSE_NOT_FINAL_UNTIL=(\S+)(?: MARKETS=\S+)?(?: CHECK_AT=(\S+))?')
+CLOSE_WAIT = re.compile(r'CLOSE_NOT_FINAL_UNTIL=(\S+)(?: MARKETS=([A-Z,]+))?(?: CHECK_AT=(\S+))?')
 # A wait the engine names is never shorter than this, so a job can never be run again at once.
 RECHECK = timedelta(minutes=1)
-# The calendar's market of each exchange prefix (core.market.calendar; engine/scripts/portfolio_snapshot.py).
-CALENDAR_MARKETS = {'SHA': 'CN', 'SHE': 'CN', 'HKG': 'HK', 'NASDAQ': 'US', 'NYSE': 'US'}
 CHINESE = re.compile(r'[一-鿿]')
 
 
@@ -172,44 +173,61 @@ def report_window_open(day, now=None):
     return now < datetime.combine(date.fromisoformat(day) + timedelta(days=1), REPORT_UNTIL, tzinfo=SHANGHAI)
 
 
-def closes_final_at(state, day):
-    """When the closes of ``day``'s own sessions are final for the markets ``state`` holds, or None.
+class Wait(NamedTuple):
+    """A report that waits: until when, for the closes of which markets (calendar markets: CN, HK, US)."""
+    until: datetime
+    markets: tuple
 
-    The app's market calendar decides (``SessionClock.close_settled``, early closes included): for each market a
-    position is held in and that trades on ``day``, the moment that day's closing price is final as published (New
-    York's session dated ``day`` is final the next Beijing morning). A snapshot made earlier would record the
-    previous session's prices as the day's close.
+
+def _reason(wait, day):
+    """The close snapshot's words for ``wait`` (``等待港股收盘价确定，16:10 后记入``)."""
+    from core.routines.close_snapshot import wait_reason
+    return wait_reason(wait.markets, wait.until, day)
+
+
+def closes_final_at(state, day, moment):
+    """When a snapshot of ``day`` made at ``moment`` can book the closes of the markets ``state`` holds, if that
+    is still to come (a ``Wait``); else None.
+
+    The snapshot engine's own rule decides, from its one definition (``core.market.calendar.snapshot_wait``, which
+    ``portfolio_snapshot._close_verdict`` asks too): per market a position is held in (``instruments.parse``, as
+    the engine reads a holding), the day books the session that ends on that Shanghai date (New York's of the
+    night before), and a session of that market still under way at ``moment`` (New York's evening session) is
+    waited for as well; each until its close is final (``close_settled``, early closes included). A snapshot made
+    earlier would record the previous session's prices as the day's close.
     """
-    markets = {CALENDAR_MARKETS[ticker.split(':')[0]] for account in state['accounts'].values()
-               for ticker in account['positions'] if ticker.split(':')[0] in CALENDAR_MARKETS}
-    if not markets:
-        return None
-    from core.market.calendar import SessionClock
-    clock, session = SessionClock(), date.fromisoformat(day)
-    finals = [clock.close_settled(market, session) for market in markets if clock.is_trading_day(market, session)]
-    finals = [final.astimezone(SHANGHAI) for final in finals if final is not None]
-    return max(finals) if finals else None
+    from core.market.calendar import SessionClock, snapshot_wait
+    from core.market.instruments import InstrumentError, parse
+    markets = set()
+    for account in state['accounts'].values():
+        for ticker in account['positions']:
+            try:
+                markets.add(parse(ticker).market)
+            except InstrumentError:
+                continue
+    clock, finals = SessionClock(), {}
+    for market in sorted(markets):
+        waiting = snapshot_wait(market, day, moment)
+        final = clock.close_settled(market, waiting[0]) if waiting is not None else None
+        if final is not None:
+            finals[market] = final.astimezone(SHANGHAI)
+    return Wait(max(finals.values()), tuple(sorted(finals))) if finals else None
 
 
 def waits_until(adapter, day, now=None):
-    """When the day's report can be made, if that is still to come (``closes_final_at``); else None."""
+    """The ``Wait`` of the day's report, if its closes are still to come (``closes_final_at``); else None."""
     book = adapter._book()
     if book is None:
         return None
+    now = now or _now()
     try:
-        until = closes_final_at(book.state_on(day), day)
+        until = closes_final_at(book.state_on(day), day, now)
     except PortfolioError:
         raise
     except Exception as exc:   # without the calendar the snapshot engine's own close check still applies
         logger.warning('the market calendar could not be read: %s', type(exc).__name__)
         return None
-    return until if until is not None and (now or _now()) < until else None
-
-
-def _when(day, until):
-    """``16:10`` or ``次日 05:30``: a moment in Shanghai time, from the day it belongs to."""
-    local = until.astimezone(SHANGHAI)
-    return f"{'次日 ' if local.date().isoformat() > day else ''}{local:%H:%M}"
+    return until if until is not None and now < until.until else None
 
 
 _PREVIEWS_TABLE = ('CREATE TABLE IF NOT EXISTS ledger_previews (proposal_id TEXT PRIMARY KEY, owner TEXT NOT NULL, '
@@ -252,13 +270,13 @@ def withdraw_pending(adapter, owner, keep=None):
         db.executemany('DELETE FROM ledger_previews WHERE proposal_id=?', [(old,) for old in older])
 
 
-def receipt_notice(receipt, report, until=None):
+def receipt_notice(receipt, report, wait=None):
     """What a ledger receipt says under its summary: whether anything was booked and whether the report follows
-    now or, when the day's closes are still to come (``until``), automatically after them."""
+    now or, when the day's closes are still to come (``wait``), automatically after them."""
     booked = bool(receipt.get('applied'))
-    if report and until is not None:
+    if report and wait is not None:
         return WAITING.format(booked='账本已入账。' if booked else '账本没有新增记录。', day=receipt['date'],
-                              until=_when(receipt['date'], until))
+                              reason=_reason(wait, receipt['date']))
     if report:
         return ('账本已入账。' if booked else '账本没有新增记录。') + '日报正在更新，可从“日报”查看进度。'
     return (BACKDATED if booked else UNBOOKED_OLD).format(day=receipt['date'])
@@ -989,17 +1007,19 @@ def _day_done(adapter, day):
     return state.get('complete') is True and state.get('report') is True
 
 
-def _waiting(adapter, reference, result, day, until):
-    """Keep the job for later: the card service runs it again at ``until`` (``due_reports``)."""
-    result['report_at'] = until.astimezone(SHANGHAI).isoformat()
+def _waiting(adapter, reference, result, day, wait):
+    """Keep the job for later: the card service runs it again at ``wait.until`` (``due_reports``)."""
+    result['report_at'] = wait.until.astimezone(SHANGHAI).isoformat()
+    result['report_markets'] = list(wait.markets)
     with adapter._db() as db:
         db.execute("UPDATE operations SET report_status='waiting', receipt=? WHERE id=?", (_encode(result), reference))
     return {**result, 'report_status': 'waiting', 'summary': _waiting_text(result, day)}
 
 
 def _waiting_text(result, day):
+    wait = Wait(datetime.fromisoformat(result['report_at']), tuple(result.get('report_markets') or ()))
     return WAITING.format(booked='账本已入账。' if result.get('applied') else '账本没有新增记录。', day=day,
-                          until=_when(day, datetime.fromisoformat(result['report_at'])))
+                          reason=_reason(wait, day))
 
 
 def _engine_wait(output, now):
@@ -1007,12 +1027,12 @@ def _engine_wait(output, now):
     waits = CLOSE_WAIT.findall(output or '')
     if not waits:
         return None
-    until, check = waits[-1]
+    until, markets, check = waits[-1]
     try:
         moment = datetime.fromisoformat(check or until).astimezone(SHANGHAI)
     except ValueError:
         return None
-    return max(moment, now + RECHECK)
+    return Wait(max(moment, now + RECHECK), tuple(market for market in markets.split(',') if market))
 
 
 def run_report(adapter, reference, now=None):

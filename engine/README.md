@@ -85,6 +85,10 @@ Edit `config.json`:
   through the environment's proxy with `TRACKER_TENCENT_PROXY=1`; `tencent_url` replaces its endpoint.
   The request is skipped when the run has too little of its 120 seconds left. Each position records
   its price's source (`price_source`), and the report's footer names the sources the day used.
+- A day's snapshot books each market's session of that day (Shanghai's date; New York's of the night
+  before) and nothing earlier: run before that session has closed it waits for the close instead of
+  booking the day before's (the closed market of a holiday carries its last close). A snapshot an older
+  version saved before its closes were final is made again by `portfolio_daily_update.py`
   `TRACKER_QUOTE_SOURCE=tencent` prices from Tencent alone, `yahoo` or `eastmoney` from Yahoo alone
 - Exchange rates come from the source the dashboard's Today page uses: Yahoo first, and Eastmoney's
   offshore rate when Yahoo's is stale or has no time, asked only for the currencies the snapshot
@@ -140,6 +144,12 @@ Output: `snapshots/YYYY-MM-DD.json` with:
 # Run daily at 16:30 (after market close, adjust for your timezone)
 30 16 * * 1-5 cd /path/to/project && bash scripts/portfolio-daily.sh
 ```
+
+Dates are Shanghai's whatever the server's time zone: each script's `--date` defaults to today in Beijing
+(so do the shell scripts' dates and `portfolio_scheduler.py`'s days and times), the snapshot's `generated_at`
+carries its offset, and the report's footer shows the time it was made in Beijing time. The pipeline saves
+each day's report in `engine/reports`, or in `TRACKER_REPORTS_DIR` when set (an absolute path, for example
+inside `PORTFOLIO_DIR` so that the reports are backed up with the data).
 
 The daily scripts (`portfolio-daily.sh`, `portfolio-cron.sh`, `portfolio_scheduler.py`
 and the snapshot/report steps started by `portfolio_daily_update.py`) use plain

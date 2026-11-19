@@ -210,6 +210,7 @@ by default).
 |---|---|---|
 | **Data and modes** | | |
 | `PORTFOLIO_DIR` | `engine/portfolio` (`/app/portfolio` in Docker) | ledger, desk store, legacy holdings and snapshots |
+| `TRACKER_REPORTS_DIR` | `engine/reports` | the daily Markdown reports (`portfolio-YYYYMMDD.md`) the pipeline saves and the close snapshot, the extensions' close reports and the Feishu workbench read; an absolute path, for example `PORTFOLIO_DIR/reports` so that they are backed up with the data |
 | `TRACKER_CONFIG_FILE` | `config.json` in the backend's working directory (`dashboard/`) | chat model settings and keys written by the wizard |
 | `TRACKER_BACKTEST_DIR` | `dashboard/data` | the backtest's bar cache and run history |
 | `TRACKER_LAB_DIR` | `dashboard/data/lab` | research lab storage |
@@ -276,6 +277,7 @@ Everything stays on your machine:
 | `PORTFOLIO_DIR/ledger.sqlite3` | every confirmed event (opening balance, trades, dividends, deposits and withdrawals, exchanges, splits, reversals), unconfirmed ledger proposals and research notes |
 | `PORTFOLIO_DIR/desk.sqlite3` | alert rules and fired alerts, trade plans and their links to trades, the watchlist, the assistant's proposals (including rejected lessons), briefs and routine runs, import sessions and column mappings, fee profiles, notifications and the setup flags |
 | `PORTFOLIO_DIR/snapshots/`, `history.csv`, `holdings/` | daily close snapshots and legacy holdings files |
+| `engine/reports/` (`TRACKER_REPORTS_DIR`) | the daily Markdown reports |
 | `dashboard/data/memory.json` | the assistant's memory (profile, triggers, lessons) |
 | `TRACKER_CONFIG_FILE`, `.env` | model settings and keys |
 | `TRACKER_BACKTEST_DIR`, `TRACKER_LAB_DIR` | backtest and research data |

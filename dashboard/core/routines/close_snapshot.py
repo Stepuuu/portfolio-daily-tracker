@@ -691,9 +691,20 @@ def _history_has_row(portfolio: Path, trading_date: str) -> bool:
     return any(line.startswith(f"{trading_date},") for line in lines[1:])
 
 
+# Moves the days' reports out of the code checkout (``portfolio_daily_update.REPORTS_DIR``).
+REPORTS_DIR_ENV = "TRACKER_REPORTS_DIR"
+
+
+def reports_directory(engine: Path) -> Path:
+    """Where the pipeline saves the days' reports: ``TRACKER_REPORTS_DIR`` when set (a relative one from this
+    process's directory), else ``engine/reports`` next to its scripts, the engine's own rule."""
+    configured = os.environ.get(REPORTS_DIR_ENV, "").strip()
+    return Path(configured).expanduser().absolute() if configured else Path(engine).parent / "reports"
+
+
 def _report_file(engine: Path, trading_date: str) -> Path:
-    """Where the pipeline saves the day's report: ``engine/reports`` next to its scripts."""
-    return Path(engine).parent / "reports" / f"portfolio-{trading_date.replace('-', '')}.md"
+    """Where the pipeline saves the day's report (``reports_directory``)."""
+    return reports_directory(engine) / f"portfolio-{trading_date.replace('-', '')}.md"
 
 
 def _file_sha(path: Path) -> Optional[str]:
@@ -849,6 +860,8 @@ async def run(trading_date: str, *, engine_dir: Optional[Path] = None, portfolio
     command = [sys.executable, str(script), "--action", "auto-pipeline", "--date", trading_date]
     env = {**os.environ, "PORTFOLIO_DIR": str(portfolio.resolve()), "PYTHONUNBUFFERED": "1"}
     env.pop(LOCK_CLAIM_ENV, None)  # the backend holds no portfolio lock; the pipeline takes its own
+    if os.environ.get(REPORTS_DIR_ENV, "").strip():
+        env[REPORTS_DIR_ENV] = str(reports_directory(engine))   # the directory this routine reads, absolute
     try:
         result = await (runner or run_engine)(command, env=env, cwd=script.parent, timeout=timeout)
     except OSError as exc:

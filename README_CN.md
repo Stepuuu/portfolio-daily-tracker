@@ -167,6 +167,7 @@ make demo
 |---|---|---|
 | **数据与模式** | | |
 | `PORTFOLIO_DIR` | `engine/portfolio`（Docker 中为 `/app/portfolio`） | 账本、桌面数据、旧版持仓文件和快照 |
+| `TRACKER_REPORTS_DIR` | `engine/reports` | 每日 Markdown 日报（`portfolio-YYYYMMDD.md`）的目录：流水线保存在这里，收盘快照、扩展收到的收盘日报和飞书工作台从这里读取；写绝对路径，例如 `PORTFOLIO_DIR/reports`，日报就随数据目录一起备份 |
 | `TRACKER_CONFIG_FILE` | 后端工作目录（`dashboard/`）下的 `config.json` | 设置向导写入的对话模型设置和密钥 |
 | `TRACKER_BACKTEST_DIR` | `dashboard/data` | 回测的日线缓存和运行历史 |
 | `TRACKER_LAB_DIR` | `dashboard/data/lab` | 研究工作台的数据 |
@@ -225,6 +226,7 @@ make demo
 | `PORTFOLIO_DIR/ledger.sqlite3` | 全部已确认的流水（期初、买卖、分红、入金出金、换汇、拆股和冲销）、还没确认的账本方案、研究笔记 |
 | `PORTFOLIO_DIR/desk.sqlite3` | 提醒规则和触发记录、交易计划及其与成交的关联、自选、助手提出的方案（包括你放弃过的教训）、简报和例行任务记录、导入记录和列对应、各账户费率、站内通知、设置向导的完成状态 |
 | `PORTFOLIO_DIR/snapshots/`、`history.csv`、`holdings/` | 每日收盘快照和旧版持仓文件 |
+| `engine/reports/`（`TRACKER_REPORTS_DIR`） | 每日 Markdown 日报 |
 | `dashboard/data/memory.json` | 助手的记忆（交易画像、情绪触发点、教训） |
 | `TRACKER_CONFIG_FILE`、`.env` | 模型设置和密钥 |
 | `TRACKER_BACKTEST_DIR`、`TRACKER_LAB_DIR` | 回测和研究数据 |

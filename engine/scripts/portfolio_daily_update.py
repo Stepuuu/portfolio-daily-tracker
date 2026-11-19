@@ -32,13 +32,19 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from portfolio_accounting import currency_from_text, atomic_text_writer, atomic_json_dump, cash_balances, set_cash_balance
+from portfolio_accounting import beijing_time_text, market_today
 
 BASE_DIR = Path(__file__).parent
 PORTFOLIO_DIR = Path(os.environ.get("PORTFOLIO_DIR", str(BASE_DIR.parent / "portfolio")))
 CONFIG_PATH = PORTFOLIO_DIR / "config.json"
 HOLDINGS_DIR = PORTFOLIO_DIR / "holdings"
 SNAPSHOTS_DIR = PORTFOLIO_DIR / "snapshots"
-REPORTS_DIR = BASE_DIR.parent / "reports"
+# The day's Markdown reports (portfolio-YYYYMMDD.md): engine/reports, beside the code, unless
+# TRACKER_REPORTS_DIR names another directory (for example one inside PORTFOLIO_DIR, so that the reports are
+# backed up with the data). Every reader of the reports follows the same setting
+# (core.routines.close_snapshot.reports_directory, the Feishu workbench's PortfolioAdapter).
+REPORTS_DIR = (Path(os.environ["TRACKER_REPORTS_DIR"].strip()).expanduser().absolute()
+               if os.environ.get("TRACKER_REPORTS_DIR", "").strip() else BASE_DIR.parent / "reports")
 
 # OpenClaw / nvm setup
 NVM_SH = os.environ.get("NVM_SH", os.path.expanduser("~/.nvm/nvm.sh"))
@@ -1024,11 +1030,33 @@ def report_is_current(state, report_file, snapshot_sha):
                 and state.get('report_sha') is not None and state.get('report_sha') == file_sha(report_file))
 
 
-def run_pipeline(date_str, send_report=True, *, resume=False):
+def made_before_close(snap_file, date_str):
+    """``(made, final)`` when the day's saved snapshot was made before a close it books was final, else None.
+
+    Only an older version could save one (``portfolio_snapshot.made_before_close``): run before the day's
+    session had closed, it booked the day before's close as the day's. Such a snapshot is made again.
+    """
+    import portfolio_snapshot
+    try:
+        snapshot = json.loads(Path(snap_file).read_text())
+    except (OSError, ValueError):
+        return None
+    return portfolio_snapshot.made_before_close(snapshot, date_str)
+
+
+def say_made_before_close(early):
+    made, final = early
+    print(f"  ⚠️ {MADE_BEFORE_CLOSE}：生成时间 {beijing_time_text(made)}，收盘价 {beijing_time_text(final)}才确定；"
+          "按收盘价重新生成当日快照和日报")
+
+
+def run_pipeline(date_str, send_report=True, *, resume=False, remake=False):
     """Checkpoint snapshot/report stages and never resend an uncertain push.
 
     The report counts as done only when it was made from the snapshot now on
     disk (``report_snapshot``); otherwise it is made again, never reused.
+    A snapshot made before a close it books was final (``made_before_close``),
+    or any with ``remake``, is made again from the start, as for new holdings.
     """
     config = load_config()
     digest = holdings_digest(date_str)
@@ -1047,10 +1075,17 @@ def run_pipeline(date_str, send_report=True, *, resume=False):
         if resume:
             return False
         state = {'holdings_hash': digest, 'snapshot': False, 'report': False, 'push': 'not_started'}
+    snap_file = SNAPSHOTS_DIR / f"{date_str}.json"
+    if state.get('snapshot') and not remake:
+        early = made_before_close(snap_file, date_str)
+        if early:
+            say_made_before_close(early)
+            remake = True
+    if remake:
+        state = {'holdings_hash': digest, 'snapshot': False, 'report': False, 'push': 'not_started'}
     def save():
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_json_dump(state, checkpoint_path)
-    snap_file = SNAPSHOTS_DIR / f"{date_str}.json"
     if not state.get('snapshot'):
         state['snapshot_before'] = file_sha(snap_file)
     save()
@@ -1124,10 +1159,63 @@ def action_notify(date_str):
     return True
 
 
+def ledger_in_use():
+    """Whether the holdings are the confirmed ledger's (True) or the legacy files' (False); None, with a
+    message, when a ledger exists but cannot be read now (nothing is cloned or written then)."""
+    from ledger_bridge import LedgerUnavailable, active_ledger
+    try:
+        return active_ledger(PORTFOLIO_DIR) is not None
+    except LedgerUnavailable as error:
+        print(f"  ❌ 账本存在但暂时无法读取（{error.reason}），未运行；请稍后重试", file=sys.stderr)
+        return None
+
+
+def action_pipeline(date_str, send_report):
+    """``--action pipeline``: the day's snapshot, report and push, made again for the holdings now in force.
+
+    With an active ledger nothing is cloned (the ledger refuses legacy writes; its holdings are the day's), as
+    in ``action_auto_pipeline`` and ``action_notify``. As there, the report is pushed only when
+    ``feishu_chat_id`` is configured: without it the run saves the snapshot and report and succeeds, and the
+    checkpoint claims no push (``--no-push`` saves only in any case).
+    """
+    ledger = ledger_in_use()
+    if ledger is None:
+        return False
+    if ledger:
+        print(f"  ℹ️  {LEDGER_HOLDINGS}")
+    else:
+        clone_holdings(date_str)
+    if send_report and not load_config().get("feishu_chat_id"):
+        send_report = False
+        print(f"  ℹ️  {SAVE_ONLY}")
+    return run_pipeline(date_str, send_report=send_report)
+
+
+def action_clone(date_str):
+    """``--action clone``: the day's legacy holdings file; with an active ledger there is nothing to clone."""
+    ledger = ledger_in_use()
+    if ledger is None:
+        return False
+    if ledger:
+        print(f"  ℹ️  {LEDGER_HOLDINGS}")
+        return True
+    path, is_new = clone_holdings(date_str)
+    return path is not None
+
+
 def action_update(date_str, text):
-    """Apply changes from text and run pipeline."""
+    """Apply changes from text and run pipeline.
+
+    With an active ledger the holdings change only through a confirmed ledger proposal: nothing is written.
+    """
     print(f"📝 更新持仓 — {date_str}")
-    
+    ledger = ledger_in_use()
+    if ledger is None:
+        return False
+    if ledger:
+        print(f"  ❌ {LEDGER_UPDATE}", file=sys.stderr)
+        return False
+
     # Ensure today's holdings exist
     clone_holdings(date_str)
     holdings = load_holdings(date_str)
@@ -1171,6 +1259,15 @@ HOLDINGS_CHANGED = "当日快照之后持仓有变化"
 NO_HOLDINGS = "没有该日有效的持仓"
 # Printed when the snapshot JSON under the day's name is another day's.
 WRONG_DAY = "当日快照文件的日期与请求的日期不符"
+# Printed when the day's snapshot was made before a close it books was final (``made_before_close``).
+MADE_BEFORE_CLOSE = "当日快照生成于收盘价确定之前"
+# Printed by the actions that clone legacy holdings when the confirmed ledger holds them instead.
+LEDGER_HOLDINGS = "交易账本已启用：持仓来自账本，不克隆旧持仓文件"
+# Without the setting ``send_feishu_report`` needs, a saved snapshot and report are the success of a pipeline run
+# (``action_auto_pipeline``, ``action_pipeline``), not a failed push.
+SAVE_ONLY = "未配置 feishu_chat_id，日报只保存不推送"
+LEDGER_UPDATE = ("交易账本已启用：持仓只能在账本里核对并确认后改变（网页的「记一笔」或飞书卡片），"
+                 "--action update 不改写旧持仓文件")
 
 
 def make_report(date_str):
@@ -1356,7 +1453,10 @@ def action_auto_pipeline(date_str):
     Without the day's snapshot JSON the whole pipeline runs. With it, the day
     is completed from its checkpoint (``resume_pipeline``): a run killed after
     the snapshot JSON was saved, or whose report failed, is finished without
-    fetching prices again, and exits non-zero while a stage still fails.
+    fetching prices again, and exits non-zero while a stage still fails. A
+    snapshot made before a close it books was final (``made_before_close``:
+    an older version's, run before the day's session had closed) is not
+    completed but made again, with its report and push, as without one.
 
     With an active ledger the snapshot values the confirmed ledger, so no
     legacy holdings file is cloned (the ledger refuses that write). The report
@@ -1366,17 +1466,20 @@ def action_auto_pipeline(date_str):
     """
     send_report = bool(load_config().get("feishu_chat_id"))
     snap_file = SNAPSHOTS_DIR / f"{date_str}.json"
-    if snap_file.exists():
+    early = made_before_close(snap_file, date_str) if snap_file.exists() else None
+    if early:
+        say_made_before_close(early)
+    elif snap_file.exists():
         print(f"  ℹ️  今日快照已存在 ({snap_file.name})，检查历史记录、日报和推送是否完成")
         return resume_pipeline(date_str, send_report)
-
-    print(f"  ⏰ 今日快照不存在，自动生成...")
+    else:
+        print(f"  ⏰ 今日快照不存在，自动生成...")
     from ledger_bridge import active_ledger
     if active_ledger(PORTFOLIO_DIR) is None and clone_holdings(date_str)[0] is None:
         return False
     if not send_report:
-        print("  ℹ️  未配置 feishu_chat_id，日报只保存不推送")
-    return run_pipeline(date_str, send_report=send_report)
+        print(f"  ℹ️  {SAVE_ONLY}")
+    return run_pipeline(date_str, send_report=send_report, remake=bool(early))
 
 
 @portfolio_write_locked(lambda: PORTFOLIO_DIR)
@@ -1385,8 +1488,8 @@ def main():
     parser.add_argument("--action", required=True,
                         choices=["notify", "update", "pipeline", "auto-pipeline", "clone"],
                         help="Action to perform")
-    parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),
-                        help="Date (YYYY-MM-DD)")
+    parser.add_argument("--date", default=market_today(),
+                        help="Date (YYYY-MM-DD; default: today in Shanghai)")
     parser.add_argument("--text", "-t", default="",
                         help="Change description text (for 'update' action)")
     parser.add_argument("--no-push", action="store_true",
@@ -1403,13 +1506,11 @@ def main():
             sys.exit(1)
         success = action_update(date_str, args.text)
     elif args.action == "pipeline":
-        clone_holdings(date_str)
-        success = run_pipeline(date_str, send_report=not args.no_push)
+        success = action_pipeline(date_str, send_report=not args.no_push)
     elif args.action == "auto-pipeline":
         success = action_auto_pipeline(date_str)
     elif args.action == "clone":
-        path, is_new = clone_holdings(date_str)
-        success = path is not None
+        success = action_clone(date_str)
     else:
         parser.print_help()
         success = False

@@ -93,6 +93,7 @@ def on_close_report(report):
 finished, and again each time a report with other content is finished for the
 same day: a late entry followed by `--action pipeline`, the Feishu workbench's
 report or the assistant's `run_portfolio_pipeline`, whichever process made it.
+The report file is in `engine/reports`, or in `TRACKER_REPORTS_DIR` when it is set.
 It is read from the pipeline's checkpoint `PORTFOLIO_DIR/pipeline-state/<day>.json`
 (which records the hash of the snapshot and of the report it made), not from
 the close snapshot routine's run, which makes a day only once

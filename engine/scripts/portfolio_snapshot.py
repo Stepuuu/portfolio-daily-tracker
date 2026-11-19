@@ -12,6 +12,7 @@ from decimal import Decimal, localcontext
 import requests
 from portfolio_write_lock import LockUnavailable, portfolio_write_lock
 from portfolio_accounting import atomic_text_writer, atomic_json_dump, cash_balances, finite_number, fx_rate, value_cash, ordered_history, drawdowns, return_pct, percent_text
+from portfolio_accounting import SHANGHAI_ZONE, market_today
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
@@ -162,7 +163,6 @@ def close_final_at(ticker, day):
 CLOSE_WAIT_MARKER = "CLOSE_NOT_FINAL_UNTIL="
 CLOSE_CHECK_MARKER = "CHECK_AT="
 MARKET_NAMES = {"CN": "A股", "HK": "港股", "US": "美股"}
-SHANGHAI_ZONE = timezone(timedelta(hours=8))   # China keeps no daylight saving time
 # While a price waits for its closing print, the snapshot looks again on the clock's five-minute marks: the
 # print reaches the source minutes after it is made (Yahoo's usual delay is 15 minutes: Hong Kong's 16:08 print
 # at 16:23), and the close is booked at the next mark (16:25), not only once the wait has run out (16:28).
@@ -228,15 +228,18 @@ NO_CLOSING_PRINT = "收盘竞价后没有新的成交时间，按当日最后成
 
 def _judging_clock(market, date_str, moment):
     """The session clock a quote of ``market`` is judged by: at ``moment``, but no later than the end of
-    ``date_str`` on the exchange's clock (``_close_verdict``)."""
+    ``date_str`` on the exchange's clock (``core.market.calendar.snapshot_clock``)."""
     import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
-    from datetime import date as Date, time as Time
-    from core.market.calendar import ZONES, SessionClock
-    when = moment
-    if date_str is not None:
-        day_end = datetime.combine(Date.fromisoformat(date_str) + timedelta(days=1), Time(0), tzinfo=ZONES[market])
-        when = min(moment, day_end - timedelta(seconds=1))
-    return SessionClock(lambda: when)
+    from core.market.calendar import snapshot_clock
+    return snapshot_clock(market, date_str, moment)
+
+
+def _session_due(clock, market, date_str):
+    """The session of ``market`` whose close a snapshot of ``date_str`` books at the earliest; None without a day
+    (``core.market.calendar.snapshot_session``: New York's of the night before, the others' of the day itself)."""
+    import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
+    from core.market.calendar import snapshot_session
+    return snapshot_session(clock, market, date_str)
 
 
 def _close_verdict(ticker, meta, date_str, moment, quote=None):
@@ -247,8 +250,11 @@ def _close_verdict(ticker, meta, date_str, moment, quote=None):
 
     The same ``(problem, wait until, estimate, look again)`` as ``_quote_check``. The quote is judged as Today
     would judge it at ``moment``, but no later than the end of ``date_str`` on the exchange's clock, so a run
-    after that day still books the day's closes:
+    after that day still books the day's closes, and no earlier than the session the day books
+    (``_session_due``), so a run before the day's session has closed never books an earlier day's close:
 
+    * the session the day books not begun or not closed yet (a run at 02:46 for the day's mainland close):
+      wait until its close is final (``close_final_at``);
     * the market's latest session (on or before ``date_str``) still under way or its close not final: wait
       until it is (``close_final_at``), whatever the quote's own session;
     * a close Today verifies: booked; one of a year the holiday table does not cover: booked, an estimate;
@@ -265,6 +271,7 @@ def _close_verdict(ticker, meta, date_str, moment, quote=None):
     """
     import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
     from core.market import quotes
+    from core.market.calendar import snapshot_wait
     from core.market.instruments import InstrumentError, parse
     try:
         instrument = parse(ticker)
@@ -273,8 +280,18 @@ def _close_verdict(ticker, meta, date_str, moment, quote=None):
     market = instrument.market
     clock = _judging_clock(market, date_str, moment)
     latest = clock.session_of(market)
-    final = close_final_at(ticker, latest.isoformat())
-    if final is not None and moment < final:
+    # What the day still waits for in this market: the one rule, which the Feishu card's report step asks too.
+    waiting = snapshot_wait(market, date_str, moment)
+    if waiting is not None and waiting[1]:
+        # Asked before the day's own session has closed (at 02:46 for the mainland, before it opens): the latest
+        # close is an earlier day's, never the day's. It waits for the day's close as for any close not final.
+        due = waiting[0]
+        final = close_final_at(ticker, due.isoformat())
+        when = f" (final at {final.isoformat(timespec='minutes')})" if final is not None else ""
+        return (f"the snapshot is for {date_str}, whose {due} session has not closed yet{when}: an earlier "
+                f"session's close is not the day's"), final, None, None
+    if waiting is not None:
+        final = close_final_at(ticker, latest.isoformat())
         return (f"the {latest} session is under way or its closing price is not final yet "
                 f"(final at {final.isoformat(timespec='minutes')}): no close of it yet"), final, None, None
     if quote is None:
@@ -331,6 +348,49 @@ def quote_problem(ticker, meta, date_str=None, now=None):
     quote is judged by Today's decision table (``_close_verdict``).
     """
     return _quote_check(ticker, meta, date_str, now)[0]
+
+
+def generated_moment(snapshot):
+    """When ``snapshot`` was made (aware), or None when it does not say.
+
+    ``generated_at`` is Shanghai time with its offset; a snapshot of an older version wrote the local time of
+    the machine that made it, without a zone, and is read as this machine's local time.
+    """
+    text = snapshot.get("generated_at") if isinstance(snapshot, dict) else None
+    if not isinstance(text, str) or "T" not in text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else moment.astimezone()
+
+
+def made_before_close(snapshot, date_str):
+    """``(made, final)`` when ``snapshot`` of ``date_str`` was made before the close of a holding it books was
+    final, else None.
+
+    The close is that of the session the day books (``_session_due``): an older version booked the day before's
+    close when run before the day's session had closed (a run at 02:46), and saved it as the day's. A snapshot
+    that does not say when it was made is not judged.
+    """
+    made = generated_moment(snapshot)
+    if made is None:
+        return None
+    import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
+    from core.market.calendar import SessionClock
+    clock = SessionClock()
+    finals = []
+    for group in (snapshot.get("groups") or {}).values():
+        for pos in (group.get("positions") or []) if isinstance(group, dict) else []:
+            ticker = pos.get("ticker") if isinstance(pos, dict) else None
+            market = CALENDAR_MARKETS.get(str(ticker).partition(":")[0])
+            if market is None or pos.get("quantity") == 0:
+                continue
+            final = close_final_at(ticker, _session_due(clock, market, date_str).isoformat())
+            if final is not None and made < final:
+                finals.append(final)
+    return (made, max(finals)) if finals else None
 
 
 def yahoo_symbol(ticker, ticker_map=None):
@@ -817,7 +877,8 @@ def _snapshot_of(holdings, prices, currencies, fx_rates, prev_snapshot, all_snap
 
     snapshot = {
         "date": date_str,
-        "generated_at": datetime.now().isoformat(),
+        # Shanghai time with its offset (``generated_moment`` reads an older snapshot's local time without one).
+        "generated_at": datetime.now(SHANGHAI_ZONE).isoformat(),
         "fx_rates": fx_rates,
         "groups": {},
         "summary": {}
@@ -1142,7 +1203,7 @@ def main():
     global _run_started
     _run_started = _monotonic()   # the pipeline's time limit counts from here (``CHILD_TIMEOUT``)
     parser = argparse.ArgumentParser(description="Generate portfolio daily snapshot")
-    parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="Date (YYYY-MM-DD)")
+    parser.add_argument("--date", default=market_today(), help="Date (YYYY-MM-DD; default: today in Shanghai)")
     parser.add_argument("--dry-run", action="store_true", help="Print without saving")
     args = parser.parse_args()
 

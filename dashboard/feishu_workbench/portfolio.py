@@ -177,19 +177,22 @@ class PortfolioAdapter:
     def configured(cls, project_dir: Path, state_dir: Path, environ=None):
         """The adapter of the portfolio the environment names: ``PORTFOLIO_DIR``, else ``QR_PORTFOLIO_DIR`` (the
         rule of ``core.ledger.portfolio_directory``), else the project's own ``portfolio`` directory. A
-        relative value is made absolute here, once."""
+        relative value is made absolute here, once. The reports are in ``TRACKER_REPORTS_DIR`` when it is set
+        (the engine's rule, ``portfolio_daily_update.REPORTS_DIR``)."""
         environ = os.environ if environ is None else environ
         named = environ.get("PORTFOLIO_DIR") or environ.get("QR_PORTFOLIO_DIR") or None
-        return cls(project_dir, state_dir, portfolio_dir=named)
+        return cls(project_dir, state_dir, portfolio_dir=named,
+                   reports_dir=(environ.get("TRACKER_REPORTS_DIR") or "").strip() or None)
 
-    def __init__(self, project_dir: Path, state_dir: Path, portfolio_dir=None):
+    def __init__(self, project_dir: Path, state_dir: Path, portfolio_dir=None, reports_dir=None):
         self.project_dir = Path(project_dir).resolve()
         engine = self.project_dir / "engine"
         self.root = engine if (engine / "scripts").is_dir() else self.project_dir
         self.portfolio_dir = Path(portfolio_dir).expanduser().resolve() if portfolio_dir else self.root / "portfolio"
         self.holdings_dir = self.portfolio_dir / "holdings"
         self.scripts_dir = self.root / "scripts"
-        self.reports_dir = self.root / "reports"
+        # Where the pipeline child saves the reports and the 日报 card reads them (the child is told).
+        self.reports_dir = Path(reports_dir).expanduser().resolve() if reports_dir else self.root / "reports"
         self.lock_path = self.portfolio_dir / ".portfolio-update.lock"
         self.state_dir = Path(state_dir).resolve() / "portfolio-adapter"
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -698,11 +701,13 @@ class PortfolioAdapter:
         self._held.output = ""
         try:
             # The child runs in the scripts directory: it gets this portfolio's absolute path, never a relative
-            # PORTFOLIO_DIR that would point elsewhere from there (or a QR_PORTFOLIO_DIR the engine ignores).
+            # PORTFOLIO_DIR that would point elsewhere from there (or a QR_PORTFOLIO_DIR the engine ignores),
+            # and saves the report where ``reports`` reads it.
             process = subprocess.run([sys.executable, "-c", _PIPELINE, str(self.scripts_dir), day,
                                       "1" if resume else "0", str(-1 if lock is None else lock), push],
                                      cwd=self.scripts_dir, capture_output=True, timeout=900,
-                                     env={**os.environ, "PORTFOLIO_DIR": str(self.portfolio_dir)},
+                                     env={**os.environ, "PORTFOLIO_DIR": str(self.portfolio_dir),
+                                          "TRACKER_REPORTS_DIR": str(self.reports_dir)},
                                      pass_fds=() if lock is None else (lock,))
             self._held.output = (process.stdout + b"\n" + process.stderr)[-8000:].decode("utf-8", "replace")
             return process.returncode == 0

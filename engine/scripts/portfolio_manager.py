@@ -29,6 +29,7 @@ from portfolio_write_lock import portfolio_write_locked
 from datetime import datetime
 
 from portfolio_accounting import atomic_text_writer, atomic_json_dump, cash_balances, set_cash_balance
+from portfolio_accounting import market_today
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
@@ -236,7 +237,7 @@ def cmd_set_cost(args):
 @portfolio_write_locked(lambda: PORTFOLIO_DIR)
 def main():
     parser = argparse.ArgumentParser(description="Portfolio holdings manager")
-    parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="Target date")
+    parser.add_argument("--date", default=market_today(), help="Target date (default: today in Shanghai)")
     sub = parser.add_subparsers(dest="command")
 
     # show

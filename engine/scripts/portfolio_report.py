@@ -8,7 +8,7 @@ Usage:
 import json, os, sys, argparse, glob
 from datetime import datetime
 
-from portfolio_accounting import percent_text
+from portfolio_accounting import beijing_time_text, market_today, percent_text
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
@@ -96,6 +96,20 @@ def price_sources_text(snapshot):
     names = [name for source, name in PRICE_SOURCE_NAMES.items() if source in used]
     names += sorted(str(source) for source in used if source not in PRICE_SOURCE_NAMES)
     return "、".join(names) or PRICE_SOURCE_NAMES["yahoo"]
+
+
+def generated_text(snapshot):
+    """The footer's 生成时间: ``2026-11-20 15:40:12（北京时间）``, whatever this machine's time zone.
+
+    ``generated_at`` carries its offset; an older snapshot's has none and is the local time of the machine
+    that made it, read as this machine's. A value that is not a time is shown as before (its first 19 characters).
+    """
+    text = snapshot.get("generated_at", "?")
+    try:
+        moment = datetime.fromisoformat(text) if isinstance(text, str) and "T" in text else None
+    except ValueError:
+        moment = None
+    return beijing_time_text(moment) if moment is not None else str(text)[:19]
 
 
 def generate_report(snapshot, history=None):
@@ -201,14 +215,14 @@ def generate_report(snapshot, history=None):
         lines.append(f"")
 
     lines.append(f"---")
-    lines.append(f"*数据来源: {price_sources_text(snapshot)} | 生成时间: {snapshot.get('generated_at', '?')[:19]}*")
+    lines.append(f"*数据来源: {price_sources_text(snapshot)} | 生成时间: {generated_text(snapshot)}*")
 
     return "\n".join(lines)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate portfolio report")
-    parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"))
+    parser.add_argument("--date", default=market_today(), help="Date (YYYY-MM-DD; default: today in Shanghai)")
     parser.add_argument("--output", "-o", help="Output file path")
     args = parser.parse_args()
 

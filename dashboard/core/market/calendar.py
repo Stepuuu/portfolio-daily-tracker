@@ -412,3 +412,56 @@ class SessionClock:
                     return end.astimezone(SHANGHAI)
             day -= timedelta(days=1)
         raise RuntimeError('no session found; the holiday table is implausible')
+
+
+# -- the day a snapshot books ------------------------------------------------
+# The one definition of which session's close a snapshot of a day (Shanghai's date, the app's trading day) books,
+# and what it still waits for. The engine's snapshot (engine/scripts/portfolio_snapshot.py ``_close_verdict``)
+# and the Feishu card's report step (feishu_workbench.ledger_book ``closes_final_at``) both ask here, so the card
+# never holds back a day the engine would book, or starts one the engine would refuse.
+
+def snapshot_clock(market: str, date_str: Optional[str], moment: datetime) -> 'SessionClock':
+    """The session clock a snapshot of ``date_str`` judges ``market`` by: at ``moment``, but no later than the end
+    of ``date_str`` on the exchange's clock (so a run after that day still books the day's closes)."""
+    when = moment
+    if date_str is not None:
+        day_end = datetime.combine(date.fromisoformat(date_str) + timedelta(days=1), time(0), tzinfo=ZONES[market])
+        when = min(moment, day_end - timedelta(seconds=1))
+    return SessionClock(lambda: when)
+
+
+def snapshot_session(clock: 'SessionClock', market: str, date_str: Optional[str]) -> Optional[date]:
+    """The session of ``market`` whose close a snapshot of ``date_str`` books at the earliest; None without a day.
+
+    That is the market's last session that ends on ``date_str`` (Shanghai's date, the app's trading day) or
+    before: the mainland's and Hong Kong's session of the day itself, New York's of the night before (it ends
+    in Shanghai's morning; New York's session of the day ends the next morning). On a day the market is closed
+    it is the session before, whose close is carried.
+    """
+    if date_str is None:
+        return None
+    day = date.fromisoformat(date_str)
+    due = day if clock.is_trading_day(market, day) else clock.previous_trading_day(market, day)
+    while clock.session_end(market, due).astimezone(SHANGHAI).date() > day:
+        due = clock.previous_trading_day(market, due)
+    return due
+
+
+def snapshot_wait(market: str, date_str: Optional[str], moment: datetime) -> Optional[Tuple[date, bool]]:
+    """What a snapshot of ``date_str`` made at ``moment`` still waits for in ``market``, or None.
+
+    ``(session, True)``: the session the day books (``snapshot_session``) has not closed yet, so the latest close
+    is an earlier day's, never the day's. ``(session, False)``: the market's latest session (on or before the end
+    of the day, ``snapshot_clock``) is under way or its close is not final yet. Either way the snapshot waits
+    until that session's close is final (``close_settled``). None: as far as the calendar can tell the market's
+    close can be booked now (the quote itself is still judged, by ``quotes.assess``).
+    """
+    clock = snapshot_clock(market, date_str, moment)
+    latest = clock.session_of(market)
+    due = snapshot_session(clock, market, date_str)
+    if due is not None and latest < due:
+        return due, True
+    final = clock.close_settled(market, latest)
+    if final is not None and moment < final:
+        return latest, False
+    return None

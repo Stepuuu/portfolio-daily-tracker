@@ -30,8 +30,9 @@ if [ -n "${CONDA_ENV:-}" ]; then
 else
     PYTHON_CMD=("${PYTHON:-python3}")
 fi
-TODAY=$(date +%Y-%m-%d)
-DOW=$(date +%u)  # 1=Mon..7=Sun
+# 交易日按北京时间计（与引擎的 --date 默认值相同），与服务器所在时区无关；CST-8 即 UTC+8，不需要时区数据库。
+TODAY=$(TZ=CST-8 date +%Y-%m-%d)
+DOW=$(TZ=CST-8 date +%u)  # 1=Mon..7=Sun
 LOG_DIR="$WORKSPACE/logs"
 LOG_FILE="$LOG_DIR/portfolio-$(date +%Y%m%d).log"
 

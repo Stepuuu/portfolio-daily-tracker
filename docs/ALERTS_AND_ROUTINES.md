@@ -157,6 +157,16 @@ The close snapshot reports:
   an early-close day). Hong Kong half days (final at 12:10) and Hong Kong
   holidays do not wait. An A-share-only portfolio is made at 15:40. A wait that
   could only end after the 09:00 deadline is a failure (`close_not_final`).
+  A day's snapshot books each market's session of that day (Shanghai's date):
+  the mainland's and Hong Kong's own, New York's of the night before. Made
+  before that session has closed (the Feishu card's pipeline after an entry
+  dated today, at 02:46), by any route (this routine, `--action auto-pipeline`
+  or `pipeline`, the card's report), it never books the day before's close as
+  the day's: it waits the same way, an A-share holding until 15:00 that day. A
+  market closed that day carries its last close, as before. A snapshot an older
+  version saved before a close it books was final (told by its `generated_at`)
+  is made again by the pipeline, with its history row, report and push, instead
+  of being completed.
   The engine prices each holding from Yahoo, then, in one request, from Tencent
   for the holdings Yahoo did not price (Today's reading of Tencent,
   `core/market/tencent.py`; reached directly unless `TRACKER_TENCENT_PROXY=1`,
@@ -244,6 +254,7 @@ when the backend starts), then restart the backend.
 | `TRACKER_POSTMARKET_TIME` | `15:45` | due time, `HH:MM` Asia/Shanghai |
 | `TRACKER_BRIEF_COMMENTARY` | off | `1` adds the chat model's commentary to briefs (needs a configured model) |
 | `TRACKER_CLOSE_SNAPSHOT` | on | `0` switches the automatic close snapshot off (its time, 15:40, is fixed) |
+| `TRACKER_REPORTS_DIR` | `engine/reports` | where the pipeline saves each day's Markdown report and the close snapshot and the extensions' close reports read it (an absolute path; see the README's table next to `PORTFOLIO_DIR`) |
 | `TRACKER_QUOTE_SOURCE` | Eastmoney, then Tencent, then Yahoo | `eastmoney`, `tencent` or `yahoo` uses only that source for quotes (rates: see the close snapshot above); `fake` reads scripted quotes from `PORTFOLIO_DIR/fake_quotes.json` |
 | `TRACKER_TENCENT_PROXY` | off | `1` reaches Tencent through the proxy in the environment (Today and the close snapshot) |
 

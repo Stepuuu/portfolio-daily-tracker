@@ -51,7 +51,7 @@ for arg in "$@"; do
     *) DATE="$arg" ;;
   esac
 done
-DATE="${DATE:-$(date +%Y-%m-%d)}"
+DATE="${DATE:-$(TZ=CST-8 date +%Y-%m-%d)}"   # today in Beijing (UTC+8), the trading day, whatever the server's zone
 
 echo "=== Portfolio Daily Pipeline — $DATE ==="
 cd "$PROJECT_ROOT/engine"
