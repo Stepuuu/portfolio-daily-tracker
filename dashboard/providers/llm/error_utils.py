@@ -1,44 +1,29 @@
 """
 LLM 上游错误格式化工具
+
+A failed model call becomes a fixed text: the provider's name, the HTTP status
+and the kind of failure. What the provider answered in its error body and what
+the library said are never shown, and not logged either: a provider's error
+text can echo part of the key (as ``core.llm_setup`` says for the connection
+test). The log gets the exception's class and the status only.
 """
 from __future__ import annotations
 
-from typing import Any
-import json
+import logging
 
 import httpx
 
-
-def _extract_response_detail(response: httpx.Response) -> str:
-    try:
-        data: Any = response.json()
-        if isinstance(data, dict):
-            for key in ("detail", "message", "error", "msg"):
-                value = data.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-                if isinstance(value, dict):
-                    nested = value.get("message") or value.get("detail")
-                    if isinstance(nested, str) and nested.strip():
-                        return nested.strip()
-        text = json.dumps(data, ensure_ascii=False)
-    except Exception:
-        text = response.text
-
-    text = (text or "").strip()
-    if len(text) > 300:
-        text = text[:300] + "..."
-    return text
+logger = logging.getLogger(__name__)
 
 
 def format_httpx_error(provider_name: str, error: Exception) -> str:
+    status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+    logger.warning("model call to %s failed: %s%s", provider_name, type(error).__name__,
+                   f" (HTTP {status})" if status else "")
     if isinstance(error, httpx.TimeoutException):
         return f"{provider_name} 请求超时，请稍后重试"
 
-    if isinstance(error, httpx.HTTPStatusError):
-        status = error.response.status_code
-        detail = _extract_response_detail(error.response)
-
+    if status is not None:
         if status == 401:
             return f"{provider_name} 鉴权失败 (401)。请检查 API Key"
         if status == 403:
@@ -48,12 +33,12 @@ def format_httpx_error(provider_name: str, error: Exception) -> str:
         if status == 408:
             return f"{provider_name} 请求超时 (408)"
         if status == 429:
-            return f"{provider_name} 触发限流 (429)。{detail or '请稍后重试'}"
+            return f"{provider_name} 触发限流 (429)。请稍后重试"
         if 500 <= status < 600:
-            return f"{provider_name} 上游服务错误 ({status})。{detail or '请稍后重试'}"
-        return f"{provider_name} 请求失败 ({status})。{detail or '请检查请求配置'}"
+            return f"{provider_name} 上游服务错误 ({status})。请稍后重试"
+        return f"{provider_name} 请求失败 ({status})。请检查请求配置"
 
     if isinstance(error, httpx.RequestError):
-        return f"{provider_name} 网络请求失败：{str(error)}"
+        return f"{provider_name} 网络请求失败。请检查网络、代理和 API 地址"
 
-    return f"{provider_name} 调用失败：{str(error)}"
+    return f"{provider_name} 调用失败：模型服务的回应无法处理"
