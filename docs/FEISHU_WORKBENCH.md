@@ -12,17 +12,19 @@ bridge's event connection.
 当前消息接入复用已有 OpenClaw 飞书连接。组合引擎、网页与股票研究工作台可独立运行；
 用环境变量提供凭证，也仍需配置桥接所用的事件连接。
 
-**4.0.0:** the web app now keeps holdings only in the confirmed ledger. The
-card's daily update edits the legacy dated holdings files, so once a ledger
-exists it is refused: record changes with 记一笔 or 账本 › 导入 in the web app. A
-ledger adapter for the card is on the [roadmap](ROADMAP.md). Price alerts and
-the briefs are not pushed to Feishu; they appear in the web app's notification
-bell. The daily report made by the automatic close snapshot is still pushed when
-`feishu_chat_id` is configured.
+**Since 4.0.0** the web app keeps holdings only in the confirmed ledger. Once a
+ledger is active the card's daily update records into it: every item becomes
+ledger events, the preview is the ledger's own proposal and confirming on the
+card books it (see [With the transaction ledger](#with-the-transaction-ledger--启用交易账本后)).
+Without a ledger the card edits the legacy dated holdings files as before. Price
+alerts and the briefs are not pushed to Feishu; they appear in the web app's
+notification bell. The daily report made by the automatic close snapshot, or
+after a card entry, is pushed when `feishu_chat_id` is configured.
 
-**4.0.0：**网页的持仓只来自已确认的账本。卡片的「每日更新」修改的是旧版按日期保存的持仓文件，账本启用后会被拒绝，
-请在网页里用 记一笔 或 账本 › 导入 记录变动；卡片接入账本已列入[后续计划](ROADMAP.md)。价格提醒和盘前盘后简报不推送到飞书，
-只在网页的铃铛里；收盘自动快照生成的日报在配置了 `feishu_chat_id` 时仍会推送。
+**4.0.0 起**网页的持仓只来自已确认的账本。账本启用后，卡片的「每日更新」直接记入账本：每一项变成账本记录，
+预览就是账本自己的入账预览，在卡片上确认即入账（见[启用交易账本后](#with-the-transaction-ledger--启用交易账本后)）；
+没有账本时仍修改旧版按日期保存的持仓文件。价格提醒和盘前盘后简报不推送到飞书，只在网页的铃铛里；收盘自动快照或卡片入账后生成的日报，
+在配置了 `feishu_chat_id` 时推送。
 
 ## Architecture / 接入方式
 
@@ -31,7 +33,7 @@ flowchart LR
     A[Feishu private chat / 飞书私聊] --> B[Existing OpenClaw Feishu connection]
     B --> C[JS event bridge]
     C --> D[Loopback companion :18200]
-    D --> E[Local portfolio files]
+    D --> E[Local ledger or holdings files]
     D --> F[Local research API :8000]
     D --> G[Feishu message API]
     G --> A
@@ -56,9 +58,9 @@ make setup
 make lab
 ```
 
-If the environment is already installed, reuse it. Keep the research API available at `http://127.0.0.1:8000`; use your actual loopback port if different. `make lab` supports research without portfolio setup. Daily updates require an existing dated portfolio, described in the [full guide](FULL_GUIDE_CN.md); this installer does not create or import personal holdings.
+If the environment is already installed, reuse it. Keep the research API available at `http://127.0.0.1:8000`; use your actual loopback port if different. `make lab` supports research without portfolio setup. Daily updates require a confirmed ledger (the setup wizard's opening balance, see [LEDGER.md](LEDGER.md)) or, without one, an existing dated portfolio described in the [full guide](FULL_GUIDE_CN.md); this installer does not create or import personal holdings. Start the companion with the same `PORTFOLIO_DIR` as the backend (or leave it unset in both): the companion uses `PORTFOLIO_DIR`, else `QR_PORTFOLIO_DIR`, else the project's own `portfolio` directory, made absolute once, for everything (the ledger, the holdings files it edits only while no ledger is active there, the lock, snapshots and its pipeline).
 
-已经安装时复用现有环境即可。研究 API 应运行在 `http://127.0.0.1:8000`；若使用其他本机端口，在下方配置中相应修改。`make lab` 可独立运行研究；每日更新需要按[完整指南](FULL_GUIDE_CN.md)初始化已有日期持仓，工作台安装器不会创建或导入个人持仓。
+已经安装时复用现有环境即可。研究 API 应运行在 `http://127.0.0.1:8000`；若使用其他本机端口，在下方配置中相应修改。`make lab` 可独立运行研究；每日更新需要已确认期初的交易账本（设置向导，见 [LEDGER.md](LEDGER.md)），没有账本时需要按[完整指南](FULL_GUIDE_CN.md)初始化已有日期持仓，工作台安装器不会创建或导入个人持仓。伴随服务与后端的 `PORTFOLIO_DIR` 必须相同（或都不设置）：伴随服务按 `PORTFOLIO_DIR`、`QR_PORTFOLIO_DIR`、项目自带的 `portfolio` 目录的顺序选定一个目录，转成绝对路径后，账本、旧持仓文件（只在该目录没有启用账本时修改）、写锁、快照和日报流程都只用这一个目录。
 
 ### Initialize private configuration / 初始化私有配置
 
@@ -246,9 +248,41 @@ A final cash reconciliation overrides all trade/flow cash movements in the batch
 
 同一清单的现金对账始终使用买卖、资金转入转出后的最终余额；本金核对也使用这些变动后的最终本金总额，不能填写“增加了多少”。每个账户只添加一项本金核对。账户缺少初始本金时需要先初始化，不会默认按零处理。已加入清单的记录会保留。
 
-The card edits the existing **dated JSON holdings** workflow. It does not place broker orders. When the transaction ledger is active, the legacy adapter refuses to overwrite holdings; use the existing [ledger preview and confirmation UI](LEDGER.md). Card updates do not provide a second ledger implementation. Assets reflect saved records; opening or refreshing the asset card does not fetch live quotes or invent missing valuations.
+Without a transaction ledger the card edits the **dated JSON holdings** files as described above; once the ledger is active it records into the ledger instead (next section). It never places broker orders. Assets reflect saved records; opening or refreshing the asset card does not fetch live quotes or invent missing valuations.
 
-卡片使用现有的**按日期保存的 JSON 持仓**流程，不向券商下单。交易账本已启用时，旧持仓适配器会拒绝覆盖，需继续使用已有[账本预览与确认界面](LEDGER.md)。卡片没有另建一套账本。资产反映已保存记录，打开或刷新资产卡不会抓取实时行情，也不会补造缺失估值。
+没有交易账本时，卡片按上文修改**按日期保存的 JSON 持仓**；账本启用后改为记入账本（见下一节）。卡片不向券商下单。资产反映已保存记录，打开或刷新资产卡不会抓取实时行情，也不会补造缺失估值。
+
+## With the transaction ledger / 启用交易账本后
+
+When `ledger.sqlite3` in the portfolio directory has a confirmed revision, the daily card records into the ledger; without one it behaves as above. The card is then one more way to make a [ledger proposal](LEDGER.md) and confirm it, like 记一笔 in the web app: each item becomes one or more ledger events, **核对全部变动** shows the ledger's own preview of them, and **确认入账并更新日报** on that preview is the person confirming the proposal. The receipt lists what was booked.
+
+**In-process, not through the HTTP API.** The companion runs as its own process and may run while the backend is stopped, so it uses `core.ledger` (the code behind `/api/ledger`) directly on the same `ledger.sqlite3`. The ledger's guarantees live in that code: exact decimals, a proposal confirmed only at the revision it was previewed against, every later event replayed, a repeated confirmation returning the first receipt, events and receipt committed in one SQLite transaction. A confirmation is therefore one local transaction rather than a request whose outcome a timeout could leave unknown. Like the confirm endpoint, the card stores the trade-plan links of what it books. The companion and the backend must use the same portfolio directory (`PORTFOLIO_DIR`): fee profiles and trade plans are read from the `desk.sqlite3` beside the ledger. The companion chooses that directory once at start (`PortfolioAdapter.configured`, the backend's rule) and uses it for everything, so it never edits an old holdings file elsewhere while the configured directory has an active ledger.
+
+| Card item | What is booked |
+|---|---|
+| 买入 / 卖出 (A shares, US, Hong Kong settled in HKD) | one `buy` / `sell` in the market's currency. A fee left empty is estimated from the account's fee profile exactly as 记一笔 estimates it, shown as 估算 and recorded in the event's note as 〔费用为估算：按账户费率估算〕; without an estimate (no profile for that market, an unclassified code) the fee must be typed. A buy beyond the cash in that currency is refused unless 允许融资 is chosen |
+| 港股通买入 / 卖出 (a Hong Kong trade with its CNY amount) | as the broker-file importer books 港股通: `fx` CNY→HKD and an HKD `buy`, or an HKD `sell` and `fx` HKD→CNY. Rate = CNY amount ÷ HKD turnover; the CNY fee (required) is converted at that rate to the cent, so CNY cash moves by exactly the amount plus or minus the fee. The ledger books an `fx` whatever the cash, so the card refuses a 港股通 buy beyond the CNY cash (after the items above it) unless 允许融资 is chosen, as for any buy. The HKD `buy` is paid exactly by its `fx` and is booked with margin allowed, so HKD owed before does not block a buy paid in CNY |
+| 资金转入 / 资金转出 | `deposit` / `withdrawal` (cash and 累计净投入). Foreign currency needs the CNY principal of that transfer; `fx_rate` is derived from it so that 累计净投入 moves by exactly that principal |
+| 本金更新（按差额转入转出） | target 累计净投入 − the ledger's, as one CNY `deposit` or `withdrawal` |
+| 基金估值 | `fund_value` (CNY); the ledger's value already, no event |
+| 现金对账（现在是 X） | after every other item: X − the ledger's balance in that currency. A positive difference is one `interest`, a negative one a `fee`, each with a note naming both balances; neither changes 累计净投入. The preview shows the ledger balance, X, the difference and the kind before anything is booked. No difference, no event. A difference in a currency that the same list also moves with a transfer needs a 差额说明 |
+| 今日无变动 | nothing is booked; only the report runs |
+
+**Refused** with a short reason: overwriting a quantity or a cost price, and changing 累计净投入 without moving cash (本金核对, 资金已入账, 修正历史本金). The ledger has no such events; reverse the entry in 账本 › 流水 and enter it again with 记一笔.
+
+**Exactly once.** Repeated taps and Feishu redeliveries reuse the command's nonce; the companion's operations store is keyed on the ledger proposal, so two cards, two taps or a restart between preview and confirm meet the same operation and receipt; the ledger itself books a proposal once. Events carry a source `feishu-card` and an external id from the list item, so a list item that was booked is shown as already booked and never booked again. An item whose booking was later reversed in 账本 › 流水 is refused (the ledger would count it as a duplicate and book nothing); delete it and add it again to book it anew, and a receipt shown again for such a booking says it was reversed since. **Only the card confirms its proposals**: the web's 待确认 lists them for 2 hours as 在飞书卡片上确认, where they can be read and discarded but not confirmed (the confirm endpoint refuses them), because only the card's confirmation completes its list and queues the day's report. Once a list is confirmed every item of it is handled (a 现金对账 that needed no adjustment too): the list is emptied, and the same preview confirmed again returns the first receipt. Editing, clearing or re-dating the list, or previewing it again, withdraws its earlier proposal, also when the new preview books nothing.
+
+**Out-of-date previews.** If the ledger changed after the preview (an entry in the web app, an import, another card), the proposal can no longer be confirmed: the card withdraws it, books nothing, and shows a fresh preview of the same list to confirm again.
+
+**Dates.** Every event is dated the list's date. An entry dated before existing ones is checked as the ledger checks any back-dated entry (`replay_for_entry`); the cash difference of 现金对账 is taken on that date.
+
+**Report and close snapshot.** After a booking, the card runs the same pipeline as before (`run_pipeline` for the list's date, under the portfolio write lock), now valuing the ledger. The backend's 15:40 close snapshot runs `auto-pipeline` under the same lock and the same checkpoint (`pipeline-state/<date>.json`), which records the holdings it was made from, including the ledger revision. So the same holdings never get a second snapshot or push (a push whose result is unknown is never resent), while an entry confirmed in the evening changes the holdings and the card's run makes that day's snapshot and report again. Like the close pipeline (`auto-pipeline`), the card pushes the report only when `feishu_chat_id` is configured; without it the new snapshot and report are saved, the checkpoint records the report as complete with no push pending, and 日报 shows 日报已按入账后的持仓生成并保存 (not sent, not failed). A later entry the same day makes them again the same way. (Without a ledger the card still pushes every report, as before.) A confirmation that books nothing (今日无变动, a list the ledger already holds) leaves a day whose report is complete as it is: no second snapshot, report or push (the checkpoint names the ledger revision, which any later entry moves). **Before the day's closes.** The card books an entry (or a 今日无变动) at any time, but makes the day's snapshot only once the closes of that day's own sessions are final for the markets the ledger holds, by the app's market calendar (`SessionClock.close_settled`: the mainland 15:00, Hong Kong 16:10, New York's session of that date 16:30 New York time, the next Beijing morning; early closes included). Before then a snapshot would record the previous session's prices as the day's close. The receipt says the entry is booked and that the report follows automatically after that time, and 日报 shows the job as 等待收盘 with the time, not as failed. The same happens when the snapshot engine itself says a close is not final yet. The card service then runs the job itself: it keeps the waiting state and the time with the operation (so a restart keeps them), looks every 30 seconds for jobs whose time has come and queues each one once; the run takes the portfolio lock and follows the checkpoint, so a report the close snapshot made meanwhile from the same holdings is not made or pushed again. 重试日报 stays available while a job waits: a tap before the time only waits again, and a tap while the timer's run is queued or running adds nothing. If the service is down at the time, the job runs once when the service is back, as long as that is before 09:00 the next morning; after that it is not made by the card any more and 日报 shows it as 未生成 (the ledger is unchanged). An entry dated before the previous day, or made after 09:00 the next morning, does not remake old snapshots (see [LEDGER.md](LEDGER.md)).
+
+**Who may confirm.** As for every card action: only users on the companion's allowlist (`allowed_users`), on a card sent to them in the bot's private chat; a forwarded card or another chat is refused.
+
+**启用交易账本后：**组合目录中的 `ledger.sqlite3` 有已确认版本时，卡片记入账本；没有账本时保持上述行为。卡片相当于网页 记一笔 之外的又一个入口：清单中每一项变成一笔或几笔账本记录，**核对全部变动** 显示账本自己的预览，在预览上点 **确认入账并更新日报** 即本人确认这份方案，回执列出已入账的记录。伴随服务在本进程内直接使用 `core.ledger`（与 `/api/ledger` 相同的代码），后端未运行时也能记账；伴随服务与后端必须使用同一个组合目录。
+
+买卖按市场币种记一笔 `buy` / `sell`，手续费留空时按账户费率估算（与 记一笔 相同，标明 估算）；港股通按交割单导入的方式拆成换汇和港币成交，人民币现金不足时与其他买入一样需要选择允许融资；资金转入转出记 `deposit` / `withdrawal`，外币按填写的人民币本金推算汇率；本金更新按差额记人民币转入或转出；基金估值记 `fund_value`（与账本相同时不记录）；“现金现在是 X”在其他各项之后与账本余额比较，差额为正记一笔 `interest`、为负记一笔 `fee` 并附说明，不改变累计净投入，预览中先列出差额和记法。直接改数量、成本价或只改本金会被拒绝：请在网页 账本 › 流水 冲销原记录后用 记一笔 重新录入。重复点击、飞书重发、预览后重启、两张卡片都不会重复入账；卡片的方案只能在卡片上确认，网页“待确认”中显示为“在飞书卡片上确认”，只能放弃；清单确认后其中每一项都算已处理（包括不需要调整的现金对账），清单清空；修改、清空或重新预览清单会撤回之前的方案，新预览不需要入账时也一样；已入账后又在网页冲销的清单项会被拒绝，需删除后重新添加；预览后账本有变化时作废原预览并重新生成。入账后按清单日期重新生成快照和日报；同一持仓不会重复生成或推送，晚间入账会让当日快照和日报按新持仓重做。与收盘流程相同，只有配置了 `feishu_chat_id` 才推送；未配置时日报生成并保存即算完成，“日报”里显示已生成并保存（没有推送，也不是失败）。没有新增记录的确认（今日无变动等）不会重做或再次推送当日已完成的日报。当日各市场（按账本持有的市场、按应用的交易日历）收盘价确定之前，卡片照常入账但不生成快照，回执说明日报会在几点之后自动生成，“日报”里显示“等待收盘”而不是失败；到时伴随服务自动运行这次日报任务，只运行一次（等待状态和时间与这次入账一起保存，重启后仍在；收盘快照若已按同一持仓生成，不会重复生成或推送）。等待期间仍可点“重试日报”，不会因此多运行一次。伴随服务在那个时间没有运行时，恢复后若还在次日 09:00 之前就补做一次；超过后不再生成，“日报”里显示“未生成”。只有白名单用户能在发给自己的私聊卡片上确认。
 
 Financial changes require a separate confirmation. If the holdings change after preview, generate a new preview. Commands, card revisions and nonces are stored locally to reject stale actions and deduplicate repeated clicks; confirmation also has a persistent operation identifier. A saved-asset receipt and report completion are separate states. After confirmation, the existing daily pipeline can fetch quotes and **send reports to its already configured Feishu/Telegram destinations**, which may differ from the card's private chat. Verify those destinations before using daily confirmation. Retry a failed report from Reports; it does not repeat the asset mutation. An uncertain delivery state may require manual inspection rather than automatic resend.
 
@@ -274,7 +308,7 @@ Private-chat cards are messages stored by Feishu. Disabling card forwarding is n
 | Text chat works, buttons do not / 文字正常、按钮无响应 | Check the separate `card.action.trigger` callback subscription, published app configuration, and whether the plugin returns the bridge response / 检查独立回调订阅、应用配置发布和插件是否返回桥接响应 |
 | No native menu / 没有原生菜单 | Publish the console menu; use exact text `工作台` in the meantime / 在控制台发布菜单，也可先用精确文字入口 |
 | Unauthorized / 没有权限 | Check the app-specific `open_id`, connection `account_id`, and allowlist; a forwarded card belongs to its original session / 核对当前应用下的 open_id、连接名与白名单，转来的卡片仍属于原会话 |
-| Cannot confirm / 无法确认 | Reopen and preview current data; check whether the ledger is active / 重新打开并预览当前数据，检查交易账本是否已启用 |
+| Cannot confirm / 无法确认 | Reopen and preview current data. With a ledger, a preview the ledger moved past is shown again to confirm; a refusal naming `PORTFOLIO_DIR` means the companion and the backend use different portfolio directories; a card's proposal in the web's 待确认 is confirmed on the card / 重新打开并预览当前数据。账本启用时，账本已变化的预览会重新生成后再确认；提示 `PORTFOLIO_DIR` 不一致时，伴随服务与后端用的不是同一个组合目录；网页“待确认”中来自卡片的方案请在卡片上确认 |
 | Asset saved, report pending / 资产已保存、日报未完成 | Inspect Reports and the existing notification setup; retry only the report / 查看日报状态与已有通知配置，只重试日报 |
 | Research unavailable / 研究暂不可用 | Check the local research API, selected dataset and connection; use history/refresh before restarting an experiment / 检查本机研究 API、数据集和连接，重新启动实验前先查看历史或刷新状态 |
 | Companion fails to start / 伴随服务启动失败 | Inspect private `dashboard/data/feishu-workbench/service.log`, file permissions and port availability; do not publish raw logs / 查看私有日志、文件权限与端口占用，不要直接公开原始日志 |

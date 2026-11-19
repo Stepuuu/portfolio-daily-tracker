@@ -20,6 +20,8 @@ from .store import Rejected, Store, encode
 logger = logging.getLogger(__name__)
 
 _KEEP_RETRYING = object()
+# How often the service looks for report jobs that waited for the day's closes and are due (release_due_reports).
+REPORT_TIMER_SECONDS = 30
 
 ACTIONS = ('home', 'daily.open', 'daily.preview', 'daily.confirm', 'assets',
            'research.open', 'research.preview', 'research.start', 'research.list',
@@ -277,17 +279,30 @@ class Workbench:
             actor = self.store.session(command['session'])['actor']
             recent = self.store.recent_reports(actor)
             model['items'] = list(model.get('items', []))
+            waiting = None
             for report in recent:
                 label = {'completed': '已完成', 'running': '处理中', 'queued': '等待处理', 'failed': '未完成'}[report['status']]
-                model['items'].insert(0, {'title': '日报更新 · ' + label, 'summary': report['error'] or '资产确认与日报更新分别记录，可安全重试日报。'})
-            failed = next((r for r in recent if r['status'] == 'failed'), None)
+                summary = report['error'] or '资产确认与日报更新分别记录，可安全重试日报。'
+                # A card entry's report waiting for the day's closes, or saved without a push, says so itself.
+                state = (self.portfolio.report_state((report['payload'] or {}).get('receipt'))
+                         if report['status'] == 'completed' else None)
+                if state:
+                    label, summary = state['label'], state['summary']
+                    if state['retry'] and waiting is None:
+                        waiting = report
+                model['items'].insert(0, {'title': '日报更新 · ' + label, 'summary': summary})
+            failed = next((r for r in recent if r['status'] == 'failed'), None) or waiting
             model['can_retry_report'] = bool(failed)
             if failed:
                 model['_report_command'] = failed['id']
+                if failed is waiting:
+                    model['_report_waiting'] = True
             return self.render(command, 'reports', model)
         if action == 'daily.report.retry':
             actor = self.store.session(command['session'])['actor']
-            self.store.retry_report(actor, previous.get('_report_command', ''))
+            # A job waiting for the day's closes finished its last run: it is queued again like a failed one, and
+            # one already queued or running (by the timer, release_due_reports) is left as it is.
+            self.store.retry_report(actor, previous.get('_report_command', ''), finished=bool(previous.get('_report_waiting')))
             return self.render(command, 'daily_receipt', {'summary': '日报已重新排队，资产记录不会再次修改。'})
         if action == 'daily.preview':
             fields = dict(fields)
@@ -313,6 +328,13 @@ class Workbench:
             if payload.get('view') != 'daily_preview' or not previous.get('_preview'):
                 raise Rejected('请先重新预览资产变化。')
             receipt = self.portfolio.confirm(previous['_preview'], command['id'])
+            if receipt.get('mode') == 'ledger':
+                from .ledger_book import receipt_notice, report_window_open
+                report = report_window_open(receipt['date'])
+                if report:
+                    self.store.enqueue_report(command['session'], receipt, command['id'])
+                until = self.report_waits_until(receipt['date']) if report else None
+                return self.render(command, 'daily_receipt', {**receipt, 'notice': receipt_notice(receipt, report, until)})
             self.store.enqueue_report(command['session'], receipt, command['id'])
             return self.render(command, 'daily_receipt', {**receipt, 'notice': '资产记录已确认。日报正在更新，可从“日报”查看处理状态。'})
         if action == 'daily.report':
@@ -351,11 +373,45 @@ class Workbench:
             return self.render(command, view, self.run_model(run))
         raise Rejected('未知操作，请重新打开工作台。')
 
+    def report_waits_until(self, day):
+        """When ``day``'s report can be made while that is still to come, else None; never fails a receipt."""
+        try:
+            return self.portfolio.report_waits_until(day)
+        except Exception as exc:
+            logger.warning('the time a report waits for could not be read: %s', type(exc).__name__)
+            return None
+
+    def release_due_reports(self, now=None):
+        """Queue again each report job that waited for the day's closes and whose time has come.
+
+        The waiting state and its time are stored with the operation, so this works after a restart too. A job
+        already queued or running (a tap on 重试日报) is left as it is, and the run decides under the portfolio
+        lock and the pipeline checkpoint whether anything is still to make: a job is run once per wait.
+        """
+        released = 0
+        for reference in self.portfolio.due_reports(now):
+            released += self.store.requeue_report(reference + '_report')
+        return released
+
+    async def report_timer(self):
+        """Every ``REPORT_TIMER_SECONDS``: ``release_due_reports``."""
+        last = None
+        while not self.stopping:
+            if last is None or time.monotonic() - last >= REPORT_TIMER_SECONDS:
+                last = time.monotonic()
+                try:
+                    await self.database(self.release_due_reports, stop_result=0)
+                except Exception as exc:
+                    logger.error('releasing waiting daily reports failed: %s', origin(exc))
+            await asyncio.sleep(1)
+
     async def start(self):
         self.store.recover()
         self.stopping = False
         self.tasks = [asyncio.create_task(self.worker()), asyncio.create_task(self.worker(reports=True)),
                       asyncio.create_task(self.observe())]
+        if hasattr(self.portfolio, 'due_reports'):
+            self.tasks.append(asyncio.create_task(self.report_timer()))
 
     async def stop(self):
         self.stopping = True

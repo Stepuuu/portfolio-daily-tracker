@@ -205,6 +205,14 @@ export function changeValue(row: ChangeRow, side: 'before' | 'after'): string {
   return changeFigure(row, side).text
 }
 
+/** What the web says of a proposal the Feishu card made: it is confirmed there, never here. */
+export const CARD_ONLY = '在飞书卡片上确认：这份方案来自飞书卡片，卡片确认后会更新清单并生成日报。这里只能放弃它。'
+
+/** Why this proposal is confirmed elsewhere (the Feishu card), or null when it is confirmed here. */
+export function confirmElsewhere(proposal: { confirm_on?: string; receipt?: unknown }): string | null {
+  return proposal.confirm_on === 'feishu-card' && !proposal.receipt ? CARD_ONLY : null
+}
+
 /** A preview made before the ledger's current revision can no longer be confirmed (the list and the review agree). */
 export function isOutdated(proposalRevision: number, ledgerRevision: number | null | undefined): boolean {
   return typeof ledgerRevision === 'number' && proposalRevision < ledgerRevision

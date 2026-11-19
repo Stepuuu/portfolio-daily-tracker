@@ -14,7 +14,7 @@ import {
   tickerCurrency, validateEntry, withCurrency, withTicker,
 } from '../src/features/ledger/entry.ts';
 import {
-  changeFigure, changeRows, changeValue, confirmFailure, contributionsAsked, eventLine, eventLineShown, isOutdated, ledgerErrorText, missingContributions,
+  CARD_ONLY, changeFigure, changeRows, changeValue, confirmElsewhere, confirmFailure, contributionsAsked, eventLine, eventLineShown, isOutdated, ledgerErrorText, missingContributions,
   planCheckLines,
   planWarningCount,
   proposalStatus, receiptMessage, shownEvents, warningText,
@@ -627,4 +627,15 @@ test('the phone event card keeps the full value of a shortened quantity in its l
   const plain = cardLine({ date: '2026-11-17', account: '长期账户', quantity: '300', source: 'manual' });
   assert.deepEqual(plain, { text: '2026-11-17 · 长期账户 · 300 股 · 手工' });
   assert.deepEqual(cardLine({ date: '2026-11-17', account: '长期账户', source: 'manual' }), { text: '2026-11-17 · 长期账户 · 手工' });
+});
+
+test('a proposal the Feishu card made is confirmed on the card, not on the web', () => {
+  const card = { confirm_on: 'feishu-card', receipt: null };
+  assert.equal(confirmElsewhere(card), CARD_ONLY);
+  assert.match(CARD_ONLY, /^在飞书卡片上确认/);
+  // Once the card booked it, the web shows the receipt like any other.
+  assert.equal(confirmElsewhere({ ...card, receipt: { applied: 1 } }), null);
+  assert.equal(confirmElsewhere({}), null);
+  assert.equal(confirmElsewhere({ confirm_on: 'something-else' }), null);
+  assert.equal(sourceLabel('feishu-card'), '飞书卡片');
 });

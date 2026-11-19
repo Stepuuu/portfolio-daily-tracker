@@ -7,6 +7,17 @@ response is never the only record of a change. Status reflects version 4.0.0
 
 ## Done
 
+**Since 4.0.0 (unreleased)**
+
+- **Feishu to ledger.** With an active ledger the Feishu card's daily list becomes
+  ledger events: its preview is the ledger's proposal and confirming on the card
+  books it. Trades in every market (港股通 as the importer books it), transfers,
+  fund values, principal targets and "cash is now X" as one explicit adjustment;
+  quantity, cost and principal-only overwrites are refused. Booked once across taps,
+  redeliveries, restarts and cards; the day's report is made again after an evening
+  entry, sharing the close snapshot's lock, checkpoint and push rule (pushed only
+  when `feishu_chat_id` is configured, otherwise saved).
+
 **In 4.0.0**
 
 - **One portfolio store.** Holdings come only from the confirmed ledger. The setup
@@ -47,7 +58,6 @@ response is never the only record of a change. Status reflects version 4.0.0
 |---|---|
 | Corporate actions | Propose A-share cash dividends and 送转 from public data as ledger previews (A-share stocks only; Hong Kong and US withholding stays manual) |
 | Screenshot to draft | Turn a broker screenshot into an editable row table that you correct before any preview is made; costs are never inferred from profit or current price, and the flow is off without a vision model |
-| Feishu to ledger | Let the Feishu card prepare ledger proposals instead of editing the legacy holdings files, so card users keep working once the ledger is active |
 | Assistant dock | Redesign the chat dock: inline proposal cards and a "生成入账草稿" path into 记一笔 |
 | 组合走势 | Rebuild the history page on the new layout (at `/history`, with `/tracker` redirecting), later from daily valuations of the ledger |
 | Backtest round 2 | 交易复盘 (replay your own trades from the ledger against buy-and-hold and the index), setup statistics as studies and assistant tools, robustness and out-of-sample checks over small parameter grids, and portfolio and 定投 backtests |

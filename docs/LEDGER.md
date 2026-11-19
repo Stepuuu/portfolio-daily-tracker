@@ -242,9 +242,11 @@ The ledger lives in `PORTFOLIO_DIR/ledger.sqlite3`, defaulting to `engine/portfo
 Once it exists, the v3.2 manual portfolio is read-only: `/portfolio` redirects to
 `/ledger`, `POST /api/settings/cash` and the `/api/portfolio` holdings endpoints
 answer 409 (they are removed in the next release), and the engine's
-holdings-writing scripts and the Feishu card refuse changes. Snapshot generation
-reads the confirmed ledger; `portfolio_daily_update.py --action auto-pipeline`
-works with an active ledger.
+holdings-writing scripts refuse changes. The Feishu card records into the ledger
+instead (see [FEISHU_WORKBENCH.md](FEISHU_WORKBENCH.md#with-the-transaction-ledger--启用交易账本后)).
+Snapshot generation reads the confirmed ledger; `portfolio_daily_update.py
+--action auto-pipeline` works with an active ledger, and `--action notify` sends
+the evening card without cloning a holdings file.
 
 ## API and AI integrations
 
@@ -257,5 +259,14 @@ works with an active ledger.
 Dashboard and OpenClaw tool registries expose a proposal tool and read tools. They
 provide no confirmation or notification tool. External agents with shell/API access
 are outside that boundary: configure them to prepare proposals and leave confirmation
-to the person using the UI. The backend is a local single-user service without
-authentication; see [SECURITY.md](../SECURITY.md) before remote access.
+to a person. A person confirms in the web UI, or on the Feishu workbench card
+([FEISHU_WORKBENCH.md](FEISHU_WORKBENCH.md#with-the-transaction-ledger--启用交易账本后)):
+the card shows the ledger's preview of its own proposal, and its 确认入账并更新日报 button
+is the person's confirmation of that exact proposal. Only users on the workbench's
+allowlist (`allowed_users`) can press it, on a card sent to them in the bot's private
+chat; a forwarded card or another chat is refused. Card proposals (source
+`feishu-card`) also appear in the web's 待确认 for 2 hours, marked 在飞书卡片上确认:
+they can be discarded there but are confirmed only on the card, whose confirmation also
+completes its list and makes the day's report. The backend is
+a local single-user service without authentication; see [SECURITY.md](../SECURITY.md)
+before remote access.

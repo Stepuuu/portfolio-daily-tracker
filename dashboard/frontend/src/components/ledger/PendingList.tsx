@@ -8,7 +8,7 @@ import { fmtRelative } from '@/lib/format'
 import { getApiErrorMessage, httpStatus } from '@/services/api'
 import { discardLedgerProposal } from '@/services/ledger'
 import { describeLedgerProposal } from '@/features/pending/proposals'
-import { isOutdated, ledgerErrorText } from '@/features/ledger/review'
+import { confirmElsewhere, isOutdated, ledgerErrorText } from '@/features/ledger/review'
 import type { LedgerSnapshot, Proposal } from '@/features/ledger/types'
 import { useAppMode } from '@/components/shell/useAppMode'
 import { useInvalidateLedger } from './useLedger'
@@ -51,6 +51,7 @@ function PendingRow({ proposal, outdated, onReview }: { proposal: Proposal; outd
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {outdated && <Badge tone="warn" title="账本在预览之后有了变化，需要重新预览">已过期</Badge>}
+        {!outdated && confirmElsewhere(proposal) && <Badge title={confirmElsewhere(proposal) ?? undefined}>在飞书卡片上确认</Badge>}
         <Button size="sm" variant="secondary" onClick={() => onReview(proposal.id)} aria-label={`核对：${text}`}>核对</Button>
         <Button
           size="sm"

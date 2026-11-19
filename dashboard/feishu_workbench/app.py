@@ -51,8 +51,12 @@ def create_app(config, controller=None):
     if controller is None:
         from .portfolio import PortfolioAdapter
         state = Path(config['state_dir'])
-        controller = Workbench(config, Store(state / 'cards.sqlite3'),
-                               PortfolioAdapter(Path(config['project_dir']), state),
+        # The one place the service's portfolio directory is chosen (PORTFOLIO_DIR, QR_PORTFOLIO_DIR, else the
+        # project's own), made absolute once. Code in this process that follows PORTFOLIO_DIR (the ledger, fee
+        # profiles and trade plans through core.desk_store) is pointed at that same absolute directory.
+        portfolio = PortfolioAdapter.configured(Path(config['project_dir']), state)
+        os.environ['PORTFOLIO_DIR'] = str(portfolio.portfolio_dir)
+        controller = Workbench(config, Store(state / 'cards.sqlite3'), portfolio,
                                ResearchClient(config.get('lab_url', 'http://127.0.0.1:8000')),
                                FeishuClient(config))
 

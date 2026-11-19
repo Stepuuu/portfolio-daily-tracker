@@ -50,6 +50,70 @@
 - The setup check's 行情源 item names the source that answered and the order the sources are asked in, and
   its proxy hint lists `TRACKER_TENCENT_PROXY=1` next to `TRACKER_EASTMONEY_PROXY=1`.
 
+- **Feishu card to ledger.** Once a ledger is active the Feishu workbench's daily
+  card records into it instead of being refused. Each list item becomes ledger
+  events: buys and sells in every market, 港股通 trades settled in CNY as `fx`
+  CNY→HKD plus the HKD trade (as the broker-file importer books them), deposits and
+  withdrawals (a foreign one with the CNY principal it moves), 本金更新 as a CNY
+  transfer of the difference, 基金估值 as `fund_value` (nothing when it equals the
+  ledger's), and "cash is now X" as one
+  `interest` (more) or `fee` (less) with a note, which never changes 累计净投入. A
+  fee left empty is estimated from the account's fee profile and marked 估算, as in
+  记一笔. **核对全部变动** shows the ledger's own proposal (each account's cash, fund
+  value, contributions and positions before → after, warnings) and **确认入账并更新日报**
+  confirms it; the receipt lists what was booked. See
+  [docs/FEISHU_WORKBENCH.md](docs/FEISHU_WORKBENCH.md#with-the-transaction-ledger--启用交易账本后).
+- New card fields with a ledger: 港股通人民币成交金额, 允许融资 on a buy, 差额说明
+  on a cash balance (required when the same list moves that currency with a
+  transfer), and the menu entry 更正数量、成本或本金, which explains how to reverse
+  and re-enter in the web app.
+
+### Changed
+
+- The card stays exactly-once on the ledger: its operations are keyed on the
+  proposal, events carry the source `feishu-card` and an external id from the list
+  item, a newer preview withdraws the same person's older one, and a preview the
+  ledger moved past is withdrawn and made again instead of confirmed. Editing,
+  clearing or previewing a list again withdraws its earlier proposal, also when the
+  new preview books nothing. Card proposals appear in the web's 待确认 for 2 hours as
+  在飞书卡片上确认: they can be discarded there but only the card confirms them (the
+  confirm endpoint refuses them), so a confirmed list is always completed and its
+  report queued.
+- After a card entry the day's snapshot and report are made again from the ledger
+  (until 09:00 the next morning), under the portfolio lock and the checkpoint the
+  close snapshot uses, so the same holdings are never pushed twice. Like the close
+  snapshot, the card pushes the report only when `feishu_chat_id` is configured;
+  without it the report is saved and counts as done (日报 says so) instead of
+  waiting for a push that never comes. Older back-dated entries do not remake old
+  reports.
+- `portfolio_daily_update.py --action notify` no longer fails with an active ledger:
+  it sends the evening card without cloning a holdings file.
+- The companion reads fee profiles and trade plans from the portfolio directory
+  beside its ledger. It chooses its portfolio directory once, as the backend does
+  (`PORTFOLIO_DIR`, `QR_PORTFOLIO_DIR`, else the project's own), makes it absolute
+  and uses it for everything, including the pipeline it runs; it never edits a
+  holdings file elsewhere while that directory has an active ledger.
+- A confirmation that books nothing (今日无变动, a list already booked) no longer
+  makes and pushes a finished day's report again.
+- Before the day's own closes are final for the markets the ledger holds (the app's
+  market calendar), a card entry or 今日无变动 is booked but no snapshot is made:
+  one made then would record the previous session's prices as the day's close. The
+  receipt says the report follows after that time and 日报 shows it as 等待收盘. The
+  card service runs the job itself when the time comes (also when the snapshot
+  engine says a close is not final yet), once, from its stored state so a restart
+  keeps it, until 09:00 the next morning; 重试日报 stays and never runs it twice.
+
+### Refused with a ledger
+
+- Overwriting a quantity, a cost price or only the principal (本金核对, 资金已入账,
+  修正历史本金): the ledger has no such events; reverse the entry in 账本 › 流水 and
+  enter it again with 记一笔.
+- A 港股通 buy beyond the account's CNY cash, unless 允许融资 is chosen (as for any
+  buy; the ledger itself books the `fx` whatever the cash).
+- A list item whose booking was reversed in 账本 › 流水: the ledger would count it as
+  a duplicate and book nothing, so the card no longer shows it as booked; delete it
+  and add it again.
+
 ### Not changed
 
 - Exchange rates still come from Yahoo, then Eastmoney, also with `TRACKER_QUOTE_SOURCE=tencent`: Tencent

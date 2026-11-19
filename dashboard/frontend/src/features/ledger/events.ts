@@ -60,6 +60,7 @@ export function reversedIds(events: LedgerEvent[]): Set<string> {
 const SOURCE_LABEL: Record<string, string> = {
   manual: '手工', demo: '演示', 'legacy-opening': '旧持仓迁移', agent: '助手', 'agent:chat': '助手',
   'corporate-action': '公司行为', screenshot: '截图', today: '手工', alert: '手工', plan: '手工', assistant: '助手',
+  'feishu-card': '飞书卡片',
 }
 
 /** "手工", "交割单导入", "CSV（broker-csv）": where an event came from. */

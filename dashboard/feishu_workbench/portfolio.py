@@ -1,6 +1,9 @@
 """Explicit, previewed portfolio updates for a local messaging controller.
 
-This adapter does not enable the transaction ledger. Financial mutations use a
+This adapter does not enable the transaction ledger. Once one is active (a
+confirmed revision in ``portfolio/ledger.sqlite3``) every portfolio method hands
+its work to ``ledger_book.LedgerBook``, which records into the ledger; without
+one the dated holdings files are edited as below. Financial mutations use a
 shared ``portfolio/.portfolio-update.lock``; other legacy writers must hold that
 same lock across their entire read/modify/write operation. A preview writes only
 private proposal state, never holdings, ticker aliases, snapshots or messages.
@@ -32,10 +35,17 @@ class PortfolioError(ValueError):
     """A validated, user-facing accounting error."""
 
 
+class StalePreview(PortfolioError):
+    """A ledger preview that can no longer be confirmed because the ledger changed after it; nothing was booked."""
+
+
 # Runs in a child process. ``run_pipeline`` records the push as ``uncertain``
 # before it delivers, so no other pipeline will send the same report. Only for
 # that delivery does the child release the lock it shares with its parent
 # (argv[4] is the parent's inherited lock descriptor, or -1 for none).
+# argv[5] is ``always`` (the holdings-file card pushes every report) or
+# ``configured``: the close pipeline's rule (``action_auto_pipeline``), push
+# only when ``feishu_chat_id`` is configured, else the saved report is done.
 _PIPELINE = """
 import fcntl
 import json
@@ -46,6 +56,7 @@ import portfolio_daily_update as p
 import portfolio_write_lock
 
 day, resume, lock = sys.argv[2], sys.argv[3] == '1', int(sys.argv[4])
+push = sys.argv[5] == 'always' or bool(p.load_config().get('feishu_chat_id'))
 if lock >= 0:
     # Lets the snapshot child work under this lock, but only if the descriptor
     # really holds the lock of the portfolio this pipeline writes.
@@ -77,7 +88,7 @@ def deliver_unlocked(*args, **kwargs):
 
 
 p.send_feishu_report = deliver_unlocked
-sys.exit(0 if p.run_pipeline(day, send_report=True, resume=resume) else 1)
+sys.exit(0 if p.run_pipeline(day, send_report=push, resume=resume) else 1)
 """
 
 
@@ -154,11 +165,28 @@ def _day(value=None):
 
 
 class PortfolioAdapter:
-    def __init__(self, project_dir: Path, state_dir: Path):
+    """The card service's portfolio, all in one directory (``portfolio_dir``, absolute).
+
+    That directory decides everything: whether a confirmed ledger is active there (``_book``), the dated
+    holdings files the card edits only while none is (``_guard_legacy``), the write lock, the snapshots and
+    the pipeline checkpoint, and the ``PORTFOLIO_DIR`` the pipeline child is given. ``configured`` chooses it
+    as the backend and the engine do; the service is built with it (``app.create_app``).
+    """
+
+    @classmethod
+    def configured(cls, project_dir: Path, state_dir: Path, environ=None):
+        """The adapter of the portfolio the environment names: ``PORTFOLIO_DIR``, else ``QR_PORTFOLIO_DIR`` (the
+        rule of ``core.ledger.portfolio_directory``), else the project's own ``portfolio`` directory. A
+        relative value is made absolute here, once."""
+        environ = os.environ if environ is None else environ
+        named = environ.get("PORTFOLIO_DIR") or environ.get("QR_PORTFOLIO_DIR") or None
+        return cls(project_dir, state_dir, portfolio_dir=named)
+
+    def __init__(self, project_dir: Path, state_dir: Path, portfolio_dir=None):
         self.project_dir = Path(project_dir).resolve()
         engine = self.project_dir / "engine"
         self.root = engine if (engine / "scripts").is_dir() else self.project_dir
-        self.portfolio_dir = self.root / "portfolio"
+        self.portfolio_dir = Path(portfolio_dir).expanduser().resolve() if portfolio_dir else self.root / "portfolio"
         self.holdings_dir = self.portfolio_dir / "holdings"
         self.scripts_dir = self.root / "scripts"
         self.reports_dir = self.root / "reports"
@@ -204,6 +232,34 @@ class PortfolioAdapter:
             finally:
                 self._held.descriptor = None
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _book(self):
+        """The ledger to record into while one is active (``ledger_book.LedgerBook``), else None."""
+        if not (self.portfolio_dir / "ledger.sqlite3").exists():
+            return None
+        from .ledger_book import LedgerBook
+        return LedgerBook.open(self)
+
+    def ledger_mode(self):
+        """Whether the card records into the transaction ledger instead of the dated holdings files."""
+        return self._book() is not None
+
+    def holdings_after(self, day, items):
+        """Holdings (``groups``) on ``day`` once ``items`` are applied: the positions a list item may trade."""
+        book = self._book()
+        if book is not None:
+            return book.holdings_after(_day(day), items)
+        return self.plan_batch(day, items)['after'] if items else self._baseline(day)[0]
+
+    def check_batch(self, day, items):
+        """Refuse (``PortfolioError``) a list that could not be previewed on ``day``; writes nothing."""
+        book = self._book()
+        if book is not None:
+            book.check(_day(day), items)
+        elif items:
+            self.plan_batch(day, items)
+        else:
+            self._baseline(day)
 
     def _guard_legacy(self):
         ledger = self.portfolio_dir / "ledger.sqlite3"
@@ -270,6 +326,9 @@ class PortfolioAdapter:
         group["cash"] = _stored_number(balances.get("CNY", Decimal(0)))
 
     def overview(self):
+        book = self._book()
+        if book is not None:
+            return book.overview()
         try:
             data, saved_day, _ = self._baseline()
         except ValueError:
@@ -452,10 +511,13 @@ class PortfolioAdapter:
                 changes.append(f"对应现金 {_text(cash_before)} → {_text(balances[unit])} {unit}；同时记录交易与现金变化。")
         return changes
 
-    def preview(self, fields: dict):
+    def preview(self, fields: dict, owner=None):
         if not isinstance(fields, dict):
             raise PortfolioError("表单内容无效。")
         day = _day(fields.get('date'))
+        book = self._book()
+        if book is not None:
+            return book.preview_single(day, fields, owner=owner)
         before, saved_day, fingerprint = self._baseline(day)
         after = copy.deepcopy(before)
         changes = self._apply_change(after, fields)
@@ -464,6 +526,9 @@ class PortfolioAdapter:
 
     def plan_batch(self, day, items):
         """Trades and capital flows retain their order; reconciliations are final balances."""
+        book = self._book()
+        if book is not None:
+            return book.plan_batch(_day(day), items)
         day = _day(day)
         if not isinstance(items, list) or not items or len(items) > 30:
             raise PortfolioError("每次更新请添加 1–30 项变动。")
@@ -510,7 +575,10 @@ class PortfolioAdapter:
         return {'after': after, 'day': day, 'saved_day': saved_day, 'fingerprint': fingerprint,
                 'changes': changes, 'items': copy.deepcopy(items)}
 
-    def preview_batch(self, day, items):
+    def preview_batch(self, day, items, owner=None):
+        book = self._book()
+        if book is not None:
+            return book.preview(_day(day), items, owner=owner)
         plan = self.plan_batch(day, items)
         return self._save_preview(plan['after'], plan['day'], plan['saved_day'], plan['fingerprint'],
                                   plan['changes'], 'batch', plan['items'])
@@ -586,6 +654,9 @@ class PortfolioAdapter:
         if not isinstance(preview_id, str) or not re.fullmatch(r"[a-f0-9]{32}", preview_id):
             raise PortfolioError("预览已失效，请重新填写表单。")
         with self._lock():
+            book = self._book()
+            if book is not None:
+                return book.confirm(preview_id, operation_id)
             self._guard_legacy()
             with self._db() as db:
                 db.execute("BEGIN IMMEDIATE")
@@ -612,18 +683,28 @@ class PortfolioAdapter:
                 return json.loads(operation["receipt"])
             return self._finish_prepared(operation)
 
-    def _execute_pipeline(self, day, resume):
+    def _execute_pipeline(self, day, resume, push="always"):
         # Call the report function directly: this avoids the CLI's clone path and
         # a nested acquisition of the shared financial-write lock. The child
         # inherits this thread's lock so that the snapshot, the report file and
         # every checkpoint write stay inside it; see _PIPELINE for the one
-        # stage, network delivery, that runs with the lock released.
+        # stage, network delivery, that runs with the lock released, and for
+        # ``push``.
+        if push not in {"always", "configured"}:
+            raise ValueError("push must be 'always' or 'configured'")
         lock = getattr(self._held, "descriptor", None)
+        # The end of the child's output, for a caller that explains a failure (ledger_book reads a close
+        # that is not final yet from it); it is never shown as it is.
+        self._held.output = ""
         try:
+            # The child runs in the scripts directory: it gets this portfolio's absolute path, never a relative
+            # PORTFOLIO_DIR that would point elsewhere from there (or a QR_PORTFOLIO_DIR the engine ignores).
             process = subprocess.run([sys.executable, "-c", _PIPELINE, str(self.scripts_dir), day,
-                                      "1" if resume else "0", str(-1 if lock is None else lock)],
+                                      "1" if resume else "0", str(-1 if lock is None else lock), push],
                                      cwd=self.scripts_dir, capture_output=True, timeout=900,
+                                     env={**os.environ, "PORTFOLIO_DIR": str(self.portfolio_dir)},
                                      pass_fds=() if lock is None else (lock,))
+            self._held.output = (process.stdout + b"\n" + process.stderr)[-8000:].decode("utf-8", "replace")
             return process.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -643,6 +724,9 @@ class PortfolioAdapter:
         reference = receipt.get("operation_id", receipt.get("reference")) if isinstance(receipt, dict) else None
         if not isinstance(reference, str):
             raise PortfolioError("缺少已确认的更新回执。")
+        if receipt.get("mode") == "ledger":
+            from .ledger_book import run_report
+            return run_report(self, reference)
         with self._lock():
             self._guard_legacy()
             with self._db() as db:
@@ -674,6 +758,35 @@ class PortfolioAdapter:
                 raise PortfolioError("组合已保存，日报尚未完成；可重试日报，不会重复买卖。")
             return {**result, "report_status": state,
                     "summary": "日报已完成。" if complete else "组合已保存，日报尚未完成；续跑不会重复买卖。"}
+
+    def withdraw_previews(self, owner):
+        """Withdraw ``owner``'s pending ledger proposals from the card (``ledger_book.withdraw_pending``); a
+        portfolio without card proposals is not touched."""
+        from .ledger_book import withdraw_pending
+        withdraw_pending(self, owner)
+
+    def report_note(self, receipt):
+        """A line for the 日报 card about one update's report, or None (holdings-file updates have none)."""
+        state = self.report_state(receipt)
+        return state["summary"] if state else None
+
+    def report_state(self, receipt):
+        """How the 日报 card shows one update's report when its job status would not say it, or None
+        (``ledger_book.report_state``; holdings-file updates have none)."""
+        if not isinstance(receipt, dict) or receipt.get("mode") != "ledger":
+            return None
+        from .ledger_book import report_state
+        return report_state(self, receipt)
+
+    def due_reports(self, now=None):
+        """Operations whose report job waited for the day's closes and is due now (``ledger_book.due_reports``)."""
+        from .ledger_book import due_reports
+        return due_reports(self, now)
+
+    def report_waits_until(self, day):
+        """When ``day``'s report can be made, while that is still to come (a ledger portfolio), else None."""
+        from .ledger_book import waits_until
+        return waits_until(self, day)
 
     def reports(self):
         items = []

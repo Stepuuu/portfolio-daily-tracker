@@ -1091,11 +1091,23 @@ def run_pipeline(date_str, send_report=True, *, resume=False):
 
 
 def action_notify(date_str):
-    """Cron action: clone holdings + send Feishu notification."""
+    """Cron action: clone holdings + send Feishu notification.
+
+    With an active ledger nothing is cloned (the holdings are the ledger's; the Feishu card records into it)
+    and the reminder describes the ledger's holdings on the day.
+    """
     config = load_config()
     
     print(f"📋 每日持仓更新通知 — {date_str}")
     
+    from ledger_bridge import active_ledger, ledger_holdings
+    if active_ledger(PORTFOLIO_DIR):
+        print("\n[1/2] 交易账本已启用：不克隆旧持仓文件")
+        holdings = ledger_holdings(PORTFOLIO_DIR, date_str) or {"groups": {}}
+        print("\n[2/2] 发送飞书通知...")
+        send_feishu_notification(date_str, holdings, config)
+        return True
+
     # Clone holdings
     print("\n[1/2] 克隆持仓...")
     path, is_new = clone_holdings(date_str)

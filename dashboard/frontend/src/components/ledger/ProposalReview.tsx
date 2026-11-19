@@ -20,7 +20,8 @@ import type { ToastAction } from '@/lib/toast'
 import { getApiErrorMessage, httpStatus } from '@/services/api'
 import { confirmLedgerProposal, discardLedgerProposal, fetchProposal, proposalKey } from '@/services/ledger'
 import {
-  SHOWN_EVENTS, confirmFailure, eventLineShown, isOutdated, ledgerErrorText, proposalStatus, receiptMessage, shownEvents, warningText,
+  SHOWN_EVENTS, confirmElsewhere, confirmFailure, eventLineShown, isOutdated, ledgerErrorText, proposalStatus, receiptMessage,
+  shownEvents, warningText,
 } from '@/features/ledger/review'
 import { noteMarks, tickerNames } from '@/features/ledger/events'
 import type { Proposal, Receipt } from '@/features/ledger/types'
@@ -181,12 +182,14 @@ export function useProposalReview(proposal: Proposal, options: ReviewOptions = {
     : null
   const outdated = !done && isOutdated(proposal.revision, ledger.data?.revision)
   const expired = !done && Boolean(proposal.expired)
+  // A Feishu card's proposal is confirmed on the card only; here it can be read and discarded.
+  const elsewhere = done ? null : confirmElsewhere(proposal)
   const message = own && (own.state === 'refused' || own.state === 'not_booked') ? own.message : null
   return {
     proposal: receipt ? { ...proposal, receipt } : proposal,
     confirm: () => {
       const id = proposal.id
-      if (!id || done || confirm.isPending || own?.state === 'checking') return
+      if (!id || done || elsewhere || confirm.isPending || own?.state === 'checking') return
       settle(null, id)
       confirm.mutate(id)
     },
@@ -195,14 +198,14 @@ export function useProposalReview(proposal: Proposal, options: ReviewOptions = {
     },
     confirming,
     discarding,
-    error: done ? discardError : message ?? (expired ? EXPIRED : null) ?? discardError,
+    error: done ? discardError : message ?? elsewhere ?? (expired ? EXPIRED : null) ?? discardError,
     done,
     // Revisions only grow: a cached revision below the preview's is just not refetched yet.
     outdated,
     blocked: readOnlyReason,
     outcome: own,
     recheck: () => void readBack(proposal.id),
-    unconfirmable: expired || own?.state === 'refused' || own?.state === 'unknown' || own?.state === 'checking'
+    unconfirmable: expired || Boolean(elsewhere) || own?.state === 'refused' || own?.state === 'unknown' || own?.state === 'checking'
       || (own?.state === 'not_booked' && own.message !== STILL_PENDING),
   }
 }

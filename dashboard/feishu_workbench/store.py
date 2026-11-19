@@ -217,14 +217,22 @@ class Store:
         with self.db() as db:
             return [self.unpack(row) for row in db.execute(_RECENT_REPORTS, (actor,))]
 
-    def retry_report(self, actor, identifier):
+    def retry_report(self, actor, identifier, finished=False):
+        """Queue a failed report job again; with ``finished``, a completed one too (a report waiting for the closes)."""
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute("SELECT c.* FROM commands c JOIN sessions s ON c.session=s.id WHERE c.id=? AND s.actor=? AND c.action='daily.report'", (identifier, actor)).fetchone()
             if row is None:
                 raise Rejected('未找到这项日报任务。')
-            if row['status'] == 'failed':
+            if row['status'] == 'failed' or (finished and row['status'] == 'completed'):
                 db.execute("UPDATE commands SET status='queued',error='',attempts=0 WHERE id=?", (identifier,))
+
+    def requeue_report(self, identifier):
+        """Queue a finished report job again (its report waited for a time that has come); one queued or
+        running is left as it is. Returns 1 when it was queued."""
+        with self.db() as db:
+            return db.execute("UPDATE commands SET status='queued',error='',attempts=0 WHERE id=? "
+                              "AND action='daily.report' AND status IN ('completed','failed')", (identifier,)).rowcount
 
     def retry(self, command):
         with self.db() as db:

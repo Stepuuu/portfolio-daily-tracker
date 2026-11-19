@@ -281,7 +281,7 @@ make demo
 ## 飞书工作台与研究工作台
 
 - [docs/FEISHU_WORKBENCH.md](docs/FEISHU_WORKBENCH.md)：通过 OpenClaw 在飞书私聊里用卡片做每日更新、查看资产、日报和研究。
-  卡片写入的是旧版持仓文件，账本启用后会被拒绝。
+  账本启用后，每日更新卡片直接记入账本：预览就是账本的入账预览，在卡片上确认即入账；没有账本时仍修改旧版持仓文件。
 - [docs/RESEARCH_CN.md](docs/RESEARCH_CN.md)（[English](docs/RESEARCH.md)）：研究工作台的数据、模板、Agent 模式、命令行和 MCP。
 
 ## 开发

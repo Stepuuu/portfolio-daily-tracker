@@ -359,8 +359,9 @@ the same history; it is not a forecast.
 ## Feishu workbench and research lab
 
 - [docs/FEISHU_WORKBENCH.md](docs/FEISHU_WORKBENCH.md): private-chat cards for
-  daily updates, assets, reports and research through OpenClaw. Its card writes
-  edit the legacy holdings files and are refused once the ledger is active.
+  daily updates, assets, reports and research through OpenClaw. With an active
+  ledger the daily card records into it: its preview is the ledger's proposal and
+  confirming on the card books it; without one it edits the legacy holdings files.
 - [docs/RESEARCH.md](docs/RESEARCH.md) ([中文](docs/RESEARCH_CN.md)): the research lab,
   its data sources, templates, agent mode, CLI and MCP bridge.
 

@@ -1,11 +1,17 @@
-"""Daily batch workflow; draft edits never touch the portfolio or run reports."""
+"""Daily batch workflow; draft edits never touch the portfolio or run reports.
+
+With an active transaction ledger the same list is booked into the ledger (``ledger_book``): the menu offers
+the items the ledger can book, a confirmation is the person confirming the ledger proposal, and a preview the
+ledger moved past is made again instead of being confirmed.
+"""
 import copy
 import hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from .daily_cards import LEDGER_OPERATIONS
 from .drafts import Drafts
-from .portfolio import PortfolioError, _day, _ticker, _MARKETS, _ACTIONS
+from .portfolio import PortfolioError, StalePreview, _day, _ticker, _MARKETS, _ACTIONS
 from .store import Rejected
 
 
@@ -21,12 +27,21 @@ def today():
 
 def item_label(item):
     labels = {'buy': '买入', 'sell': '卖出', 'set_cash': '现金余额', 'set_fund': '基金估值',
-              'deposit': '资金转入', 'withdraw': '资金转出', 'set_cost_basis': '本金核对'}
+              'deposit': '资金转入', 'withdraw': '资金转出', 'set_cost_basis': '本金核对',
+              'set_capital': '本金更新'}
     detail = (f"{item.get('ticker', '')} · {item.get('quantity', '')} 股 × {item.get('price', '')}"
               if item['operation'] in {'buy', 'sell'} else item.get('amount', ''))
     if item.get('principal_cny'):
         detail += f"（折合本金 {item['principal_cny']} CNY）"
-    return f"{item['account']} · {labels[item['operation']]} · {detail} {item['currency']}"
+    label = f"{item['account']} · {labels.get(item['operation'], item['operation'])} · {detail} {item['currency']}"
+    # Only list items of a ledger portfolio carry these.
+    if item.get('settlement_cny'):
+        label += f"（港股通：人民币成交 {item['settlement_cny']}，手续费 {item.get('fee', '')} CNY）"
+    elif item['operation'] in {'buy', 'sell'} and item.get('fee') == '':
+        label += '（手续费按费率估算）'
+    if item.get('allow_margin') == 'yes':
+        label += '（允许融资）'
+    return label
 
 
 class DailyWorkflow:
@@ -36,9 +51,12 @@ class DailyWorkflow:
 
     def model(self, draft):
         overview = self.w.portfolio.overview()
-        return {**draft, 'accounts': overview.get('accounts', []),
-                'entries': [{'label': item_label(i), 'value': i['id']} for i in draft['items']],
-                '_draft_revision': draft['revision']}
+        model = {**draft, 'accounts': overview.get('accounts', []),
+                 'entries': [{'label': item_label(i), 'value': i['id']} for i in draft['items']],
+                 '_draft_revision': draft['revision']}
+        if overview.get('ledger'):
+            model['ledger'] = True
+        return model
 
     def render_draft(self, command, draft):
         return self.w.render(command, 'daily_pending' if draft['locked_by'] else 'daily_batch', self.model(draft))
@@ -56,10 +74,7 @@ class DailyWorkflow:
             if index is None:
                 raise Rejected('该记录已被移除，请重新打开清单。')
             items = items[:index]
-        if items:
-            data = self.w.portfolio.plan_batch(draft['date'], items)['after']
-        else:
-            data = self.w.portfolio._baseline(draft['date'])[0]
+        data = self.w.portfolio.holdings_after(draft['date'], items)
         return [{'label': f"{p.get('name') or p['ticker']} · {p['ticker']} · {p['quantity']} 股",
                  'value': p['ticker'], 'quantity': str(p['quantity'])}
                 for p in data['groups'][account].get('positions', [])]
@@ -67,6 +82,9 @@ class DailyWorkflow:
     def item_form(self, draft, selection, item=None):
         model = {**self.model(draft), **selection, '_selection': selection,
                  'fee': '0', 'currency': 'CNY', 'quantity_mode': 'partial'}
+        if model.get('ledger'):
+            # An empty fee books the fee profile's estimate, as in 记一笔.
+            model.update(fee='', allow_margin='no')
         if item:
             model.update(item)
             model['product'] = item.get('ticker', '')
@@ -81,10 +99,9 @@ class DailyWorkflow:
     def save(self, command, actor, draft, previous, items, day=None):
         self.verify_revision(draft, previous)
         day = _day(day or draft['date'])
-        if items:
-            self.w.portfolio.plan_batch(day, items)
-        else:
-            self.w.portfolio._baseline(day)
+        self.w.portfolio.check_batch(day, items)
+        # An edited, cleared or re-dated list no longer stands behind its earlier ledger proposal.
+        self.w.portfolio.withdraw_previews(actor)
         saved = self.drafts.save(actor, draft['revision'], command['id'], day, items)
         return self.render_draft(command, saved)
 
@@ -93,16 +110,39 @@ class DailyWorkflow:
             raise Rejected('该次更新未入账，请回到清单重新核对。')
         try:
             receipt = self.w.portfolio.confirm(commit['preview'], commit['id'])
-        except PortfolioError:
+        except PortfolioError as exc:
             if not self.w.portfolio.operation_started(commit['id']):
                 self.drafts.release_unwritten(actor, commit['id'])
+                if isinstance(exc, StalePreview) and commit['preview'].get('action') == 'batch':
+                    return self.refresh_preview(command, actor, str(exc))
             raise
+        if receipt.get('mode') == 'ledger':
+            return self.finish_ledger(command, actor, commit, receipt)
         self.w.store.enqueue_report(command['session'], receipt, commit['id'])
         self.drafts.complete(actor, commit['id'])
         # Keep the detailed figures on the preview; the receipt is a short status.
         return self.w.render(command, 'daily_receipt', {
             'summary': receipt['date'] + ' · 组合记录已保存',
             'notice': '日报正在更新，可从“日报”查看进度。', 'reference': receipt['reference']})
+
+    def finish_ledger(self, command, actor, commit, receipt):
+        """The receipt of a ledger booking states what was booked; the day's report follows unless it is too old."""
+        from .ledger_book import receipt_notice, report_window_open
+        report = report_window_open(receipt['date'])
+        if report:
+            self.w.store.enqueue_report(command['session'], receipt, commit['id'])
+        self.drafts.complete(actor, commit['id'])
+        return self.w.render(command, 'daily_receipt', {
+            'summary': receipt['summary'], 'changes': receipt.get('changes', []), 'reference': receipt['reference'],
+            'notice': receipt_notice(receipt, report, self.w.report_waits_until(receipt['date']) if report else None)})
+
+    def refresh_preview(self, command, actor, reason):
+        """The ledger moved past a preview: show a fresh one of the same list to confirm again."""
+        draft = self.drafts.get(actor, today())
+        preview = self.w.portfolio.preview_batch(draft['date'], draft['items'], owner=actor)
+        return self.w.render(command, 'daily_batch_preview', {
+            **preview, '_preview': preview, '_draft_revision': draft['revision'],
+            'notice': reason + '已按最新账本重新生成预览，请核对后再确认。'})
 
     def execute(self, command):
         action, payload = command['action'], command['payload']
@@ -157,7 +197,13 @@ class DailyWorkflow:
         if action == 'daily.item.choose':
             if set(fields) != {'account', 'operation'}:
                 raise Rejected('请选择账户和变动类型。')
-            if fields['account'] not in {a['value'] for a in self.model(draft)['accounts']} or fields['operation'] not in _ACTIONS - {'no_change'}:
+            model = self.model(draft)
+            choices = set(LEDGER_OPERATIONS) if model.get('ledger') else _ACTIONS - {'no_change'}
+            if model.get('ledger') and fields['operation'] in {'correction', 'set_cost_basis'}:
+                from .ledger_book import CORRECTION
+                return self.w.render(command, 'daily_item_choose', {**model, **fields, 'operation': 'sell',
+                                                                    'notice': CORRECTION})
+            if fields['account'] not in {a['value'] for a in model['accounts']} or fields['operation'] not in choices:
                 raise Rejected('请选择有效的账户和变动类型。')
             return self.w.render(command, 'daily_item_form', self.item_form(draft, dict(fields)))
         if action in {'daily.item.edit', 'daily.item.remove'}:
@@ -166,6 +212,9 @@ class DailyWorkflow:
                 raise Rejected('请选择清单中的一项记录。')
             if action == 'daily.item.remove':
                 return self.save(command, actor, draft, previous, [i for i in draft['items'] if i['id'] != item['id']])
+            if item['operation'] not in LEDGER_OPERATIONS and self.w.portfolio.ledger_mode():
+                from .ledger_book import CORRECTION
+                return self.w.render(command, 'daily_batch', {**self.model(draft), 'notice': CORRECTION + '请删除这一项。'})
             selection = {'account': item['account'], 'operation': item['operation'], 'editing': item['id']}
             return self.w.render(command, 'daily_item_form', self.item_form(draft, selection, item))
         if action == 'daily.item.save':
@@ -195,12 +244,71 @@ class DailyWorkflow:
                 raise Rejected('请选择记账日期。')
             return self.save(command, actor, draft, previous, draft['items'], fields['date'])
         if action == 'daily.batch.preview':
-            preview = self.w.portfolio.preview_batch(draft['date'], draft['items'])
+            preview = self.w.portfolio.preview_batch(draft['date'], draft['items'], owner=actor)
             return self.w.render(command, 'daily_batch_preview', {
                 **preview, '_preview': preview, '_draft_revision': draft['revision']})
         raise Rejected('未知的每日更新操作。')
 
+    def parse_ledger_item(self, draft, selection, fields, key):
+        """A list item of a ledger portfolio: an empty fee stays empty (estimated when previewed), a Hong Kong
+        trade may carry its CNY amount (港股通), a buy may allow margin, a cash balance a 差额说明."""
+        from .ledger_book import CORRECTION, ledger_ticker
+        operation = selection['operation']
+        if operation not in LEDGER_OPERATIONS or operation == 'correction':
+            raise Rejected(CORRECTION)
+        allowed = {'buy': {'product', 'new_ticker', 'quantity', 'price', 'fee', 'settlement_cny', 'allow_margin'},
+                   'sell': {'product', 'quantity', 'quantity_mode', 'price', 'fee', 'settlement_cny'},
+                   'deposit': {'amount', 'currency', 'principal_cny'}, 'withdraw': {'amount', 'currency', 'principal_cny'},
+                   'set_cash': {'amount', 'currency', 'reconciliation_note'}, 'set_fund': {'amount'},
+                   'set_capital': {'amount', 'capital_mode'}}[operation]
+        if set(fields) - allowed:
+            raise Rejected('表单包含不支持的字段，请重新选择变动类型。')
+        result = {k: selection[k] for k in ('account', 'operation')}
+        result['id'] = selection.get('editing') or hashlib.sha256(key.encode()).hexdigest()[:24]
+        if operation in {'buy', 'sell'}:
+            positions = self.positions(draft, selection['account'], selection.get('editing', ''))
+            chosen = fields.get('product')
+            if chosen == '__new__' and operation == 'buy':
+                ticker = ledger_ticker(fields.get('new_ticker'))
+            else:
+                if chosen not in {p['value'] for p in positions}:
+                    raise Rejected('请从该账户的产品列表中选择。')
+                if fields.get('new_ticker', '').strip():
+                    raise Rejected('已有产品无需填写新代码；买入新产品请先选择“新产品”。')
+                ticker = chosen   # the spelling the ledger holds it under
+            mode = fields.get('quantity_mode', 'partial')
+            if mode not in {'partial', 'all'}:
+                raise Rejected('无效的卖出数量选项。')
+            quantity = fields.get('quantity', '').strip()
+            if mode == 'all':
+                if quantity:
+                    raise Rejected('全部卖出无需填写数量；指定数量请改选“填写数量”。')
+                quantity = next(p['quantity'] for p in positions if p['value'] == ticker)
+            result.update(ticker=ticker, quantity=quantity, price=fields.get('price', '').strip(),
+                          fee=fields.get('fee', '').strip(), currency=_MARKETS[ticker.split(':')[0]])
+            settlement = fields.get('settlement_cny', '').strip()
+            if settlement:
+                if not ticker.startswith('HKG:'):
+                    raise Rejected('人民币成交金额只用于港股通；其他市场请留空。')
+                result.update(settlement_cny=settlement, fee_currency='CNY')
+            if fields.get('allow_margin', 'no') not in {'no', 'yes'}:
+                raise Rejected('请重新选择现金不足时的处理方式。')
+            if fields.get('allow_margin') == 'yes':
+                result['allow_margin'] = 'yes'
+        else:
+            result.update(amount=fields.get('amount', '').strip(),
+                          currency=fields.get('currency') if operation in {'deposit', 'withdraw', 'set_cash'} else 'CNY')
+            if operation in {'deposit', 'withdraw'} and fields.get('principal_cny', '').strip():
+                result['principal_cny'] = fields['principal_cny'].strip()
+            if operation == 'set_cash' and fields.get('reconciliation_note', '').strip():
+                result['reconciliation_note'] = fields['reconciliation_note'].strip()[:200]
+            if operation == 'set_capital' and fields.get('capital_mode') not in (None, '', 'sync_cash'):
+                raise Rejected(CORRECTION)
+        return result
+
     def parse_item(self, draft, selection, fields, key):
+        if self.w.portfolio.ledger_mode():
+            return self.parse_ledger_item(draft, selection, fields, key)
         operation = selection['operation']
         allowed = ({'product', 'new_ticker', 'quantity', 'quantity_mode', 'price', 'fee'}
                    if operation in {'buy', 'sell'} else {'amount', 'currency'})

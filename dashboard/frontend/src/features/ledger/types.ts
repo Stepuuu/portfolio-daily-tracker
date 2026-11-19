@@ -100,6 +100,8 @@ export interface Proposal {
   /** A manual preview's end of life (ISO); after it, it cannot be confirmed (`expired`). */
   expires_at?: string
   expired?: boolean
+  /** `feishu-card`: the Feishu card made it and only the card confirms it (the web may discard it). */
+  confirm_on?: string
   /** Present once any trade plan exists. */
   plan_check?: PlanCheckItem[]
   /** The plan check failed; the proposal is fine. */

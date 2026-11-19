@@ -74,6 +74,10 @@ TRANSIENT_LIMIT = 10
 EXPIRED_PREVIEW = '这份预览超过 2 小时没有确认，已失效，没有入账。请重新预览。'
 ALREADY_BOOKED = '这份方案已经入账，不能放弃；如需更正，请在流水中冲销。'
 NOT_FOUND = '方案不存在或已被放弃。请打开待确认方案列表。'
+# A proposal the Feishu card made (its events carry the card's source) is confirmed on the card, which then
+# completes its list and makes the day's report; the web app shows it and may discard it, never confirm it.
+CARD_SOURCE = 'feishu-card'
+CARD_ONLY = '这份方案来自飞书卡片，请在飞书卡片上确认：卡片确认后会更新清单并生成日报。网页只能放弃它。'
 NO_LEDGER_BACKUP = '还没有账本，无需备份。'
 
 
@@ -136,8 +140,14 @@ def _expired(expires_at, now=None):
     return expires_at is not None and datetime.fromisoformat(expires_at) <= (now or utc_now())
 
 
+def _card_proposal(payload):
+    return any(isinstance(event, dict) and event.get('source') == CARD_SOURCE for event in payload.get('events') or [])
+
+
 def _proposal_row(row, expires_at, receipt=False):
     out = {'id': row['id'], 'revision': row['revision'], 'created_at': row['created_at'], **json.loads(row['payload'])}
+    if _card_proposal(out):
+        out['confirm_on'] = CARD_SOURCE
     if expires_at is not None:
         out['expires_at'] = expires_at
         out['expired'] = row['receipt'] is None and _expired(expires_at)
@@ -363,9 +373,11 @@ def confirm(proposal_id: str):
     with reading() as db:
         tables = _tables(db) if db is not None else set()
         expires_at = _expiry(db, tables).get(proposal_id) if db is not None else None
-        row = (db.execute('SELECT receipt FROM proposals WHERE id=?', (proposal_id,)).fetchone()
-               if expires_at is not None and 'proposals' in tables else None)
-    if row is not None and row['receipt'] is None and _expired(expires_at):
+        row = (db.execute('SELECT receipt, payload FROM proposals WHERE id=?', (proposal_id,)).fetchone()
+               if db is not None and 'proposals' in tables else None)
+    if row is not None and row['receipt'] is None and _card_proposal(json.loads(row['payload'])):
+        raise HTTPException(409, CARD_ONLY)
+    if row is not None and row['receipt'] is None and expires_at is not None and _expired(expires_at):
         raise HTTPException(409, EXPIRED_PREVIEW)
     ledger = get_ledger()
     prepare_plan_links(ledger, proposal_id)
