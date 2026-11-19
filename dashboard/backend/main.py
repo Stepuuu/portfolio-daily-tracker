@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 
 from backend.api import chat, portfolio, market, memory, suggestions, settings
 from backend.api import backtest, portfolio_tracker, ledger, lab
-from backend import features
+from backend import extensions, features
 from backend.services.agent_service import AgentService
 from backend.trusted_hosts import HostAllowList, allowed_hosts
 from core import sqlite_guard
@@ -151,6 +151,13 @@ async def health_check():
             "memory": agent_service.memory_manager is not None if agent_service else False,
         }
     }
+
+
+# Separately installed modules named in TRACKER_EXTENSIONS (docs/EXTENSIONS.md), after every built-in
+# route (so none of those can be shadowed) and behind the same middleware. Nothing is imported when
+# the variable is unset.
+extensions.load()
+extensions.mount(app)
 
 
 def get_agent_service() -> AgentService:

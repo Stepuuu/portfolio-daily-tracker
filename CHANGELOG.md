@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Extensions** (`TRACKER_EXTENSIONS=pkg.mod,other.mod`): separately installed
+  Python modules add API routes, background tasks, chat-assistant tools and
+  notification channels, and can be told each time a day's close report is
+  finished, again when a late entry makes the day's report anew
+  (`on_close_report`, read from the pipeline's checkpoint, once per report
+  content, in a thread of its own, so it cannot delay the snapshot). A private
+  installation is the released application plus its own package. A module
+  that fails is logged and listed by `GET /api/app/status` (`extensions`, only
+  when the variable is set) and never takes the API down. Demo mode loads none;
+  lab-only mode mounts their routes but starts no background task. Extensions
+  run with the backend's privileges. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+- `BACKEND_START_TIMEOUT`: how many seconds `start.sh` waits for the backend's
+  `/health` (default 30, as before; 1 to 3600), named in the message printed
+  when it gives up. Compose uses it as the backend health check's
+  `start_period` (default none, as before).
+
 ## 4.0.0 — 2026-11-19
 
 A new daily desk built on the confirmed ledger. Holdings now come only from the

@@ -10,6 +10,14 @@ export FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 TRACKER_PYTHON="${PYTHON:-python3}"
 MODE="${1:-all}"
 case "$MODE" in all|backend|frontend|engine) ;; *) echo 'Usage: ./start.sh [all|backend|frontend|engine]' >&2; exit 2;; esac
+# Seconds the backend may take to answer /health before this script gives up; a loaded machine needs longer.
+BACKEND_START_TIMEOUT="${BACKEND_START_TIMEOUT:-30}"
+if [ "$MODE" = all ] || [ "$MODE" = backend ]; then
+    if ! [[ "$BACKEND_START_TIMEOUT" =~ ^[1-9][0-9]{0,3}$ ]] || [ "$BACKEND_START_TIMEOUT" -gt 3600 ]; then
+        echo "BACKEND_START_TIMEOUT must be a whole number of seconds from 1 to 3600, not '$BACKEND_START_TIMEOUT'." >&2
+        exit 2
+    fi
+fi
 command -v "$TRACKER_PYTHON" >/dev/null || { echo 'Python 3.10+ is required.' >&2; exit 1; }
 pids=()
 TRACKER_PID_FILE=""
@@ -49,7 +57,7 @@ PY
     local pid=$!
     pids+=("$pid")
     local ready=0
-    for ((attempt=0; attempt<30; attempt++)); do
+    for ((attempt=0; attempt<BACKEND_START_TIMEOUT; attempt++)); do
         kill -0 "$pid" 2>/dev/null || { echo 'Backend exited during startup.' >&2; exit 1; }
         if "$TRACKER_PYTHON" - "$BACKEND_PORT" <<'PY' >/dev/null 2>&1
 import urllib.request, sys
@@ -58,7 +66,11 @@ PY
         then ready=1; break; fi
         sleep 1
     done
-    [ "$ready" -eq 1 ] || { echo 'Backend did not become ready within 30 seconds.' >&2; exit 1; }
+    [ "$ready" -eq 1 ] || {
+        echo "Backend did not become ready within $BACKEND_START_TIMEOUT seconds (BACKEND_START_TIMEOUT)." >&2
+        echo 'On a slow or busy machine allow longer, for example: BACKEND_START_TIMEOUT=120 make start' >&2
+        exit 1
+    }
     echo "Backend ready: http://localhost:$BACKEND_PORT"
 }
 start_frontend() {

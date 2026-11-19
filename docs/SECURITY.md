@@ -108,6 +108,11 @@ boundary for a public deployment.
   runs Python with the backend's privileges, and so do research plugins
   (`TRACKER_LAB_PLUGINS`). Neither is a sandbox; enable them only for code you
   trust.
+- **Extensions** (`TRACKER_EXTENSIONS`, none by default) run inside the backend
+  with all of its privileges: they can read and change everything, and their
+  routes have no protection beyond the host allow-list. Only their author keeps
+  them to the propose-and-confirm rule. Demo mode loads none. See
+  [EXTENSIONS.md](EXTENSIONS.md).
 - **External agents** with shell or API access to your machine are outside the
   propose-and-confirm boundary.
 - **Quote data** comes from public endpoints without authentication of the data;

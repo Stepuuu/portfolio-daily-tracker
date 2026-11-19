@@ -167,6 +167,11 @@ Under Docker the automatic close snapshot reports 不可用 because the backend
 image does not contain the engine scripts; see
 [docs/ALERTS_AND_ROUTINES.md](docs/ALERTS_AND_ROUTINES.md#running-it).
 
+On a slow or busy machine the backend can need longer to start than the 30
+seconds `start.sh` waits (`Backend did not become ready within 30 seconds`), or
+than its Compose health check allows (`docker compose up` reports the backend
+`unhealthy`): set `BACKEND_START_TIMEOUT` (see [Configuration](#configuration)).
+
 ## Demo mode
 
 ```bash
@@ -211,6 +216,7 @@ by default).
 | `BACKEND_HOST`, `BACKEND_PORT` | `127.0.0.1`, `8000` | backend address (`start.sh`; the port also in Compose) |
 | `FRONTEND_HOST`, `FRONTEND_PORT` | `127.0.0.1`, `3000` | web app address (`start.sh`; the port also in Compose) |
 | `PYTHON` | `python3` | interpreter used by `start.sh` and the engine shell scripts |
+| `BACKEND_START_TIMEOUT` | `30` (`start.sh`), none (Compose) | seconds the backend may take to answer `/health` at start-up. `start.sh` gives up after it (a whole number from 1 to 3600, from the shell, e.g. `BACKEND_START_TIMEOUT=120 make start`); Compose does not count failed health checks during it (`start_period`, from `.env`) |
 | **Quotes** | | |
 | `TRACKER_QUOTE_SOURCE` | Eastmoney, then Yahoo | `eastmoney` or `yahoo`: only that source; `fake`: scripted quotes from `PORTFOLIO_DIR/fake_quotes.json` |
 | `TRACKER_EASTMONEY_PROXY` | off | `1`: reach Eastmoney through the proxy in the environment |
@@ -230,6 +236,8 @@ by default).
 | **Backtest and research** | | |
 | `TRACKER_ALLOW_CUSTOM_STRATEGIES` | off | `1`: allow uploading Python strategies (runs with the backend's privileges) |
 | `TRACKER_LAB_PLUGINS`, `TRACKER_LAB_URL` | none, `http://127.0.0.1:8000` | research extensions and the CLI's backend; see [docs/RESEARCH.md](docs/RESEARCH.md) |
+| **Extensions** | | |
+| `TRACKER_EXTENSIONS` | none | comma-separated Python modules that add routes, background tasks, chat tools, delivery channels and a hook for each finished close report; they run with the backend's privileges; see [docs/EXTENSIONS.md](docs/EXTENSIONS.md) |
 | **Legacy engine scripts** | | |
 | `CONDA_ENV`, `CONDA_EXE` | none, `conda` | run the engine's child scripts in a conda environment |
 
@@ -492,7 +500,7 @@ Known in 4.0.0 and left as they are for now:
 [Full guide (中文)](docs/FULL_GUIDE_CN.md) · [Ledger](docs/LEDGER.md) ·
 [Import](docs/IMPORT.md) · [Alerts and routines](docs/ALERTS_AND_ROUTINES.md) ·
 [Accounting conventions](docs/ACCOUNTING.md) · [Security](docs/SECURITY.md) ·
-[Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md)
+[Extensions](docs/EXTENSIONS.md) · [Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md)
 
 ## Versions
 

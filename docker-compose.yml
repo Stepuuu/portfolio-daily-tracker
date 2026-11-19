@@ -20,6 +20,8 @@ services:
       interval: 15s
       timeout: 6s
       retries: 5
+      # Failed checks in the first BACKEND_START_TIMEOUT seconds do not count (a loaded machine starts slowly).
+      start_period: "${BACKEND_START_TIMEOUT:-0}s"
     restart: unless-stopped
 
   # Portfolio Dashboard Frontend (React + Vite)

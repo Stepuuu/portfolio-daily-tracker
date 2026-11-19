@@ -601,7 +601,10 @@ cd engine && python3 scripts/portfolio_daily_update.py --action auto-pipeline
 ## 常见问题
 
 **打开网页显示「连接中断」或一片空白。** 后端没有运行或启动失败。看运行 `make start` 的终端输出；`Backend dependencies are missing. Run make setup first.`
-表示还没装依赖；端口被占用时换 `BACKEND_PORT` / `FRONTEND_PORT`。
+表示还没装依赖；端口被占用时换 `BACKEND_PORT` / `FRONTEND_PORT`。`Backend did not become ready within 30 seconds (BACKEND_START_TIMEOUT).`
+表示后端 30 秒内没有响应，机器较慢或负载高时常见：用 `BACKEND_START_TIMEOUT=120 make start` 多等一会儿（1 到 3600 秒）。
+Docker 下 `docker compose up` 报后端 `unhealthy` 时，在仓库根目录的 `.env` 写 `BACKEND_START_TIMEOUT=120`，
+健康检查在这段时间内不把失败计数。
 
 **接口返回 `400 Invalid host header`。** 用了 `localhost` 以外的名字打开。把它加到 `TRACKER_ALLOWED_HOSTS` 并重启后端，先读 [安全说明](SECURITY.md)。
 

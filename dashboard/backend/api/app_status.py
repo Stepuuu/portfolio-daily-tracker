@@ -8,6 +8,12 @@
     ledger   {active, revision}: whether a confirmed ledger exists and its revision
              (0 and False when there is none; both null when it cannot be read)
     version  the application version
+    extensions  only when TRACKER_EXTENSIONS names a module (backend/extensions.py,
+             docs/EXTENSIONS.md): one item per named module, in order:
+             {name, status: 'loaded', provides: [...], started (when it has background
+             tasks or on_close_report), errors: [{stage, error, at, ...}]}, or
+             {name, status: 'failed', stage, error} (the exception type), or
+             {name, status: 'skipped', reason: 'demo'}
 
 It never writes: the ledger is opened read-only (``core.ledger.read_only_connection``: no
 ``-wal`` / ``-shm`` file is left beside a WAL ledger), and a missing file (or one without a
@@ -19,6 +25,7 @@ import sqlite3
 
 from fastapi import APIRouter, Request
 
+from backend import extensions
 from core.ledger import LedgerBusy, portfolio_directory, read_only_connection
 
 logger = logging.getLogger(__name__)
@@ -51,4 +58,8 @@ def ledger_status() -> dict:
 @router.get('/status')
 def status(request: Request):
     # A plain ``def``: the SQLite read runs in a worker thread.
-    return {'mode': mode(), 'ledger': ledger_status(), 'version': request.app.version}
+    body = {'mode': mode(), 'ledger': ledger_status(), 'version': request.app.version}
+    named = extensions.status()
+    if named is not None:
+        body['extensions'] = named
+    return body

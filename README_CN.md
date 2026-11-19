@@ -138,6 +138,9 @@ Docker 后端镜像不含快照引擎脚本，所以收盘自动快照显示 **�
 [docs/ALERTS_AND_ROUTINES.md](docs/ALERTS_AND_ROUTINES.md#running-it) 和
 [完整使用指南](docs/FULL_GUIDE_CN.md#收盘后自动快照)。
 
+机器较慢或负载高时，后端启动可能超过 `start.sh` 等待的 30 秒（`Backend did not become ready within 30 seconds`），
+或超过 Compose 健康检查允许的时间（`docker compose up` 报后端 `unhealthy`）：设置 `BACKEND_START_TIMEOUT`（见[配置](#配置)）。
+
 ## 演示模式
 
 ```bash
@@ -173,6 +176,7 @@ make demo
 | `BACKEND_HOST`、`BACKEND_PORT` | `127.0.0.1`、`8000` | 后端地址（`start.sh`；端口也用于 Compose） |
 | `FRONTEND_HOST`、`FRONTEND_PORT` | `127.0.0.1`、`3000` | 网页地址（`start.sh`；端口也用于 Compose） |
 | `PYTHON` | `python3` | `start.sh` 和引擎 shell 脚本使用的解释器 |
+| `BACKEND_START_TIMEOUT` | `30`（`start.sh`）、无（Compose） | 启动时后端响应 `/health` 最多可用的秒数。`start.sh` 超过它就放弃（1 到 3600 的整数，取自 shell 环境，如 `BACKEND_START_TIMEOUT=120 make start`）；Compose 在这段时间内不把失败的健康检查计数（`start_period`，取自 `.env`） |
 | **行情** | | |
 | `TRACKER_QUOTE_SOURCE` | 先东方财富，再雅虎 | `eastmoney` 或 `yahoo`：只用这一个源；`fake`：读取 `PORTFOLIO_DIR/fake_quotes.json` 中的模拟行情 |
 | `TRACKER_EASTMONEY_PROXY` | 关 | `1`：通过环境中的代理访问东方财富 |
@@ -192,6 +196,8 @@ make demo
 | **回测与研究** | | |
 | `TRACKER_ALLOW_CUSTOM_STRATEGIES` | 关 | `1`：允许上传 Python 策略（以后端进程的权限运行） |
 | `TRACKER_LAB_PLUGINS`、`TRACKER_LAB_URL` | 无、`http://127.0.0.1:8000` | 研究扩展和命令行连接的后端；见 [docs/RESEARCH_CN.md](docs/RESEARCH_CN.md) |
+| **扩展** | | |
+| `TRACKER_EXTENSIONS` | 无 | 逗号分隔的 Python 模块，可以添加接口、后台任务、对话工具、通知渠道，以及每份收盘日报完成时的回调；以后端进程的全部权限运行；见 [docs/EXTENSIONS.md](docs/EXTENSIONS.md) |
 | **旧版引擎脚本** | | |
 | `CONDA_ENV`、`CONDA_EXE` | 无、`conda` | 让引擎的子脚本在指定 conda 环境中运行 |
 
@@ -364,7 +370,7 @@ for smoke in tests/browser_*smoke.py; do python "$smoke" || exit 1; done
 
 [完整使用指南](docs/FULL_GUIDE_CN.md) · [账本](docs/LEDGER.md) · [导入](docs/IMPORT.md) ·
 [提醒与例行任务](docs/ALERTS_AND_ROUTINES.md) · [记账口径](docs/ACCOUNTING.md) · [安全](docs/SECURITY.md) ·
-[后续计划](docs/ROADMAP.md) · [更新记录](CHANGELOG.md)
+[扩展](docs/EXTENSIONS.md) · [后续计划](docs/ROADMAP.md) · [更新记录](CHANGELOG.md)
 
 ## 版本
 

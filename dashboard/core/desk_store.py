@@ -301,7 +301,9 @@ def side_database(filename: str, create: bool = True) -> Iterator[Optional[sqlit
 
     For the few records that must be committed on their own while a
     ``transaction()`` holds the store's write lock (``proposals`` records the
-    external effects of ``apply`` this way). The connection is in autocommit
+    external effects of ``apply`` this way), and for records that must not
+    change ``desk.sqlite3`` (``close_reports`` keeps what the extensions'
+    listeners were told in ``desk-extensions.sqlite3``). The connection is in autocommit
     mode: every statement outside an explicit ``BEGIN`` commits at once.
     ``filename`` is ``desk-<name>.sqlite3``. With ``create=False`` a missing
     file yields ``None`` instead of being created. Never use it for data that

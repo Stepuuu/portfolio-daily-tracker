@@ -30,7 +30,8 @@ Custom strategy upload executes Python with the backend process's privileges.
 It is disabled by default. Only trusted local users should set
 `TRACKER_ALLOW_CUSTOM_STRATEGIES=1`; this flag does not create a sandbox.
 Trusted Python research plugins (`TRACKER_LAB_PLUGINS`) also run with local
-process privileges.
+process privileges, and so do extensions (`TRACKER_EXTENSIONS`, see
+[docs/EXTENSIONS.md](docs/EXTENSIONS.md)).
 
 ## Data sent elsewhere
 

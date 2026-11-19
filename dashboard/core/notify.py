@@ -403,6 +403,12 @@ def unregister_deliverer(deliverer: Deliverer) -> None:
             channel.close()
 
 
+def registered_deliverers() -> List[Deliverer]:
+    """The registered delivery functions, in registration order."""
+    with _registry_lock:
+        return [channel.deliverer for channel in _deliverers]
+
+
 def delivery_stats() -> Dict[str, Dict[str, int]]:
     """Per registered channel: how many notifications were delivered, failed, slow or dropped."""
     out = {}

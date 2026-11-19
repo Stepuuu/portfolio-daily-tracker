@@ -91,6 +91,13 @@ ALLOWED = {
         "the compute child's private result file; the worker only logs diagnostic, people get classify()",
     ('dashboard/core/routines/scheduler.py', 'self.last_error = type(exc).__name__'):
         'kept on the scheduler object for debugging; never serialised or returned',
+    ('dashboard/core/close_reports.py', '(type(error).__name__, retry, stamp, *key))'):
+        "the type of what an extension's on_close_report raised, kept in desk-extensions.sqlite3 for diagnosis "
+        '(close_reports.deliveries); never returned by the API or given to the model',
+    # -- the operator's own code (extensions, none unless TRACKER_EXTENSIONS names one) --
+    ('dashboard/backend/extensions.py', 'kind = type(exc).__name__'):
+        "the type (never the message) of what an installed extension's own code raised, listed for the operator "
+        'by GET /api/app/status; never given to the model',
     # -- command-line scripts: their own output, for the person running them --
     ('engine/scripts/create_demo.py',
      'parser.error(str(exc))   # its own refusal: a day it cannot make the demo for, or not a demo directory'):

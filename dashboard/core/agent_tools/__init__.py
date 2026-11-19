@@ -78,6 +78,17 @@ def register(factory: Factory) -> Factory:
     return factory
 
 
+def unregister(factory: Factory) -> None:
+    """Remove a registered factory; tools already built from it are not affected."""
+    if factory in _factories:
+        _factories.remove(factory)
+
+
+def registered() -> List[Factory]:
+    """The registered factories, in registration order (a copy)."""
+    return list(_factories)
+
+
 def discover() -> None:
     """Import every module of this package so that its factories register."""
     for module in sorted(pkgutil.iter_modules(__path__), key=lambda found: found.name):

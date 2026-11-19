@@ -250,4 +250,6 @@ Every alert, routine result and setup event is a row in `desk.sqlite3`, shown by
 the bell (站内通知) in the header. No external push channel is registered for
 alerts in this release; the close snapshot's daily report goes to Feishu only
 through the existing report pipeline (`feishu_chat_id` in the portfolio's
-`config.json`, see [FEISHU_WORKBENCH.md](FEISHU_WORKBENCH.md)).
+`config.json`, see [FEISHU_WORKBENCH.md](FEISHU_WORKBENCH.md)). An extension can
+register a delivery channel and be told each time a day's report is finished
+([EXTENSIONS.md](EXTENSIONS.md)).

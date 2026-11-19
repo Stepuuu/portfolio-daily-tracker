@@ -5,6 +5,9 @@ here, so that ``backend/main.py`` does not have to change again.
 
 Imports happen inside the functions: a feature that fails to import must not
 take the whole API down at module import time.
+
+Separately installed modules (``TRACKER_EXTENSIONS``) add routers and tasks of
+the same shapes through ``backend/extensions.py``, without editing this file.
 """
 from contextlib import AsyncExitStack, asynccontextmanager
 import os
@@ -88,6 +91,11 @@ def background_tasks() -> List[Callable]:
     # -- pre-market and post-market routines --------------------------------
     from core.routines.scheduler import background as routines_background
     factories.append(routines_background)
+
+    # -- extensions (TRACKER_EXTENSIONS; docs/EXTENSIONS.md), after every built-in task ----
+    from backend import extensions
+    if extensions.loaded():
+        factories.append(extensions.background)
 
     return factories
 
