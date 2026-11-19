@@ -1,0 +1,52 @@
+/*
+ * Design tokens. Colours are RGB triplets so Tailwind can add alpha (`bg-up/10`).
+ * The theme is chosen by `data-theme` on <html> (set before the first paint by the script in
+ * index.html; see src/lib/theme.ts). The default follows the system (跟随系统); 设置 can fix 浅色 or 深色.
+ * `.theme-light` makes a light island inside a dark page (legacy light pages only).
+ *
+ * tests/tokens.test.mjs parses this file and checks contrast, so keep one `--name: r g b;` per line.
+ * Roles: red (`--up`) means up / profit and green (`--down`) means down / loss, nothing else.
+ * Errors, warnings and stale data use `--warn`. `--accent` is the only accent colour.
+ */
+
+:root,
+[data-theme='dark'] {
+  --scheme: dark;
+  --bg: 15 18 23; /* #0f1217 app background */
+  --surface: 22 26 33; /* #161a21 panels, tables, dialogs */
+  --surface-2: 29 34 43; /* #1d222b table header, hover, selected */
+  --surface-3: 35 41 51; /* #232933 raised control on surface-2 (selected segment); tinted badges on it keep 4.5:1 */
+  --border: 39 45 55; /* #272d37 dividers */
+  --border-input: 104 112 128; /* #687080 control outlines, at least 3:1 */
+  --text: 230 232 235; /* #e6e8eb primary text */
+  --text-2: 169 176 187; /* #a9b0bb labels, flat values */
+  --text-3: 153 159 171; /* #999fab meta, timestamps */
+  --accent: 126 167 244; /* #7ea7f4 primary button, links, focus, active nav */
+  --accent-fg: 15 18 23; /* #0f1217 text on accent */
+  --up: 249 112 102; /* #f97066 up / profit only */
+  --down: 63 191 127; /* #3fbf7f down / loss only */
+  --warn: 229 162 58; /* #e5a23a errors, warnings, stale data */
+  --shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --backdrop: rgb(4 6 9 / 0.66);
+}
+
+[data-theme='light'],
+.theme-light {
+  --scheme: light;
+  --bg: 246 247 249; /* #f6f7f9 */
+  --surface: 255 255 255; /* #ffffff */
+  --surface-2: 241 243 245; /* #f1f3f5 */
+  --surface-3: 255 255 255; /* #ffffff */
+  --border: 227 230 234; /* #e3e6ea */
+  --border-input: 125 133 147; /* #7d8593 */
+  --text: 22 24 29; /* #16181d */
+  --text-2: 75 83 97; /* #4b5361 */
+  --text-3: 95 102 115; /* #5f6673 */
+  --accent: 34 83 208; /* #2253d0 */
+  --accent-fg: 255 255 255; /* #ffffff */
+  --up: 184 36 26; /* #b8241a */
+  --down: 5 107 64; /* #056b40 */
+  --warn: 138 81 0; /* #8a5100 */
+  --shadow-overlay: 0 8px 24px rgb(16 24 40 / 0.12), 0 2px 6px rgb(16 24 40 / 0.06);
+  --backdrop: rgb(16 24 40 / 0.36);
+}

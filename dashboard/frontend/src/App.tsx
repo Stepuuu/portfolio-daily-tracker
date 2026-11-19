@@ -1,36 +1,44 @@
-import { lazy, Suspense } from 'react'
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const Ledger = lazy(() => import('./pages/Ledger'))
-const Portfolio = lazy(() => import('./pages/Portfolio'))
-const PortfolioTracker = lazy(() => import('./pages/PortfolioTracker'))
-const Market = lazy(() => import('./pages/Market'))
-const Memory = lazy(() => import('./pages/Memory'))
-const Settings = lazy(() => import('./pages/Settings'))
-const Help = lazy(() => import('./pages/Help'))
-const Backtest = lazy(() => import('./pages/Backtest'))
-const ResearchLab = lazy(() => import('./pages/ResearchLab'))
+import { Suspense } from 'react'
+import { BrowserRouter as Router, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { EmptyState } from '@/components/ui'
+import { AppShell, PageLoading, RoutePage } from '@/components/shell/AppShell'
+import { resolveRedirect } from '@/lib/navigation'
+import { hiddenRoutes, navPages, redirects } from './routes'
 
+function NotFound() {
+  return (
+    <EmptyState
+      title="页面不存在"
+      description="这个地址没有对应的页面，可能已经移动。"
+      action={<Link to="/" className="text-body text-accent underline-offset-4 hover:underline">回到今日</Link>}
+    />
+  )
+}
+
+/** An old path: on to its new home, with the query string and hash it came with. */
+function LegacyRedirect({ to }: { to: string }) {
+  const { pathname, search, hash } = useLocation()
+  return <Navigate to={resolveRedirect(redirects, pathname, search, hash) ?? to} replace />
+}
+
+// The route table (src/routes.tsx) is the only list of pages: everything below is built from it.
 function App() {
   return (
     <Router>
-      <Suspense fallback={<div role="status" className="p-6 text-slate-400">正在加载…</div>}>
       <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="ledger" element={<Ledger />} />
-          <Route path="portfolio" element={<Portfolio />} />
-          <Route path="tracker" element={<PortfolioTracker />} />
-          <Route path="market" element={<Market />} />
-          <Route path="memory" element={<Memory />} />
-          <Route path="backtest" element={<Backtest />} />
-          <Route path="lab" element={<ResearchLab />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="help" element={<Help />} />
+        {hiddenRoutes.filter((route) => route.bare).map((route) => (
+          <Route key={route.path} path={route.path} element={<Suspense fallback={<PageLoading />}><route.element /></Suspense>} />
+        ))}
+        <Route element={<AppShell />}>
+          {[...navPages, ...hiddenRoutes.filter((route) => !route.bare)].map((route) => (
+            <Route key={route.path} path={route.path} element={<RoutePage route={route}><route.element /></RoutePage>} />
+          ))}
+          {redirects.map((redirect) => (
+            <Route key={redirect.from} path={redirect.from} element={<LegacyRedirect to={redirect.to} />} />
+          ))}
+          <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
-      </Suspense>
     </Router>
   )
 }

@@ -1,11 +1,32 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Portfolio Dashboard</title>
+    <title>交易助手</title>
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      // Theme bootstrap: choose the theme before the first paint so the page never flashes.
+      // Same key, default and resolution as src/lib/theme.ts: follow the system unless 浅色 or 深色 was chosen.
+      (function () {
+        var preference = 'system'
+        try {
+          var stored = localStorage.getItem('pdt.theme')
+          if (stored === 'light' || stored === 'dark' || stored === 'system') preference = stored
+        } catch (error) {}
+        var theme = preference
+        if (preference === 'system') {
+          try {
+            theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          } catch (error) {
+            theme = 'dark'
+          }
+        }
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
+    </script>
   </head>
-  <body class="bg-slate-900 text-white">
+  <body class="bg-bg text-fg">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
