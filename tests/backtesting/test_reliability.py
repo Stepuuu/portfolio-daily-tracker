@@ -100,7 +100,9 @@ def test_final_liquidation_does_not_add_an_extra_trading_day():
     engine.add_data("EXAMPLE", "", "", df=frame, warmup=1)
     engine.add_strategy(BuyOnceStrategy)
     result = engine.run()
-    assert len(result.equity_df) == len(frame)
+    # One row per tradable bar: the warm-up bar is no longer recorded as a flat day.
+    assert len(result.equity_df) == len(frame) - 1
+    assert result.equity_df.index[-1] == frame.index[-1]
     assert result.equity_df.index.is_unique
     assert result.trades[-1].order_id == "FORCE_CLOSE"
 

@@ -1,0 +1,111 @@
+{
+  "version": "2026-11-17.1",
+  "verification": "Every rate and effective date below was written from public rules without access to the official notices. Each row names the notice it comes from; verify each one against that notice before relying on it.",
+  "commission_defaults": {
+    "a_share": {"rate": "0.00025", "min": "5", "note": "Assumed broker commission 0.025% with a 5 CNY minimum per order, applied to the commission only. Not a rule: set your broker's rate."},
+    "hk": {"rate": "0.00025", "min": "5", "note": "Assumed broker commission 0.025% with a 5 HKD minimum per order. Not a rule: set your broker's rate and platform fees."},
+    "us": {"rate": "0", "min": "0", "note": "Assumed commission-free broker. Not a rule: set your broker's rate."}
+  },
+  "markets": {
+    "a_share": {
+      "currency": "CNY",
+      "ignored": [
+        "Exchange handling fee (经手费) and CSRC levy (证管费) are normally inside the broker commission and are not added.",
+        "Transfer-fee rules before 2015-08-01 (SSE charged per 1,000 shares) are not modelled; the 2015 row is used."
+      ],
+      "components": {
+        "stamp_duty": {
+          "label": "印花税",
+          "sides": ["sell"],
+          "applies_to": ["stock"],
+          "rounding": "cent_half_up",
+          "rows": [
+            {"from": "2008-09-19", "rate": "0.001", "source": "Ministry of Finance / State Taxation Administration, 2008-09-18: securities transaction stamp duty 0.1% charged on the seller only from 2008-09-19. From public rules, verify against the official notice."},
+            {"from": "2023-08-28", "rate": "0.0005", "source": "Ministry of Finance / State Taxation Administration Announcement 2023 No. 39: stamp duty on securities transactions halved from 2023-08-28. From public rules, verify against the official notice."}
+          ]
+        },
+        "transfer_fee": {
+          "label": "过户费",
+          "sides": ["buy", "sell"],
+          "applies_to": ["stock"],
+          "rounding": "cent_half_up",
+          "rows": [
+            {"from": "2015-08-01", "rate": "0.00002", "source": "China Securities Depository and Clearing (CSDC): A-share transfer fee unified at 0.002% of turnover for Shanghai and Shenzhen from 2015-08-01. From public rules, verify against the official notice."},
+            {"from": "2022-04-29", "rate": "0.00001", "source": "CSDC notice lowering the A-share transfer fee to 0.001% of turnover from 2022-04-29. From public rules, verify against the official notice."}
+          ]
+        }
+      }
+    },
+    "hk": {
+      "currency": "HKD",
+      "ignored": [
+        "Stamp duty relief for HK ETFs (from 2015-02-13) is not modelled: every HK symbol is charged as a stock.",
+        "CCASS settlement fee and broker platform fees are not added; put them in the commission if your broker charges them."
+      ],
+      "components": {
+        "stamp_duty": {
+          "label": "印花税",
+          "sides": ["buy", "sell"],
+          "applies_to": ["stock"],
+          "rounding": "dollar_up",
+          "rows": [
+            {"from": "2014-12-01", "rate": "0.001", "source": "Stamp Duty Ordinance (Cap. 117) Head 2(1): 0.1% of the consideration on each of buyer and seller (0.2% per transaction since 2001-09-01), rounded up to the next dollar. From public rules, verify against the official notice."},
+            {"from": "2021-08-01", "rate": "0.0013", "source": "Stamp Duty (Amendment) Ordinance 2021 (2021-22 Budget): 0.13% on each side from 2021-08-01. From public rules, verify against the official notice."},
+            {"from": "2023-11-17", "rate": "0.001", "source": "2023 Policy Address: stamp duty on stock transfers back to 0.1% on each side from 2023-11-17. From public rules, verify against the official notice."}
+          ]
+        },
+        "trading_fee": {
+          "label": "交易费",
+          "sides": ["buy", "sell"],
+          "applies_to": ["stock"],
+          "rounding": "cent_half_up",
+          "rows": [
+            {"from": "2014-12-01", "rate": "0.00005", "source": "HKEX trading fee 0.005% of the consideration on each side (rate in force before 2023). From public rules, verify against the official notice."},
+            {"from": "2023-01-01", "rate": "0.0000565", "source": "HKEX trading fee raised to 0.00565% on each side from 2023-01-01. From public rules, verify against the official notice."}
+          ]
+        },
+        "sfc_levy": {
+          "label": "证监会征费",
+          "sides": ["buy", "sell"],
+          "applies_to": ["stock"],
+          "rounding": "cent_half_up",
+          "rows": [
+            {"from": "2014-12-01", "rate": "0.000027", "source": "SFC transaction levy reduced from 0.003% to 0.0027% on each side from 2014-12-01. From public rules, verify against the official notice."}
+          ]
+        },
+        "afrc_levy": {
+          "label": "会财局征费",
+          "sides": ["buy", "sell"],
+          "applies_to": ["stock"],
+          "rounding": "cent_half_up",
+          "rows": [
+            {"from": "2014-12-01", "rate": "0", "source": "No FRC/AFRC transaction levy before 2022-01-01. From public rules, verify against the official notice."},
+            {"from": "2022-01-01", "rate": "0.0000015", "source": "Financial Reporting Council (Amendment) Ordinance 2019: FRC transaction levy 0.00015% on each side from 2022-01-01 (the FRC became the AFRC on 2022-10-01). From public rules, verify against the official notice."}
+          ]
+        }
+      }
+    },
+    "us": {
+      "currency": "USD",
+      "ignored": [
+        "FINRA Trading Activity Fee (TAF) on sells is not modelled (at most a few dollars per order).",
+        "SEC fee rates after the last row are assumed unchanged; the SEC resets the rate at least once per fiscal year."
+      ],
+      "components": {
+        "sec_fee": {
+          "label": "SEC 费",
+          "sides": ["sell"],
+          "applies_to": ["stock"],
+          "rounding": "cent_up",
+          "rows": [
+            {"from": "2021-02-25", "rate": "0.0000051", "source": "SEC Section 31 fee rate advisory, fiscal 2021: $5.10 per million dollars of sales. From public rules, verify against the official notice."},
+            {"from": "2022-05-22", "rate": "0.0000229", "source": "SEC Section 31 fee rate advisory, fiscal 2022: $22.90 per million from 2022-05-22. From public rules, verify against the official notice."},
+            {"from": "2023-02-27", "rate": "0.000008", "source": "SEC Section 31 fee rate advisory, fiscal 2023: $8.00 per million from 2023-02-27. From public rules, verify against the official notice."},
+            {"from": "2024-05-22", "rate": "0.0000278", "source": "SEC Section 31 fee rate advisory, fiscal 2024: $27.80 per million from 2024-05-22. From public rules, verify against the official notice."},
+            {"from": "2025-05-14", "rate": "0", "source": "SEC Section 31 fee rate advisory, fiscal 2025 mid-year adjustment: $0.00 per million from 2025-05-14. From public rules, verify against the official notice."}
+          ]
+        }
+      }
+    }
+  }
+}

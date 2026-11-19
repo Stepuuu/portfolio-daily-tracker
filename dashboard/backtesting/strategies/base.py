@@ -27,12 +27,18 @@ class Order:
     order_type: str      # "market" / "limit" / "stop"
     quantity: float
     price: float         # 限价/触发价 (市价单填0)
-    status: str = "pending"  # pending/filled/cancelled/rejected
+    # pending / queued (waiting, sells only) / partially_filled / filled /
+    # partial_cancelled (buy: rest dropped) / expired / cancelled / rejected
+    status: str = "pending"
     filled_qty: float = 0.0
     filled_price: float = 0.0
     commission: float = 0.0
     timestamp: Optional[Any] = None
     slippage: float = 0.0
+    reason: str = ""         # why the order did not (fully) fill, e.g. limit_up / suspended
+    bars_waited: int = 0     # bars on which it could not (fully) fill
+    # stop / target orders: protect the whole position at trigger time instead of `quantity`
+    follow_position: bool = False
 
     @property
     def is_buy(self) -> bool:
@@ -55,6 +61,8 @@ class Trade:
     commission: float
     timestamp: Any
     pnl: float = 0.0     # 本次成交带来的盈亏 (平仓时计算)
+    fees: Dict[str, float] = field(default_factory=dict)  # commission 的组成: 佣金/印花税/过户费/...
+    reason: str = "signal"   # signal / stop / target / end_mark (forced close at the end of the data)
 
 
 @dataclass
@@ -204,14 +212,69 @@ class Strategy(ABC):
         )
 
     def close_position(self, symbol: Optional[str] = None) -> Optional[Order]:
-        """清仓"""
+        """清仓. A sell already working for the whole position is returned instead
+        of sending another one (sells blocked by limit-down keep retrying)."""
         if self._engine is None:
             return None
         sym = symbol or self._data.symbol
         pos = self.get_position(sym)
-        if pos and pos.quantity > 0:
-            return self.sell(sym, quantity=pos.quantity)
-        return None
+        if not pos or pos.quantity <= 0:
+            return None
+        working = [o for o in self.get_pending_orders(sym, direction="sell") if o.order_type in ("market", "limit")]
+        covered = sum(o.quantity - o.filled_qty for o in working)
+        if working and covered >= pos.quantity - 1e-9:
+            return working[0]
+        return self.sell(sym, quantity=pos.quantity - covered)
+
+    def set_stop(self, price: float, symbol: Optional[str] = None,
+                 quantity: Optional[float] = None) -> Optional[Order]:
+        """Stop-loss sell that triggers inside a bar: it fills when the low reaches
+        `price`, at min(open, price) less slippage (a gap below the stop fills at
+        the open). quantity None protects the whole position. Replaces the stop
+        already working for the symbol (move it every bar for a trailing stop).
+        It respects A-share T+1 and limit-down boards, never expires, and is
+        cancelled when the position is closed. With a target on the same bar the
+        stop goes first unless the open is already above the target."""
+        if self._engine is None:
+            return None
+        return self._engine.submit_exit(self, symbol or self._data.symbol, "stop", price, quantity)
+
+    def set_target(self, price: float, symbol: Optional[str] = None,
+                   quantity: Optional[float] = None) -> Optional[Order]:
+        """Take-profit sell: fills when the high reaches `price`, at max(open,
+        price). Replaces the target already working for the symbol; cancelled
+        with the position like set_stop."""
+        if self._engine is None:
+            return None
+        return self._engine.submit_exit(self, symbol or self._data.symbol, "target", price, quantity)
+
+    def get_pending_orders(
+        self,
+        symbol: Optional[str] = None,
+        direction: Optional[str] = None,
+        order_type: Optional[str] = None,
+    ) -> List[Order]:
+        """Orders still working at the broker (a buy works for 1 bar, a sell for up
+        to 20). Filter by symbol (None: the primary symbol; "*": all), direction
+        and order type."""
+        if self._engine is None:
+            return []
+        sym = None if symbol == "*" else (symbol or (self._data.symbol if self._data else None))
+        return [
+            order for order in self._engine.get_pending_orders(sym)
+            if (direction is None or order.direction == direction)
+            and (order_type is None or order.order_type == order_type)
+        ]
+
+    def has_pending_order(self, symbol: Optional[str] = None, direction: Optional[str] = None,
+                          order_type: Optional[str] = None) -> bool:
+        return bool(self.get_pending_orders(symbol, direction, order_type))
+
+    def cancel_order(self, order: Order) -> bool:
+        """Withdraw a working order. False if it already filled, expired or was cancelled."""
+        if self._engine is None:
+            return False
+        return self._engine.cancel_order(order)
 
     # ------------------------------------------------------------------ #
     #  信息查询接口

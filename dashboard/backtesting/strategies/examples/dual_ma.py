@@ -50,6 +50,10 @@ class DualMaStrategy(Strategy):
         close = self.data.close()
         pos = self.get_position()
         holding = pos and pos.quantity > 0
+        # An order still working (a sell retrying through limit-down, a buy waiting
+        # for its fill) is not sent again: exposure stays within position_pct.
+        if self.has_pending_order():
+            return
 
         if math.isnan(short_ma) or math.isnan(long_ma) or math.isnan(atr_val):
             return

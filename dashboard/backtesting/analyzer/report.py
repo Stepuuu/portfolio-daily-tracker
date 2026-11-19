@@ -9,6 +9,21 @@ from pathlib import Path
 from typing import Optional
 
 
+def _ratio(value, spec: str) -> str:
+    """A ratio that may be undefined (None: too few daily returns; inf/nan: no losses or no trades)."""
+    if value is None or value != value or value in (float("inf"), float("-inf")):
+        return "不可用"
+    return format(value, spec)
+
+
+def _stat(stats, name: str, spec: str, suffix: str = "") -> str:
+    """A statistic, or 不可用 when BacktestStats.undefined lists it (its attribute is then a placeholder)."""
+    if name in getattr(stats, "undefined", {}):
+        return "不可用"
+    text = _ratio(getattr(stats, name), spec)
+    return text if text == "不可用" else text + suffix
+
+
 class ReportGenerator:
     """
     回测报告生成器
@@ -56,38 +71,44 @@ class ReportGenerator:
             f"| 初始资金 | {r._broker.initial_cash:,.0f} 元 |",
             f"| 最终净值 | {s.final_value:,.0f} 元 |",
             f"| 总收益率 | {s.total_return:.2%} |",
-            f"| 年化收益 | {s.annualized_return:.2%} |",
-            f"| 基准收益 | {s.benchmark_return:.2%} |",
-            f"| Alpha | {s.alpha:.2%} |",
+            f"| 年化收益 | {_stat(s, 'annualized_return', '.2%')} |",
+            f"| 基准收益 | {_stat(s, 'benchmark_return', '.2%')} |",
+            f"| Alpha | {_stat(s, 'alpha', '.2%')} |",
             f"",
             f"## 风险指标",
             f"| 指标 | 数值 |",
             f"|:-----|-----:|",
             f"| 最大回撤 | {s.max_drawdown:.2%} |",
             f"| 最大回撤持续 | {s.max_drawdown_duration} 天 |",
-            f"| 年化波动率 | {s.volatility:.2%} |",
-            f"| VaR (95%) | {s.var_95:.2%} |",
-            f"| 下行偏差 | {s.downside_deviation:.2%} |",
+            f"| 年化波动率 | {_stat(s, 'volatility', '.2%')} |",
+            f"| VaR (95%) | {_stat(s, 'var_95', '.2%')} |",
+            f"| 下行偏差 | {_stat(s, 'downside_deviation', '.2%')} |",
             f"",
             f"## 风险效率",
             f"| 指标 | 数值 |",
             f"|:-----|-----:|",
-            f"| 夏普比率 | {s.sharpe_ratio:.4f} |",
-            f"| 索提诺比率 | {s.sortino_ratio:.4f} |",
-            f"| 卡玛比率 | {s.calmar_ratio:.4f} |",
+            f"| 夏普比率 | {_stat(s, 'sharpe_ratio', '.4f')} |",
+            f"| 索提诺比率 | {_stat(s, 'sortino_ratio', '.4f')} |",
+            f"| 卡玛比率 | {_stat(s, 'calmar_ratio', '.4f')} |",
             f"",
             f"## 交易统计",
             f"| 指标 | 数值 |",
             f"|:-----|-----:|",
-            f"| 交易次数 | {s.total_trades} |",
-            f"| 胜率 | {s.win_rate:.2%} |",
-            f"| 盈亏比 | {s.profit_factor:.4f} |",
-            f"| 平均盈利 | {s.avg_profit:.2f} 元 |",
-            f"| 平均亏损 | {s.avg_loss:.2f} 元 |",
+            f"| 交易次数 (回合) | {s.total_trades} |",
+            f"| 胜率 | {_stat(s, 'win_rate', '.2%')} |",
+            f"| 盈亏比 (平均盈利/平均亏损) | {_stat(s, 'payoff_ratio', '.4f')} |",
+            f"| 利润因子 (总盈利/总亏损) | {_stat(s, 'profit_factor', '.4f')} |",
+            f"| 平均盈利 | {_stat(s, 'avg_profit', '.2f', ' 元')} |",
+            f"| 平均亏损 | {_stat(s, 'avg_loss', '.2f', ' 元')} |",
             f"| 最大单笔盈利 | {s.max_single_profit:.2f} 元 |",
             f"| 最大单笔亏损 | {s.max_single_loss:.2f} 元 |",
             f"",
         ]
+        undefined = getattr(s, "undefined", {})
+        if undefined:
+            lines += ["## 不可用的指标", ""]
+            lines += [f"- {name}: {why}" for name, why in undefined.items()]
+            lines.append("")
 
         # 交易明细
         if r.trades:
@@ -174,11 +195,11 @@ class ReportGenerator:
 <div class="card-grid">
   <div class="card">
     <div class="label">年化收益</div>
-    <div class="value {'pos' if s.annualized_return >= 0 else 'neg'}">{s.annualized_return:.2%}</div>
+    <div class="value {'pos' if s.annualized_return >= 0 else 'neg'}">{_stat(s, 'annualized_return', '.2%')}</div>
   </div>
   <div class="card">
     <div class="label">夏普比率</div>
-    <div class="value">{s.sharpe_ratio:.3f}</div>
+    <div class="value">{_stat(s, 'sharpe_ratio', '.3f')}</div>
   </div>
   <div class="card">
     <div class="label">最大回撤</div>
@@ -186,7 +207,7 @@ class ReportGenerator:
   </div>
   <div class="card">
     <div class="label">卡玛比率</div>
-    <div class="value">{s.calmar_ratio:.3f}</div>
+    <div class="value">{_stat(s, 'calmar_ratio', '.3f')}</div>
   </div>
   <div class="card">
     <div class="label">交易次数</div>
@@ -194,15 +215,15 @@ class ReportGenerator:
   </div>
   <div class="card">
     <div class="label">胜率</div>
-    <div class="value">{s.win_rate:.1%}</div>
+    <div class="value">{_stat(s, 'win_rate', '.1%')}</div>
   </div>
   <div class="card">
-    <div class="label">盈亏比</div>
-    <div class="value">{s.profit_factor:.3f}</div>
+    <div class="label">利润因子</div>
+    <div class="value">{_stat(s, 'profit_factor', '.3f')}</div>
   </div>
   <div class="card">
     <div class="label">年化波动率</div>
-    <div class="value">{s.volatility:.2%}</div>
+    <div class="value">{_stat(s, 'volatility', '.2%')}</div>
   </div>
 </div>
 
