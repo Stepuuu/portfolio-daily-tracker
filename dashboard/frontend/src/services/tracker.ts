@@ -12,8 +12,9 @@ export interface TrackerPosition {
   market_value_cny: number
   cost_value_cny: number
   profit_cny: number
-  profit_pct: number
+  profit_pct: number | null
   weight_in_group: number
+  estimated_reason?: string   // its price is an estimate (Today's 估算)
 }
 
 export interface TrackerGroup {
@@ -26,7 +27,7 @@ export interface TrackerGroup {
   positions_value: number
   total_value: number
   profit: number
-  return_pct: number
+  return_pct: number | null
 }
 
 export interface TrackerSnapshot {
@@ -45,19 +46,23 @@ export interface TrackerSnapshot {
     total_value: number
     total_cost: number
     total_profit: number
-    total_return_pct: number
+    total_return_pct: number | null
     prev_date?: string | null
-    prev_total_value: number
-    daily_change: number
-    daily_change_pct: number
-    market_daily_change?: number
-    market_daily_change_pct?: number
-    capital_change?: number
-    max_drawdown_pct: number
+    // null: no earlier day to compare with (the first snapshot)
+    prev_total_value: number | null
+    daily_change: number | null
+    daily_change_pct: number | null
+    market_daily_change?: number | null
+    market_daily_change_pct?: number | null
+    capital_change?: number | null
+    max_drawdown_pct: number | null
     month_start_value: number
     month_change: number
     month_market_change?: number
-    month_return_pct: number
+    month_return_pct: number | null
+    // A figure of the day rests on an estimated input (Today's 估算), and which
+    estimated?: boolean
+    estimated_reasons?: string[]
   }
 }
 
@@ -66,21 +71,21 @@ export interface TrackerSummary {
   total_value: number
   total_cost: number
   total_profit: number
-  total_return_pct: number
-  daily_change: number
-  daily_change_pct: number
-  market_daily_change?: number
-  market_daily_change_pct?: number
-  capital_change?: number
-  max_drawdown_pct: number
+  total_return_pct: number | null
+  daily_change: number | null
+  daily_change_pct: number | null
+  market_daily_change?: number | null
+  market_daily_change_pct?: number | null
+  capital_change?: number | null
+  max_drawdown_pct: number | null
   month_change?: number
   month_market_change?: number
-  month_return_pct: number
+  month_return_pct: number | null
   groups: Record<string, {
     total_value: number
     cost_basis: number
     profit: number
-    return_pct: number
+    return_pct: number | null
     positions_count: number
   }>
 }
@@ -90,13 +95,16 @@ export interface HistoryRow {
   total_value: number
   total_cost: number
   total_profit: number
-  return_pct: number
-  daily_change: number
-  daily_change_pct: number
-  market_daily_change?: number
-  market_daily_change_pct?: number
-  capital_change?: number
-  max_drawdown_pct: number
+  return_pct: number | null
+  daily_change: number | null      // null: no earlier day to compare with (the first snapshot)
+  daily_change_pct: number | null
+  market_daily_change?: number | null
+  market_daily_change_pct?: number | null
+  capital_change?: number | null
+  max_drawdown_pct: number | null
+  // From the day's snapshot: it rests on an estimated input (Today's 估算), and which
+  estimated?: boolean
+  estimated_reasons?: string[]
 }
 
 // ===== Service =====
