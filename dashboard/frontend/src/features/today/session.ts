@@ -160,9 +160,9 @@ export function sessionChip(payload: Pick<TodayPayload, 'accounts' | 'session'> 
   return chip(`${states[0].label} ${states[0].phase}`, false, [states[0]])
 }
 
-const SOURCE_LABEL: Record<string, string> = { eastmoney: '东财', yahoo: '雅虎', fake: '模拟行情', none: '无行情源' }
+const SOURCE_LABEL: Record<string, string> = { eastmoney: '东财', tencent: '腾讯', yahoo: '雅虎', fake: '模拟行情', none: '无行情源' }
 
-/** "东财", "东财+雅虎", "模拟行情": a quote source name as the page shows it. */
+/** "东财", "东财+腾讯+雅虎", "模拟行情": a quote source name as the page shows it. */
 export function sourceLabel(source: string | null | undefined): string {
   if (!source) return ''
   return source.split('+').map((part) => SOURCE_LABEL[part.trim()] ?? part.trim()).join('+')

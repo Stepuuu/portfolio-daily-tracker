@@ -47,7 +47,7 @@ desk_store.register_schema(SCHEMA, MIGRATIONS)
 FLAGS = ('completed', 'dismissed')
 QUOTE_PROBE_SECONDS = 4
 PROBE_TICKER = 'SHA:600519'
-SOURCE_NAMES = {'eastmoney': '东方财富', 'yahoo': 'Yahoo', 'fake': '脚本行情'}
+SOURCE_NAMES = {'eastmoney': '东方财富', 'tencent': '腾讯', 'yahoo': 'Yahoo', 'fake': '脚本行情'}
 _probe_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='setup-quote-probe')
 
 DONE, TODO, OPTIONAL, UNAVAILABLE = 'done', 'todo', 'optional', 'unavailable'
@@ -181,6 +181,14 @@ def _quote_time(quote) -> str:
     return moment.astimezone(SHANGHAI).strftime('%H:%M:%S') if moment.tzinfo else moment.strftime('%H:%M:%S')
 
 
+def _source_order(names) -> str:
+    """``依次使用东方财富、腾讯、Yahoo，前一个取不到价格时问下一个`` or ``只用腾讯``."""
+    shown = [SOURCE_NAMES.get(name, name) for name in names]
+    if len(shown) == 1:
+        return f'只用{shown[0]}'
+    return f'依次使用{"、".join(shown)}，前一个取不到价格时问下一个'
+
+
 def quotes_item(ledger: _Ledger, probe: bool) -> dict:
     from core.market.runtime import fake_requested, get_market_runtime
     label = '行情源'
@@ -201,17 +209,19 @@ def quotes_item(ledger: _Ledger, probe: bool) -> dict:
     try:
         quote = future.result(timeout=QUOTE_PROBE_SECONDS)
     except FutureTimeout:
+        # Eastmoney and Tencent are reached directly unless told otherwise; Yahoo through HTTPS_PROXY.
         return item('quotes', label, TODO, f'行情源在 {QUOTE_PROBE_SECONDS} 秒内没有回应。检查网络或代理后刷新这一项。',
-                    command('东方财富需要走代理时', 'TRACKER_EASTMONEY_PROXY=1'))
+                    command('东方财富或腾讯只能经代理访问时，写入需要的那一行', 'TRACKER_EASTMONEY_PROXY=1\nTRACKER_TENCENT_PROXY=1'))
     except Exception as exc:
         logger.warning('setup quote probe failed: %s', type(exc).__name__)
         return item('quotes', label, TODO, '行情源检查出错。请稍后刷新这一项。')
     source = '、'.join(SOURCE_NAMES.get(part, part) for part in str(quote.source).split('+'))
+    order = _source_order(runtime.quotes.source_names)
     if quote.usable:
-        return item('quotes', label, DONE, f'{source}可用：{ticker} 的行情时间 {_quote_time(quote)}。')
+        return item('quotes', label, DONE, f'{source}可用：{ticker} 的行情时间 {_quote_time(quote)}（{order}）。')
     return item('quotes', label, TODO, f'行情源暂时取不到 {ticker} 的价格：{quote.reason or "没有返回价格"}。'
-                                       '今日页会把缺价的持仓标为不可用。',
-                command('只用 Yahoo 行情时', 'TRACKER_QUOTE_SOURCE=yahoo'))
+                                       f'今日页会把缺价的持仓标为不可用（{order}）。',
+                command('只用其中一个行情源时（eastmoney、tencent 或 yahoo，写一个）', 'TRACKER_QUOTE_SOURCE=tencent'))
 
 
 def alerts_item() -> dict:

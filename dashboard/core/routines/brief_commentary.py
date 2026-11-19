@@ -113,9 +113,9 @@ def _status(status: Mapping) -> dict:
 def _quote_sources() -> tuple:
     try:
         from core.market.runtime import get_market_runtime
-        return tuple(get_market_runtime().quotes.source_names) + ('eastmoney', 'yahoo', 'fake')
+        return tuple(get_market_runtime().quotes.source_names) + ('eastmoney', 'tencent', 'yahoo', 'fake')
     except Exception:
-        return ('eastmoney', 'yahoo', 'fake')
+        return ('eastmoney', 'tencent', 'yahoo', 'fake')
 
 
 def facts_for_model(brief: Mapping) -> dict:

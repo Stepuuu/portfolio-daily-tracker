@@ -35,11 +35,15 @@ It is **not**:
   confirm.
 - **investment advice.** Alerts, plans, briefs, backtests and the assistant
   report numbers and rules you set; none of them tells you what to buy.
-- **a real-time feed.** Quotes come from public endpoints (Eastmoney first,
-  Yahoo as fallback). Measured once on 2026-11-17: Eastmoney mainland and Hong
-  Kong prices arrived in about 2 seconds, Yahoo's about 15 minutes late, exchange
-  rates in about 10 seconds. Every price is labelled with its status, so a late
-  price is never shown as live.
+- **a real-time feed.** Quotes come from public endpoints: Eastmoney first,
+  then Tencent, then Yahoo, each asked for what the one before could not price.
+  Measured once on 2026-11-17: Eastmoney mainland and Hong Kong prices arrived in
+  about 2 seconds, Yahoo's about 15 minutes late, exchange rates in about 10
+  seconds. Tencent, measured on 2026-11-19 from mainland hosts where Eastmoney's
+  endpoints did not answer, replied in about 0.2 seconds with New York prices
+  seconds old (how late its Hong Kong prices are during trading was not
+  measured). Every price is labelled with its source and status, so a late price
+  is never shown as live.
 - **a multi-user service.** It has no login. Keep it on your own machine (see
   [SECURITY.md](SECURITY.md)).
 
@@ -218,8 +222,9 @@ by default).
 | `PYTHON` | `python3` | interpreter used by `start.sh` and the engine shell scripts |
 | `BACKEND_START_TIMEOUT` | `30` (`start.sh`), none (Compose) | seconds the backend may take to answer `/health` at start-up. `start.sh` gives up after it (a whole number from 1 to 3600, from the shell, e.g. `BACKEND_START_TIMEOUT=120 make start`); Compose does not count failed health checks during it (`start_period`, from `.env`) |
 | **Quotes** | | |
-| `TRACKER_QUOTE_SOURCE` | Eastmoney, then Yahoo | `eastmoney` or `yahoo`: only that source; `fake`: scripted quotes from `PORTFOLIO_DIR/fake_quotes.json` |
+| `TRACKER_QUOTE_SOURCE` | Eastmoney, then Tencent, then Yahoo | `eastmoney`, `tencent` or `yahoo`: only that source for quotes (Tencent has no exchange rates: with `tencent`, rates still come from Yahoo, then Eastmoney); `fake`: scripted quotes from `PORTFOLIO_DIR/fake_quotes.json` |
 | `TRACKER_EASTMONEY_PROXY` | off | `1`: reach Eastmoney through the proxy in the environment |
+| `TRACKER_TENCENT_PROXY` | off | `1`: reach Tencent through the proxy in the environment |
 | `TRACKER_YAHOO_PROXY` | `HTTPS_PROXY` | proxy URL for Yahoo |
 | `TRACKER_SYMBOL_INDEX` | on | `0`: no A-share / ETF name list for search (codes still work) |
 | **Alerts and routines** | | |

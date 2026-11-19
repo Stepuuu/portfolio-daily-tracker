@@ -1,7 +1,8 @@
 """The snapshot asks Yahoo for the symbol Today's quote sources ask for: one table, ``Instrument.yahoo_symbol``.
 
 The reviewer's case: HKG:00700 was requested as 00700.HK (Yahoo knows 0700.HK), so every retry failed and
-the day got no history row; NYSE:BRK.B was requested as BRK.B (Yahoo knows BRK-B). Stubbed fetches only.
+the day got no history row; NYSE:BRK.B was requested as BRK.B (Yahoo knows BRK-B). Tencent, asked for what
+Yahoo did not price, is asked for Today's Tencent symbol (``Instrument.tencent_symbol``). Stubbed fetches only.
 """
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,16 +20,16 @@ DAY = '2026-11-17'
 UTC = timezone.utc
 NOW = datetime(2026, 11, 17, 8, 30, tzinfo=UTC)   # 16:30 Shanghai: every market of the day has closed
 
-# The shared vectors: what Today's sources ask Yahoo for, and so what the snapshot must ask for.
+# The shared vectors: what Today's sources ask Yahoo and Tencent for, and so what the snapshot must ask for.
 VECTORS = [
-    ('SHA:600519', '600519.SS'),
-    ('SHE:300750', '300750.SZ'),
-    ('HKG:00700', '0700.HK'),
-    ('HKG:700', '0700.HK'),
-    ('HKG:09988', '9988.HK'),
-    ('HKG:00005', '0005.HK'),
-    ('NASDAQ:AAPL', 'AAPL'),
-    ('NYSE:BRK.B', 'BRK-B'),
+    ('SHA:600519', '600519.SS', 'sh600519'),
+    ('SHE:300750', '300750.SZ', 'sz300750'),
+    ('HKG:00700', '0700.HK', 'hk00700'),
+    ('HKG:700', '0700.HK', 'hk00700'),
+    ('HKG:09988', '9988.HK', 'hk09988'),
+    ('HKG:00005', '0005.HK', 'hk00005'),
+    ('NASDAQ:AAPL', 'AAPL', 'usAAPL'),
+    ('NYSE:BRK.B', 'BRK-B', 'usBRK.B'),
 ]
 
 
@@ -47,7 +48,7 @@ def asked_symbols(monkeypatch, tickers, config=None):
     asked = []
 
     def get(url, **options):
-        asked.append(url.rsplit('/', 1)[-1])
+        asked.append(f"tencent:{options['params']['q']}" if url == snapshot.TENCENT_URL else url.rsplit('/', 1)[-1])
         raise OSError('this test only records what is asked for')
     monkeypatch.setattr(snapshot.requests, 'get', get)
     monkeypatch.setattr(snapshot, '_now', lambda: NOW)
@@ -56,15 +57,18 @@ def asked_symbols(monkeypatch, tickers, config=None):
     return asked
 
 
-@pytest.mark.parametrize('ticker, symbol', VECTORS)
-def test_the_snapshot_asks_for_the_symbol_todays_sources_ask_for(monkeypatch, ticker, symbol):
-    from core.market.instruments import yahoo_symbol
-    assert yahoo_symbol(ticker) == symbol      # the one table
-    assert asked_symbols(monkeypatch, [ticker]) == [symbol]
+@pytest.mark.parametrize('ticker, symbol, tencent', VECTORS)
+def test_the_snapshot_asks_for_the_symbol_todays_sources_ask_for(monkeypatch, ticker, symbol, tencent):
+    from core.market.instruments import tencent_symbol, yahoo_symbol
+    assert (yahoo_symbol(ticker), tencent_symbol(ticker)) == (symbol, tencent)      # the one table
+    monkeypatch.delenv('TRACKER_QUOTE_SOURCE', raising=False)
+    assert asked_symbols(monkeypatch, [ticker]) == [symbol, f'tencent:{tencent}']
 
 
 def test_a_configured_symbol_still_wins(monkeypatch):
-    assert asked_symbols(monkeypatch, ['HKG:00700'], {'ticker_map': {'HKG:00700': '0700.HK'}}) == ['0700.HK']
+    monkeypatch.delenv('TRACKER_QUOTE_SOURCE', raising=False)
+    assert asked_symbols(monkeypatch, ['HKG:00700'], {'ticker_map': {'HKG:00700': '0700.HK'}}) == [
+        '0700.HK', 'tencent:hk00700']
 
 
 def test_a_hong_kong_close_is_booked_under_its_yahoo_symbol(monkeypatch):
@@ -96,7 +100,8 @@ def test_the_engine_image_has_the_symbol_table_the_engine_uses(tmp_path):
         'import portfolio_snapshot as s\n'
         'asked = []\n'
         'def get(url, **options):\n'
-        '    asked.append(url.rsplit("/", 1)[-1]); raise OSError("offline")\n'
+        '    asked.append(options["params"]["q"] if url == s.TENCENT_URL else url.rsplit("/", 1)[-1])\n'
+        '    raise OSError("offline")\n'
         's.requests.get = get\n'
         's.fetch_prices({"groups": {"E": {"positions": [\n'
         '    {"name": "E", "ticker": "HKG:00700", "quantity": 1, "cost_price": 1},\n'
@@ -106,4 +111,4 @@ def test_the_engine_image_has_the_symbol_table_the_engine_uses(tmp_path):
     result = subprocess.run([sys.executable, '-I', '-c', probe, str(app / 'scripts')], cwd=app,
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.split() == ['0700.HK', 'BRK-B']
+    assert result.stdout.split() == ['0700.HK', 'BRK-B', 'hk00700,usBRK.B']

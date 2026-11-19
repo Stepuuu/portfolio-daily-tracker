@@ -164,6 +164,8 @@ test('a session decided by weekday alone keeps its uncertainty: amber qualifier 
 test('source names', () => {
   assert.equal(sourceLabel('eastmoney'), '东财');
   assert.equal(sourceLabel('eastmoney+yahoo'), '东财+雅虎');
+  assert.equal(sourceLabel('tencent'), '腾讯');
+  assert.equal(sourceLabel('eastmoney+tencent+yahoo'), '东财+腾讯+雅虎');
   assert.equal(sourceLabel('fake'), '模拟行情');
   assert.equal(sourceLabel('none'), '无行情源');
   assert.equal(sourceLabel(null), '');

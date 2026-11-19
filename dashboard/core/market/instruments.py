@@ -67,6 +67,15 @@ INDICES = {
     'SPX': (US, 'USD', '100.SPX', '^GSPC'),           # 标普500
 }
 
+# code -> Tencent (qt.gtimg.cn) symbol of each index above, checked against the
+# live endpoint on 2026-11-19 (the answer names the index: 上证指数, 恒生指数,
+# 纳斯达克, 道琼斯, 标普500). A test keeps the keys equal to ``INDICES``.
+TENCENT_INDICES = {
+    '000001': 'sh000001', '000016': 'sh000016', '000300': 'sh000300', '000688': 'sh000688',
+    '000852': 'sh000852', '000905': 'sh000905', '399001': 'sz399001', '399006': 'sz399006',
+    'HSI': 'hkHSI', 'HSTECH': 'hkHSTECH', 'IXIC': 'us.IXIC', 'DJIA': 'us.DJI', 'SPX': 'us.INX',
+}
+
 # Code ranges an exchange reserves for its indices: (pattern, exchange name, range).
 INDEX_RANGES = {
     'SHA': (re.compile(r'000\d{3}'), '上交所', '000xxx'),
@@ -184,6 +193,28 @@ class Instrument:
             return None if number is None else f'{number:04d}.HK'
         return self.code.replace('.', '-')
 
+    @property
+    def tencent_symbol(self) -> Optional[str]:
+        """The Tencent (qt.gtimg.cn) symbol: ``sh600519``, ``sz000001``, ``hk00700``, ``usBRK.B``.
+
+        ``None`` when the code cannot exist on that exchange or would reach an
+        index (``symbol_problem``). Tencent spells US class shares with a dot
+        and knows no lower-case symbol.
+        """
+        if self.kind == 'index':
+            return TENCENT_INDICES[self.code]
+        if self.symbol_problem:
+            return None
+        if self.exchange in ('SHA', 'SHE'):
+            if not re.fullmatch(r'\d{6}', self.code):
+                return None
+            return ('sh' if self.exchange == 'SHA' else 'sz') + self.code
+        if self.exchange == 'HKG':
+            number = _hk_number(self.code)
+            return None if number is None else f'hk{number:05d}'
+        symbol = self.code.replace('-', '.')
+        return 'us' + symbol if re.fullmatch(r'[A-Z0-9]+(?:\.[A-Z0-9]+)*', symbol) else None
+
 
 def _hk_number(code: str) -> Optional[int]:
     """The numeric value of a Hong Kong code (1 to 5 digits, not zero)."""
@@ -230,3 +261,7 @@ def eastmoney_secid(ticker: Union[str, Instrument]) -> Optional[str]:
 
 def yahoo_symbol(ticker: Union[str, Instrument]) -> Optional[str]:
     return parse(ticker).yahoo_symbol
+
+
+def tencent_symbol(ticker: Union[str, Instrument]) -> Optional[str]:
+    return parse(ticker).tencent_symbol

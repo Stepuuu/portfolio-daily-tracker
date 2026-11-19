@@ -5,7 +5,7 @@ Usage:
     python3 portfolio_snapshot.py [--date YYYY-MM-DD] [--dry-run]
 """
 
-import json, os, sys, argparse, glob, copy, hashlib, math
+import json, os, sys, argparse, glob, copy, hashlib, math, time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, localcontext
@@ -189,12 +189,14 @@ def close_wait_reason(markets, until, date_str, latest=False):
     return f"等待{names}收盘价确定，{day}{local:%H:%M} 后记入"
 
 
-def _quote_check(ticker, meta, date_str, now):
+def _quote_check(ticker, meta, date_str, now, quote=None):
     """``(problem or None, moment to wait for when waiting is the only problem, else None,
     why the booked price is an estimate, else None, when to look again before that moment, else None)``.
 
     Only a wait for a closing print has a moment to look again (``CLOSE_RECHECK``); a wait for a close that is
-    not final yet has nothing to look at before it is."""
+    not final yet has nothing to look at before it is. ``quote``: another source's quote (Tencent's,
+    ``_tencent_meta``), judged in place of the one Yahoo's ``meta`` makes; ``meta`` then holds its price,
+    currency and time."""
     if usable_price(meta.get("regularMarketPrice")) is None:
         return "no usable regularMarketPrice", None, None, None
     currency = meta.get("currency")
@@ -213,7 +215,7 @@ def _quote_check(ticker, meta, date_str, now):
     if final is not None and moment < final:
         return (f"a price of the {day} session, which is still trading or whose closing price is not final yet "
                 f"(final at {final.isoformat(timespec='minutes')}): not a close"), final, None, None
-    return _close_verdict(ticker, meta, date_str, moment)
+    return _close_verdict(ticker, meta, date_str, moment, quote)
 
 
 # Why a holding's price is its last close although its market has had a session since (Today: 估算).
@@ -224,8 +226,24 @@ NOT_TRADED = "{latest} 没有新的成交价（可能停牌或数据源未更新
 NO_CLOSING_PRINT = "收盘竞价后没有新的成交时间，按当日最后成交价记入"
 
 
-def _close_verdict(ticker, meta, date_str, moment):
+def _judging_clock(market, date_str, moment):
+    """The session clock a quote of ``market`` is judged by: at ``moment``, but no later than the end of
+    ``date_str`` on the exchange's clock (``_close_verdict``)."""
+    import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
+    from datetime import date as Date, time as Time
+    from core.market.calendar import ZONES, SessionClock
+    when = moment
+    if date_str is not None:
+        day_end = datetime.combine(Date.fromisoformat(date_str) + timedelta(days=1), Time(0), tzinfo=ZONES[market])
+        when = min(moment, day_end - timedelta(seconds=1))
+    return SessionClock(lambda: when)
+
+
+def _close_verdict(ticker, meta, date_str, moment, quote=None):
     """Today's decision table (``core.market.quotes.assess``) for a quote whose own session's close is final.
+
+    The quote is Yahoo's ``meta`` read as ``core.market.sources_yahoo`` reads it, or ``quote`` when given (another
+    source's, read by Today's reading of that source).
 
     The same ``(problem, wait until, estimate, look again)`` as ``_quote_check``. The quote is judged as Today
     would judge it at ``moment``, but no later than the end of ``date_str`` on the exchange's clock, so a run
@@ -246,32 +264,27 @@ def _close_verdict(ticker, meta, date_str, moment):
     * anything else Today does not take for a price: not booked.
     """
     import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
-    from datetime import date as Date, time as Time
     from core.market import quotes
-    from core.market.calendar import ZONES, SessionClock
     from core.market.instruments import InstrumentError, parse
     try:
         instrument = parse(ticker)
     except InstrumentError:
         return "a code the trading calendar does not know", None, None, None
     market = instrument.market
-    when = moment
-    if date_str is not None:
-        day_end = datetime.combine(Date.fromisoformat(date_str) + timedelta(days=1), Time(0), tzinfo=ZONES[market])
-        when = min(moment, day_end - timedelta(seconds=1))
-    clock = SessionClock(lambda: when)
+    clock = _judging_clock(market, date_str, moment)
     latest = clock.session_of(market)
     final = close_final_at(ticker, latest.isoformat())
     if final is not None and moment < final:
         return (f"the {latest} session is under way or its closing price is not final yet "
                 f"(final at {final.isoformat(timespec='minutes')}): no close of it yet"), final, None, None
-    quote = quotes.build_quote(
-        ticker, "yahoo", moment, price=meta.get("regularMarketPrice"), prev_close=meta.get("chartPreviousClose"),
-        high=meta.get("regularMarketDayHigh"), low=meta.get("regularMarketDayLow"),
-        volume=meta.get("regularMarketVolume"), currency=instrument.currency,
-        quote_time=quotes.from_epoch(meta.get("regularMarketTime")),
-        # regularMarketPrice / regularMarketTime are the regular session's (as in core.market.sources_yahoo).
-        regular_session=True)
+    if quote is None:
+        quote = quotes.build_quote(
+            ticker, "yahoo", moment, price=meta.get("regularMarketPrice"), prev_close=meta.get("chartPreviousClose"),
+            high=meta.get("regularMarketDayHigh"), low=meta.get("regularMarketDayLow"),
+            volume=meta.get("regularMarketVolume"), currency=instrument.currency,
+            quote_time=quotes.from_epoch(meta.get("regularMarketTime")),
+            # regularMarketPrice / regularMarketTime are the regular session's (as in core.market.sources_yahoo).
+            regular_session=True)
     # Seen now: only an observation made once the close is final verifies it (``LiveQuote.observed_at``).
     verdict = quotes.assess(replace(quote, observed_at=moment), clock)
     session = verdict.session_date
@@ -283,7 +296,11 @@ def _close_verdict(ticker, meta, date_str, moment):
         return None, None, verdict.reason, None      # a reason only for a close the calendar cannot verify
     if verdict.status == quotes.PREV_CLOSE_ONLY or (
             verdict.status == quotes.STALE and session is not None and session < latest):
-        reason = NOT_TRADED.format(latest=latest.isoformat(), session=(session or latest).isoformat())
+        closed = session or latest
+        if quote.price_basis == quotes.PREV_CLOSE:
+            # Untraded in its session (Tencent's reading): the price is the close of the session before.
+            closed = clock.previous_trading_day(market, closed)
+        reason = NOT_TRADED.format(latest=latest.isoformat(), session=closed.isoformat())
         return None, None, reason, None
     if verdict.status == quotes.STALE and session == latest:
         printed = clock.close_print(market, latest)
@@ -334,8 +351,18 @@ def yahoo_symbol(ticker, ticker_map=None):
         return None
 
 
-def fetch_prices(holdings, config, date_str=None, not_final=None, estimated=None, look_again=None):
-    """Fetch current prices for all tickers via Yahoo Finance.
+def price_sources():
+    """The sources ``fetch_prices`` asks, in order, as ``TRACKER_QUOTE_SOURCE`` selects them.
+
+    Yahoo, then Tencent for the holdings Yahoo did not price; ``tencent`` or ``yahoo`` alone when selected. The
+    snapshot has no reading of Eastmoney's quotes: with ``eastmoney`` it prices from Yahoo alone, as before.
+    """
+    choice = os.environ.get("TRACKER_QUOTE_SOURCE", "").strip().lower()
+    return {"tencent": ["tencent"], "yahoo": ["yahoo"], "eastmoney": ["yahoo"]}.get(choice, ["yahoo", "tencent"])
+
+
+def fetch_prices(holdings, config, date_str=None, not_final=None, estimated=None, look_again=None, priced_by=None):
+    """Fetch current prices for all tickers via Yahoo Finance, then Tencent for those Yahoo did not price.
 
     A ticker whose price cannot be fetched, or comes back as anything but a
     finite positive number, is left out of the result: it is never priced at 0.
@@ -348,13 +375,22 @@ def fetch_prices(holdings, config, date_str=None, not_final=None, estimated=None
     (a dict) gets ``ticker -> reason`` for each price booked as an estimate;
     ``look_again`` (a dict) gets ``ticker -> moment`` for each of those waits
     that may end earlier: a closing print that may still reach the source,
-    to be looked for again at that moment (``CLOSE_RECHECK``).
+    to be looked for again at that moment (``CLOSE_RECHECK``). ``priced_by``
+    (a dict) gets ``ticker -> "yahoo" | "tencent"``: the source of each price
+    booked (the snapshot's ``price_source``, the report's 数据来源).
+
+    Tencent (``price_sources``, ``fetch_tencent_quotes``) is asked, in one batch, for each ticker Yahoo did not
+    price, except one waiting for its market's close to become final, which no source can shorten, and only
+    while the run has time for it (``_tencent_timeout``). Its quote must pass the same rules and be a closing
+    row (``_tencent_check``); only a verified close of the session being booked ends Yahoo's wait for a closing
+    print. The script says which holdings it priced from Tencent.
     """
     proxy = config.get("proxy", "")
     proxies = {"http": proxy, "https": proxy} if proxy else None
     headers = {"User-Agent": "Mozilla/5.0"}
     ticker_map = config.get("ticker_map", {})
     yahoo_base = config.get("yahoo_base", "https://query1.finance.yahoo.com/v8/finance/chart")
+    sources = price_sources()
 
     # Collect all unique tickers
     all_tickers = set()
@@ -364,8 +400,9 @@ def fetch_prices(holdings, config, date_str=None, not_final=None, estimated=None
 
     prices = {}  # ticker -> price in local currency
     currencies = {}  # ticker -> currency
+    waits = {}  # ticker -> (moment, look again or None): Yahoo's answer was a wait
 
-    for ticker in all_tickers:
+    for ticker in (all_tickers if "yahoo" in sources else ()):
         yahoo_sym = yahoo_symbol(ticker, ticker_map)
         if not yahoo_sym:
             print(f"  ⚠️ 获取 {ticker} 价格失败: no Yahoo symbol for this code", file=sys.stderr)
@@ -382,6 +419,8 @@ def fetch_prices(holdings, config, date_str=None, not_final=None, estimated=None
             meta = data["chart"]["result"][0]["meta"]
             problem, final, estimate, look = _quote_check(ticker, meta, date_str, _now())
             if problem is not None:
+                if final is not None:
+                    waits[ticker] = (final, look)
                 if final is not None and not_final is not None:
                     not_final[ticker] = final
                     if look is not None and look_again is not None:
@@ -389,12 +428,167 @@ def fetch_prices(holdings, config, date_str=None, not_final=None, estimated=None
                 raise ValueError(problem)
             prices[ticker] = meta["regularMarketPrice"]
             currencies[ticker] = meta["currency"].strip().upper()
+            if priced_by is not None:
+                priced_by[ticker] = "yahoo"
             if estimate and estimated is not None:
                 estimated[ticker] = estimate
         except Exception as e:
             print(f"  ⚠️ 获取 {ticker} ({yahoo_sym}) 价格失败: {e}", file=sys.stderr)
 
+    # A wait for a close to become final is the calendar's: only a wait for the closing print to reach the
+    # source (one with a moment to look again) may end sooner at another source.
+    later = sorted(ticker for ticker in all_tickers
+                   if ticker not in prices and (ticker not in waits or waits[ticker][1] is not None))
+    if "tencent" in sources and later:
+        _price_from_tencent(later, config, date_str, prices, currencies, not_final, estimated, look_again, waits,
+                            priced_by)
     return prices, currencies
+
+
+def _price_from_tencent(tickers, config, date_str, prices, currencies, not_final, estimated, look_again, waits,
+                        priced_by=None):
+    """``fetch_prices``' second source: Tencent's quote of each of ``tickers``, judged by ``_tencent_check``.
+
+    A holding Yahoo left waiting for its closing print keeps that wait unless Tencent has the verified close of
+    the session being booked: an estimate from Tencent (the last close carried forward, the previous close of an
+    untraded row) never ends it, so the snapshot looks again as it would without Tencent.
+    """
+    now = _now()
+    for ticker, (symbol, quote, status) in fetch_tencent_quotes(tickers, config, now).items():
+        if not quote.usable:
+            print(f"  ⚠️ 腾讯行情 {ticker} ({symbol}) 没有价格: {quote.reason}", file=sys.stderr)
+            continue
+        problem, final, estimate, look = _tencent_check(ticker, quote, status, date_str, now)
+        if problem is None and estimate and ticker in waits:
+            problem = f"an estimate ({estimate}) does not end the wait for the closing print"
+        if problem is not None:
+            print(f"  ⚠️ 腾讯行情 {ticker} ({symbol}) 未记入: {problem}", file=sys.stderr)
+            if final is not None and ticker not in waits and not_final is not None:
+                not_final[ticker] = final
+                if look is not None and look_again is not None:
+                    look_again[ticker] = look
+            continue
+        prices[ticker] = float(quote.price)
+        currencies[ticker] = quote.currency
+        if priced_by is not None:
+            priced_by[ticker] = "tencent"
+        for waiting in (not_final, look_again):
+            if waiting is not None:
+                waiting.pop(ticker, None)
+        if estimate and estimated is not None:
+            estimated[ticker] = estimate
+        print(f"  {ticker} 价格取自腾讯行情（{symbol}）")
+
+
+def _tencent_check(ticker, quote, status, date_str, now):
+    """``_quote_check`` for a Tencent quote, which must also be a closing row to be booked.
+
+    A Tencent row stands for the close of the session its exchange time belongs to only when that time is on
+    the session's own date, at or after the session's closing print (``SessionClock.close_print``: the
+    mainland 15:00, Hong Kong's closing auction 16:08, 12:08 on a half day, New York's bell 16:00, 13:00 on an
+    early-close day) and, in New York, less than a minute after the bell: Tencent does not say whether a later
+    New York price is an after-hours trade (on 2026-11-18 Eastmoney and Yahoo stamped the official close
+    16:00:00 to 16:00:39). A row stamped before the print (mid-session, before the closing auction, a
+    placeholder before the open) is never a close however long ago it was stamped: Today's rule that books the
+    day's last price once the print's usual delay has passed (``NO_CLOSING_PRINT``) is not applied to Tencent.
+    The close of an earlier session than the one being booked is carried forward (``NOT_TRADED``) only from a
+    row Tencent marks suspended ('S'): one it shows as trading but did not update says nothing about whether
+    the holding traded since. The rule holds whatever day the snapshot runs; Today's own rules do not change.
+    """
+    problem, final, estimate, look = _quote_check(ticker, _tencent_meta(quote), date_str, now, quote)
+    if problem is not None:
+        return problem, final, estimate, look
+    from core.market import quotes, tencent
+    from core.market.calendar import ZONES
+    from core.market.instruments import US, parse
+    market = parse(ticker).market
+    clock = _judging_clock(market, date_str, now)
+    session = clock.session_of(market, quote.quote_time)
+    printed = clock.close_print(market, session)
+    local = quote.quote_time.astimezone(ZONES[market])
+    late = market == US and printed is not None and quote.quote_time >= printed + quotes.LIVE_MAX_AGE
+    if printed is None or local.date() != session or quote.quote_time < printed or late:
+        bound = f"{printed.astimezone(ZONES[market]):%H:%M}" if printed is not None else "unknown"
+        return (f"Tencent's row is stamped {local:%Y-%m-%d %H:%M:%S} local time: not the closing row of the "
+                f"{session} session (its close prints at {bound}"
+                f"{', a New York row within a minute of it' if market == US else ''})"), None, None, None
+    if session < clock.session_of(market) and status != tencent.SUSPENDED:
+        return (f"Tencent's row is the close of {session}, before the session being booked, and does not mark the "
+                "holding suspended: its price is not carried forward"), None, None, None
+    return None, None, estimate, None
+
+
+def _tencent_meta(quote):
+    """What ``_quote_check`` reads of a chart's ``meta``, from a Tencent quote: its price, currency and time."""
+    return {"regularMarketPrice": float(quote.price) if quote.price is not None else None, "currency": quote.currency,
+            "regularMarketTime": int(quote.quote_time.timestamp()) if quote.quote_time is not None else None}
+
+
+# Tencent's quotes (``qt.gtimg.cn``), read as Today reads them (``core.market.tencent``: ``QUOTE_URL``, ``HEADERS``,
+# ``BATCH``, ``parse_response``, ``quote_from_fields``, ``row_status``), here with ``requests``. Reached directly
+# unless ``TRACKER_TENCENT_PROXY=1``, as Today reaches it; ``tencent_url`` in config.json replaces the endpoint.
+TENCENT_URL = "https://qt.gtimg.cn/"
+# The pipeline stops this script after this many seconds (``portfolio_daily_update.SNAPSHOT_TIMEOUT``; a test keeps
+# the two equal). Tencent answers in about 0.2 s; its request gets at most ``TENCENT_TIMEOUT`` (connect, read) and
+# is made only while that and ``RATES_RESERVE`` (the exchange-rate requests after it: Yahoo's two at their
+# 15-second timeout) still fit, so a slow Yahoo leaves the run to end, or to ask for its retry, as before.
+CHILD_TIMEOUT = 120
+TENCENT_TIMEOUT = (2.0, 4.0)
+RATES_RESERVE = 30.0
+_monotonic = time.monotonic
+_run_started = None   # set by main(): the moment the child's time counts from; None when imported
+
+
+def _tencent_timeout():
+    """``(connect, read)`` seconds for the next Tencent request, or None when the run has no time left for it."""
+    if _run_started is None:
+        return TENCENT_TIMEOUT
+    left = CHILD_TIMEOUT - (_monotonic() - _run_started) - RATES_RESERVE
+    if left < TENCENT_TIMEOUT[0]:
+        return None
+    return min(TENCENT_TIMEOUT[0], left), min(TENCENT_TIMEOUT[1], left)
+
+
+def fetch_tencent_quotes(tickers, config, now):
+    """``{ticker: (Tencent symbol, LiveQuote, status flag)}`` for ``tickers``; a ticker Tencent has no symbol for
+    is left out, and so is every ticker when Tencent cannot be reached or the run has no time left for it (the
+    script says why)."""
+    import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
+    from core.market import tencent
+    from core.market.instruments import InstrumentError, parse
+    wanted = {}
+    for ticker in tickers:
+        try:
+            instrument = parse(ticker)
+        except InstrumentError:
+            instrument = None
+        if instrument is None or not instrument.tencent_symbol:
+            print(f"  ⚠️ 腾讯行情没有 {ticker} 对应的代码", file=sys.stderr)
+            continue
+        wanted[ticker] = instrument
+    # A key set to None drops what the environment names for it (as for Eastmoney's rates).
+    proxies = (None if os.environ.get("TRACKER_TENCENT_PROXY") == "1"
+               else {"http": None, "https": None, "all": None})
+    symbols = list(dict.fromkeys(instrument.tencent_symbol for instrument in wanted.values()))
+    rows = {}
+    try:
+        for start in range(0, len(symbols), tencent.BATCH):
+            timeout = _tencent_timeout()
+            if timeout is None:
+                print(f"  ⚠️ 未查询腾讯行情: 快照已运行 {_monotonic() - _run_started:.0f} 秒，"
+                      f"剩余时间要留给汇率请求", file=sys.stderr)
+                return {}
+            r = requests.get(config.get("tencent_url") or TENCENT_URL, headers=tencent.HEADERS, proxies=proxies,
+                             timeout=timeout, params={"q": ",".join(symbols[start:start + tencent.BATCH])})
+            r.raise_for_status()
+            rows.update(tencent.parse_response(r.content))
+    except Exception as error:
+        print(f"  ⚠️ 获取腾讯行情失败: {error}", file=sys.stderr)
+        return {}
+    return {ticker: (instrument.tencent_symbol,
+                     tencent.quote_from_fields(instrument, rows.get(instrument.tencent_symbol), now),
+                     tencent.row_status(rows.get(instrument.tencent_symbol)))
+            for ticker, instrument in wanted.items()}
 
 
 def missing_prices(holdings, prices):
@@ -413,8 +607,9 @@ def missing_prices(holdings, prices):
 # offshore one (CNH) next. Eastmoney is reached directly unless ``TRACKER_EASTMONEY_PROXY=1``, as Today reaches
 # it; ``eastmoney_url`` in config.json replaces its endpoint. The request and its reading are Today's
 # (``core.market.sources_eastmoney``: ``QUOTE_URL``, ``FIELDS``, ``HEADERS``, ``FX_SECIDS``, ``parse_rows``,
-# ``fx_from_row``), here with ``requests``, the engine's only dependency.
-EASTMONEY_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+# ``fx_from_row``), here with ``requests``, the engine's only dependency. Tencent has no rates the snapshot can use
+# (``core.market.tencent``).
+EASTMONEY_URL ="https://push2.eastmoney.com/api/qt/ulist.np/get"
 EASTMONEY_FIELDS = "f2,f5,f12,f13,f14,f15,f16,f17,f18,f124"
 EASTMONEY_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/",
                      "Accept": "application/json,text/plain,*/*"}
@@ -519,7 +714,8 @@ def fetch_fx_rates(config, estimated=None, needed=None):
     given, gets ``currency -> reason`` for it. A currency no source has a rate for is left out.
 
     The sources are those ``TRACKER_QUOTE_SOURCE`` selects for Today (``core.market.runtime``: ``yahoo`` or
-    ``eastmoney`` alone, else both). The second is asked only for the currencies in ``needed`` (all when None).
+    ``eastmoney`` alone, else both; Tencent has no rates, so ``tencent`` leaves them with both). The second is
+    asked only for the currencies in ``needed`` (all when None).
     """
     import ledger_bridge  # noqa: F401  (puts the dashboard package, or the image's core/, on the path)
     from core.market import quotes
@@ -568,7 +764,7 @@ def _money(value):
 
 
 def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, all_snapshots, history_values=None,
-                       price_estimates=None, rate_estimates=None, holdings_source=None):
+                       price_estimates=None, rate_estimates=None, holdings_source=None, priced_by=None):
     """Calculate full portfolio snapshot with all metrics.
 
     Money is ``Decimal`` and rounded as Today rounds it (``core.market.valuation``): half up to the cent
@@ -583,6 +779,10 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
     rests on an estimate) and ``estimated_reasons`` (``"<ticker>：<reason>"``, ``"汇率 USD/CNY：<reason>"``
     for a rate that converts a position or a cash balance), as Today marks its rows 估算.
 
+    ``priced_by`` (``ticker -> "yahoo" | "tencent"``, from ``fetch_prices``) is recorded as each
+    position's ``price_source``; a position without one (a snapshot made before sources were recorded) was
+    priced from Yahoo.
+
     ``holdings_source`` (``"ledger"`` or ``"legacy_files"``, from ``_generate``) is recorded as the
     snapshot's ``holdings_source``. Holdings from the legacy files, not confirmed into the ledger, have no
     confirmed total in Today: the snapshot is marked with ``LEGACY_HOLDINGS`` first among its reasons.
@@ -592,11 +792,11 @@ def calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, al
     with localcontext() as context:
         context.prec = WORKING_DIGITS
         return _snapshot_of(holdings, prices, currencies, fx_rates, prev_snapshot, all_snapshots, history_values,
-                            price_estimates, rate_estimates, holdings_source)
+                            price_estimates, rate_estimates, holdings_source, priced_by or {})
 
 
 def _snapshot_of(holdings, prices, currencies, fx_rates, prev_snapshot, all_snapshots, history_values,
-                 price_estimates, rate_estimates, holdings_source):
+                 price_estimates, rate_estimates, holdings_source, priced_by):
     """``calculate_snapshot``'s work, in its decimal context."""
     from core.market.valuation import cents
     price_estimates = price_estimates or {}
@@ -672,6 +872,8 @@ def _snapshot_of(holdings, prices, currencies, fx_rates, prev_snapshot, all_snap
                 "profit_pct": profit_pct,
                 "weight_in_group": 0  # calculated later
             })
+            if ticker in priced_by:
+                positions_out[-1]["price_source"] = priced_by[ticker]
             notes = [(price_estimates[ticker], f"{ticker}：{price_estimates[ticker]}")] if price_estimates.get(ticker) else []
             if rate_note(currency):
                 notes.append((rate_note(currency), rate_note(currency)))
@@ -937,6 +1139,8 @@ def load_all_history_values():
 
 
 def main():
+    global _run_started
+    _run_started = _monotonic()   # the pipeline's time limit counts from here (``CHILD_TIMEOUT``)
     parser = argparse.ArgumentParser(description="Generate portfolio daily snapshot")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="Date (YYYY-MM-DD)")
     parser.add_argument("--dry-run", action="store_true", help="Print without saving")
@@ -984,14 +1188,14 @@ def _converted(holdings, currencies):
 
 def _fetch_quotes(holdings, config, date_str=None):
     print("  获取实时价格...")
-    not_final, estimated, rate_estimates, look_again = {}, {}, {}, {}
-    prices, currencies = fetch_prices(holdings, config, date_str, not_final, estimated, look_again)
+    not_final, estimated, rate_estimates, look_again, priced_by = {}, {}, {}, {}, {}
+    prices, currencies = fetch_prices(holdings, config, date_str, not_final, estimated, look_again, priced_by)
     # A second source is asked only for a rate the snapshot converts, and not before a wait already known.
     missing = missing_prices(holdings, prices)
     waiting = bool(missing) and all(ticker in not_final for ticker in missing)
     fx_rates = fetch_fx_rates(config, rate_estimates, set() if waiting else _converted(holdings, currencies))
     print(f"  汇率: USD/CNY={fx_rates.get('USD', '?')}, HKD/CNY={fx_rates.get('HKD', '?')}")
-    return prices, currencies, fx_rates, not_final, estimated, rate_estimates, look_again
+    return prices, currencies, fx_rates, not_final, estimated, rate_estimates, look_again, priced_by
 
 
 def _locked_snapshot(args):
@@ -1119,6 +1323,7 @@ def _generate(args, config, holdings, quotes):
     price_estimates = rest[1] if len(rest) > 1 else {}
     rate_estimates = rest[2] if len(rest) > 2 else {}
     look_again = rest[3] if len(rest) > 3 else {}
+    priced_by = rest[4] if len(rest) > 4 else {}
 
     if holdings.get("date") not in (None, date_str):
         # The snapshot is saved under the holdings' date: a file of another day must not become this one.
@@ -1152,6 +1357,7 @@ def _generate(args, config, holdings, quotes):
     try:
         snapshot = calculate_snapshot(holdings, prices, currencies, fx_rates, prev_snapshot, all_snapshots, history_values,
                                       price_estimates=price_estimates, rate_estimates=rate_estimates,
+                                      priced_by=priced_by,
                                       # load_holdings: the confirmed ledger's holdings carry its revision
                                       holdings_source="ledger" if holdings.get("ledger_revision") is not None
                                       else "legacy_files")

@@ -21,7 +21,7 @@ import pytest
 
 import portfolio_report as report
 import portfolio_snapshot as snapshot
-from tests.engine_fakes import eastmoney_url, engine_copy, position, price_server
+from tests.engine_fakes import eastmoney_url, engine_copy, position, price_server, tencent_url
 from tests.fakes import build_ledger, opening
 from tests.fakes import position as ledger_position
 
@@ -92,7 +92,8 @@ def test_a_day_whose_close_never_printed_ends_ok_with_the_mark(tmp_path, monkeyp
     scripts = engine_copy(tmp_path / 'checkout')
     with price_server({HK: 9.0, 'FX:HKDCNY=X': 0.9}, times={HK: epoch(2026, 11, 17, 7, 55, 12)}) as base:
         (portfolio / 'config.json').write_text(json.dumps({'fx_tickers': {'HKD_CNY': 'HKDCNY=X'}, 'yahoo_base': base,
-                                                           'eastmoney_url': eastmoney_url(base)}))
+                                                           'eastmoney_url': eastmoney_url(base),
+                                                           'tencent_url': tencent_url(base)}))
         outcome = asyncio.run(close_snapshot.run(DAY, engine_dir=scripts, portfolio_dir=portfolio))
     assert outcome.status == 'ok', outcome.summary
     assert '收盘竞价后没有新的成交时间' in outcome.summary
@@ -182,7 +183,8 @@ def test_a_suspended_holding_reaches_the_routine_summary_and_the_tracker_history
                                      positions=[ledger_position(CN, '100', '8', name='Example')])])
     scripts = engine_copy(tmp_path / 'checkout')
     with price_server({CN: 9.0}, times={CN: MONDAY_CLOSE}) as base:
-        (portfolio / 'config.json').write_text(json.dumps({'fx_tickers': {}, 'yahoo_base': base}))
+        (portfolio / 'config.json').write_text(json.dumps({'fx_tickers': {}, 'yahoo_base': base,
+                                                            'tencent_url': tencent_url(base)}))
         outcome = asyncio.run(close_snapshot.run(DAY, engine_dir=scripts, portfolio_dir=portfolio))
     assert outcome.status == 'ok', outcome.summary
     assert '含估算' in outcome.summary and CN in outcome.summary

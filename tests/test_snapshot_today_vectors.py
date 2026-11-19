@@ -282,7 +282,8 @@ def test_the_snapshot_takes_the_rate_today_takes(monkeypatch, yahoo, eastmoney, 
 
 # Round 6: ``TRACKER_QUOTE_SOURCE`` selects Today's sources, its rate sources too (``core.market.runtime``); the
 # snapshot takes its rate from the same ones (with ``yahoo``, Yahoo's stale 7.00, marked, not Eastmoney's 7.01).
-@pytest.mark.parametrize('choice', ['yahoo', 'eastmoney', ''])
+# Tencent has no rates: with ``tencent`` both take them from Yahoo, then Eastmoney.
+@pytest.mark.parametrize('choice', ['yahoo', 'eastmoney', 'tencent', ''])
 @pytest.mark.parametrize('yahoo, eastmoney, now, _taken, _marked, _asked', SOURCE_CASES)
 def test_the_snapshot_takes_the_rate_today_takes_from_the_selected_sources(monkeypatch, choice, yahoo, eastmoney,
                                                                            now, _taken, _marked, _asked):

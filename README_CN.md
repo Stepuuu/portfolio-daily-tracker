@@ -28,8 +28,9 @@
 
 - **券商接口**。不登录券商，不下单。成交只来自你手动记的、你上传的券商导出文件，或你确认的方案。
 - **投资建议**。提醒、计划、简报、回测和助手只报告数字和你自己设的规则，不告诉你买什么。
-- **实时行情终端**。行情来自公开接口（先东方财富，失败时用雅虎），不需要账号。2026-11-17 实测一次：
-  东方财富的 A 股和港股价格约 2 秒到达，雅虎的约晚 15 分钟，汇率约 10 秒。每个价格都标明状态，
+- **实时行情终端**。行情来自公开接口（先东方财富，再腾讯，最后雅虎；前一个取不到的价格才问下一个），不需要账号。
+  2026-11-17 实测一次：东方财富的 A 股和港股价格约 2 秒到达，雅虎的约晚 15 分钟，汇率约 10 秒。2026-11-19 在东方财富接口
+  连不上的境内服务器上实测腾讯：直连约 0.2 秒返回，美股价格只晚几秒（港股盘中延迟多少未实测）。每个价格都标明来源和状态，
   过时的价格不会显示成实时。
 - **多人服务**。没有登录功能，请只在自己的机器上使用（见 [SECURITY.md](SECURITY.md)）。
 
@@ -178,8 +179,9 @@ make demo
 | `PYTHON` | `python3` | `start.sh` 和引擎 shell 脚本使用的解释器 |
 | `BACKEND_START_TIMEOUT` | `30`（`start.sh`）、无（Compose） | 启动时后端响应 `/health` 最多可用的秒数。`start.sh` 超过它就放弃（1 到 3600 的整数，取自 shell 环境，如 `BACKEND_START_TIMEOUT=120 make start`）；Compose 在这段时间内不把失败的健康检查计数（`start_period`，取自 `.env`） |
 | **行情** | | |
-| `TRACKER_QUOTE_SOURCE` | 先东方财富，再雅虎 | `eastmoney` 或 `yahoo`：只用这一个源；`fake`：读取 `PORTFOLIO_DIR/fake_quotes.json` 中的模拟行情 |
+| `TRACKER_QUOTE_SOURCE` | 先东方财富，再腾讯，最后雅虎 | `eastmoney`、`tencent` 或 `yahoo`：行情只用这一个源（腾讯没有汇率，选 `tencent` 时汇率仍先雅虎、再东方财富）；`fake`：读取 `PORTFOLIO_DIR/fake_quotes.json` 中的模拟行情 |
 | `TRACKER_EASTMONEY_PROXY` | 关 | `1`：通过环境中的代理访问东方财富 |
+| `TRACKER_TENCENT_PROXY` | 关 | `1`：通过环境中的代理访问腾讯行情 |
 | `TRACKER_YAHOO_PROXY` | 使用 `HTTPS_PROXY` | 访问雅虎的代理地址 |
 | `TRACKER_SYMBOL_INDEX` | 开 | `0`：搜索不加载 A 股 / ETF 名称列表（代码仍可搜索） |
 | **提醒与例行任务** | | |

@@ -20,6 +20,46 @@
   when it gives up. Compose uses it as the backend health check's
   `start_period` (default none, as before).
 
+- **Tencent quotes.** Tencent (`qt.gtimg.cn`) is a third quote source for Today, the watchlist, alerts,
+  briefs, plans and the setup check. By default Eastmoney is asked first, then Tencent, then Yahoo, each for
+  what the one before could not price (the same fallback rules: a stale price, a previous close or a quote
+  without an exchange time asks the next source, and the best answer is kept), and every quote names the
+  source it came from (腾讯 on the page). It covers Shanghai and Shenzhen shares, ETFs, B shares, Hong Kong
+  and US listings and every index the app knows, with price, previous close, name, currency and the
+  exchange's own time. A suspended share or one without a trade yet is valued at its previous close (估算)
+  as with Eastmoney; a delisted or never listed share, which Tencent still answers with an old price, has
+  none. Like Eastmoney it is reached directly whatever proxy the environment names; `TRACKER_TENCENT_PROXY=1`
+  sends it through that proxy; `TRACKER_QUOTE_SOURCE=tencent` uses it alone for quotes. Measured on
+  2026-11-19 on mainland hosts where Eastmoney's quote endpoints did not answer: Tencent replied directly in
+  about 0.2 s (2 s through the proxy). Its timeout is 3 s (4 s through the proxy), shorter than Eastmoney's,
+  and a source that fails is left alone for a while, as before.
+- **The daily snapshot prices from Tencent** the holdings Yahoo did not price, in one request, by Today's
+  reading of Tencent and Today's close rules, and only from a closing row: stamped on its session's own date,
+  at or after the closing print (mainland 15:00, Hong Kong 16:08, New York 16:00) and, in New York, within a
+  minute of the bell, since Tencent does not say whether a later price is an after-hours trade. A row stamped
+  earlier (mid-session, before the closing auction) is never booked, however late the run; an earlier
+  session's close is carried forward only from a row Tencent marks suspended. A holding still waiting for its
+  market's close to become final is not asked (every source waits); one waiting for the closing print to reach
+  Yahoo is, and only Tencent's verified close ends that wait. The request gets at most 6 s and is skipped when
+  less than that and 30 s for the exchange rates is left of the pipeline's 120 s. The script prints which
+  holdings it priced from Tencent, each position of the snapshot records its price's source (`price_source`:
+  `yahoo` or `tencent`), and the daily report's footer names the sources the day used (数据来源: Yahoo Finance、
+  腾讯); a day priced from Yahoo alone gets the same report as before. `tencent_url` in the
+  engine's `config.json` replaces the endpoint; `TRACKER_QUOTE_SOURCE=tencent` prices from Tencent alone,
+  `yahoo` and `eastmoney` from Yahoo alone, as before.
+- The setup check's 行情源 item names the source that answered and the order the sources are asked in, and
+  its proxy hint lists `TRACKER_TENCENT_PROXY=1` next to `TRACKER_EASTMONEY_PROXY=1`.
+
+### Not changed
+
+- Exchange rates still come from Yahoo, then Eastmoney, also with `TRACKER_QUOTE_SOURCE=tencent`: Tencent
+  answers `whUSDCNY` / `whHKDCNY`, but its USD rate was 0.16 % from Yahoo's onshore rate when compared and
+  what its fields mean is not documented.
+- Daily bars (the stock drawer's chart, the assistant's price history and indicators) still come from
+  Eastmoney's history for A shares, ETFs and Hong Kong and from Yahoo for US listings, without a fallback.
+- The chat assistant's older quote tools (`get_stock_quote`, `get_market_indices`, `compare_stocks`) keep
+  their own provider chain (Eastmoney, Yahoo, akshare).
+
 ## 4.0.0 — 2026-11-19
 
 A new daily desk built on the confirmed ledger. Holdings now come only from the

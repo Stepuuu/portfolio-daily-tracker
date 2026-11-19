@@ -181,6 +181,29 @@ def test_the_quote_probe_is_bounded_and_says_what_it_saw(client, monkeypatch):
     assert entry['state'] == 'unavailable'
 
 
+def test_the_quote_probe_names_the_source_that_answered_and_the_order_it_asks_them_in(client, monkeypatch):
+    from core.market.runtime import set_market_runtime
+    monkeypatch.delenv('TRACKER_QUOTE_SOURCE')
+    clock = FakeClock('2026-11-17 10:00')
+    eastmoney = ScriptedSource(name='eastmoney')
+    eastmoney.down = '数据源连接失败'
+    tencent = ScriptedSource({'SHA:600519': quote('SHA:600519', '1680', prev_close='1660', at=clock.now(),
+                                                  source='tencent', regular_session=False)}, name='tencent')
+    yahoo = ScriptedSource(name='yahoo')
+    set_market_runtime(fake_runtime(clock, eastmoney, tencent, yahoo))
+    entry = items(client.get('/api/setup/status'))['quotes']
+    assert entry['state'] == 'done' and entry['detail'].startswith('腾讯可用：SHA:600519 的行情时间 10:00:00')
+    assert '依次使用东方财富、腾讯、Yahoo' in entry['detail'] and yahoo.calls == []
+    set_market_runtime(fake_runtime(clock, tencent))
+    assert '只用腾讯' in items(client.get('/api/setup/status'))['quotes']['detail']
+    # Both sources reached directly by default have their switch to the proxy in the hint.
+    monkeypatch.setattr(setup_checks, 'QUOTE_PROBE_SECONDS', 0.2)
+    set_market_runtime(fake_runtime(clock, SlowSource(name='eastmoney')))
+    entry = items(client.get('/api/setup/status'))['quotes']
+    assert entry['state'] == 'todo'
+    assert entry['action']['command'].split('\n') == ['TRACKER_EASTMONEY_PROXY=1', 'TRACKER_TENCENT_PROXY=1']
+
+
 def test_complete_and_dismiss_are_persisted(client):
     assert client.get('/api/setup/status').json()['setup_complete'] is False
     flags = client.post('/api/setup/dismiss').json()

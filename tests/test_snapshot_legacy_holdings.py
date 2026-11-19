@@ -12,7 +12,7 @@ import json
 import pytest
 
 import portfolio_snapshot as snapshot
-from tests.engine_fakes import engine_copy, engine_portfolio, position, price_server
+from tests.engine_fakes import engine_copy, engine_portfolio, position, price_server, tencent_url
 from tests.fakes import build_ledger, opening
 from tests.fakes import position as ledger_position
 
@@ -65,7 +65,8 @@ def test_a_snapshot_of_the_confirmed_ledger_is_not_marked(tmp_path, routine_env)
     build_ledger(portfolio, [opening('Example', cash={'CNY': '1000'}, contributed_cny='2000', date='2026-11-16',
                                      positions=[ledger_position('SHA:600001', '100', '8', name='Example')])])
     with price_server({'SHA:600001': 9.0}) as base:
-        (portfolio / 'config.json').write_text(json.dumps({'fx_tickers': {}, 'yahoo_base': base}))
+        (portfolio / 'config.json').write_text(json.dumps({'fx_tickers': {}, 'yahoo_base': base,
+                                                            'tencent_url': tencent_url(base)}))
         outcome = routine_env(portfolio, engine_copy(tmp_path / 'checkout'))
     assert (outcome.status, outcome.summary) == ('ok', '快照已生成；日报已保存')
     saved = json.loads((portfolio / 'snapshots' / f'{DAY}.json').read_text())

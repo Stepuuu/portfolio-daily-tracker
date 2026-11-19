@@ -28,7 +28,7 @@ A fact::
              string (unit 'date'), a status word (unit 'state'), or null when unknown
     unit     'CNY' | 'HKD' | 'USD' | 'pct' | 'points' | 'count' | 'date' | 'state' | null
     text     the Chinese display string of the value; for a null value it says why
-    source   where the value came from: a quote source ('eastmoney', 'yahoo', 'fake'), or
+    source   where the value came from: a quote source ('eastmoney', 'tencent', 'yahoo', 'fake'), or
              '账本', '提醒记录', '交易计划', '研究笔记', '待确认方案', '例行任务记录', a news source
     as_of    when the value was true: a quote's exchange time, else the time it was read
     status   null, or {code, reason, estimated, provisional?}: ``code`` is a quote status (live,

@@ -25,7 +25,7 @@ from core import notify
 from core.routines import close_snapshot, scheduler
 from core.routines.close_snapshot import EngineResult, run_engine
 from core.routines.scheduler import Routine, Scheduler
-from tests.engine_fakes import SCRIPTS, engine_copy, engine_env, engine_portfolio, position, price_server
+from tests.engine_fakes import SCRIPTS, engine_copy, engine_env, engine_portfolio, position, price_server, tencent_url
 from tests.fakes import FakeClock, build_ledger, opening
 from tests.fakes import position as ledger_position
 
@@ -169,7 +169,8 @@ def test_real_pipeline_values_an_active_ledger_and_is_idempotent(tmp_path, monke
                                      positions=[ledger_position("SHE:000002", "200", "8", name="Example")])])
     scripts = engine_copy(tmp_path / "checkout")
     with price_server({"SHE:000002": 9.0}) as base:
-        (portfolio / "config.json").write_text(json.dumps({"fx_tickers": {}, "yahoo_base": base}))
+        (portfolio / "config.json").write_text(json.dumps({"fx_tickers": {}, "yahoo_base": base,
+                                                            "tencent_url": tencent_url(base)}))
         first = run(engine_dir=scripts, portfolio_dir=portfolio)
         second = run(engine_dir=scripts, portfolio_dir=portfolio)
     assert first.status == "ok" and first.summary == "快照已生成；日报已保存"

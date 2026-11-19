@@ -79,10 +79,18 @@ Edit `config.json`:
 
 - Set group names and cost bases to match your accounts
 - Set `proxy` if Yahoo Finance is blocked in your region (e.g. `http://127.0.0.1:7890`)
+- Holdings Yahoo cannot price are priced from Tencent (`qt.gtimg.cn`) in one request, read and judged
+  as the dashboard's Today page reads and judges them, and booked only from a closing row (stamped on
+  the session's date at or after its close; New York within a minute of the bell); reached directly, or
+  through the environment's proxy with `TRACKER_TENCENT_PROXY=1`; `tencent_url` replaces its endpoint.
+  The request is skipped when the run has too little of its 120 seconds left. Each position records
+  its price's source (`price_source`), and the report's footer names the sources the day used.
+  `TRACKER_QUOTE_SOURCE=tencent` prices from Tencent alone, `yahoo` or `eastmoney` from Yahoo alone
 - Exchange rates come from the source the dashboard's Today page uses: Yahoo first, and Eastmoney's
   offshore rate when Yahoo's is stale or has no time, asked only for the currencies the snapshot
   converts (reached directly, or through the environment's proxy with `TRACKER_EASTMONEY_PROXY=1`;
-  `eastmoney_url` replaces its endpoint); `TRACKER_QUOTE_SOURCE=yahoo` or `eastmoney` uses that one alone
+  `eastmoney_url` replaces its endpoint); `TRACKER_QUOTE_SOURCE=yahoo` or `eastmoney` uses that one alone;
+  Tencent has no rates, so with `tencent` they come from Yahoo, then Eastmoney
 
 ### 3. Create initial holdings
 
@@ -192,14 +200,14 @@ python3 scripts/portfolio_manager.py groups
 
 ## Ticker Format
 
-| Market | Format | Example | Yahoo Symbol |
-|--------|--------|---------|-------------|
-| Shanghai A-share | `SHA:XXXXXX` | `SHA:603259` | `603259.SS` |
-| Shenzhen A-share | `SHE:XXXXXX` | `SHE:002050` | `002050.SZ` |
-| Hong Kong | `HKG:XXXX` | `HKG:0700` | `0700.HK` |
-| US NASDAQ | `NASDAQ:XXXX` | `NASDAQ:GOOGL` | `GOOGL` |
-| US NYSE | `NYSE:XXXX` | `NYSE:BRK.B` | `BRK-B` |
-| Shanghai ETF | `SHA:XXXXXX` | `SHA:513050` | `513050.SS` |
+| Market | Format | Example | Yahoo Symbol | Tencent Symbol |
+|--------|--------|---------|-------------|----------------|
+| Shanghai A-share | `SHA:XXXXXX` | `SHA:603259` | `603259.SS` | `sh603259` |
+| Shenzhen A-share | `SHE:XXXXXX` | `SHE:002050` | `002050.SZ` | `sz002050` |
+| Hong Kong | `HKG:XXXX` | `HKG:0700` | `0700.HK` | `hk00700` |
+| US NASDAQ | `NASDAQ:XXXX` | `NASDAQ:GOOGL` | `GOOGL` | `usGOOGL` |
+| US NYSE | `NYSE:XXXX` | `NYSE:BRK.B` | `BRK-B` | `usBRK.B` |
+| Shanghai ETF | `SHA:XXXXXX` | `SHA:513050` | `513050.SS` | `sh513050` |
 
 ## Data Flow
 
@@ -245,13 +253,13 @@ Add a `get_tracker_snapshot` tool to your AI agent so it can answer questions ab
 
 - Python 3.8+
 - `requests` (`pip install requests`)
-- Network access to Yahoo Finance API
+- Network access to Yahoo Finance API, or to Tencent's quotes (`qt.gtimg.cn`) for the holdings Yahoo cannot price
 
 ## vs. V1 (Google Sheets)
 
 | Feature | V1 (Google Sheets) | V2 (Self-hosted) |
 |---------|-------------------|-------------------|
-| Price Source | Sina + Google Finance | Yahoo Finance (all markets) |
+| Price Source | Sina + Google Finance | Yahoo Finance (all markets), Tencent for what Yahoo cannot price |
 | Storage | Google Drive | Local JSON + CSV |
 | Quant Metrics | None | Sharpe, Vol, Win Rate, P/L Ratio |
 | Margin/Leverage | None | Auto-calculated from negative cash |

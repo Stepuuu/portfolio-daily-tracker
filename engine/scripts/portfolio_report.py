@@ -81,6 +81,23 @@ def rate_text(rate):
     return f"{rate:.4f}"
 
 
+# What the footer's 数据来源 calls each price source of the snapshot (a position's ``price_source``), in this order.
+PRICE_SOURCE_NAMES = {"yahoo": "Yahoo Finance", "tencent": "腾讯"}
+
+
+def price_sources_text(snapshot):
+    """``Yahoo Finance``, ``Yahoo Finance、腾讯`` or ``腾讯``: the sources that priced the day's holdings.
+
+    A position without ``price_source`` (a snapshot made before sources were recorded) was priced from Yahoo;
+    a day without positions says Yahoo Finance, as every report did before Tencent.
+    """
+    used = {pos.get("price_source") or "yahoo" for group in (snapshot.get("groups") or {}).values()
+            for pos in group.get("positions") or []}
+    names = [name for source, name in PRICE_SOURCE_NAMES.items() if source in used]
+    names += sorted(str(source) for source in used if source not in PRICE_SOURCE_NAMES)
+    return "、".join(names) or PRICE_SOURCE_NAMES["yahoo"]
+
+
 def generate_report(snapshot, history=None):
     """Generate markdown report from snapshot."""
     s = snapshot["summary"]
@@ -184,7 +201,7 @@ def generate_report(snapshot, history=None):
         lines.append(f"")
 
     lines.append(f"---")
-    lines.append(f"*数据来源: Yahoo Finance | 生成时间: {snapshot.get('generated_at', '?')[:19]}*")
+    lines.append(f"*数据来源: {price_sources_text(snapshot)} | 生成时间: {snapshot.get('generated_at', '?')[:19]}*")
 
     return "\n".join(lines)
 

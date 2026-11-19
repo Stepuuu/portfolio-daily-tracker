@@ -77,7 +77,8 @@ What happens to one rule, in plain words (the first line that applies decides):
 | Otherwise | fires (a notification), re-arms, or nothing |
 
 Delayed quotes (1 to 20 minutes old) are used; the Yahoo fallback delivers Hong
-Kong prices about 15 minutes late. If the holiday table calls a weekday a
+Kong prices about 15 minutes late (the Tencent fallback before it: not measured
+during Hong Kong trading). If the holiday table calls a weekday a
 holiday but quotes keep advancing, the monitor treats the session as open for
 the rest of the day and says so.
 
@@ -156,6 +157,26 @@ The close snapshot reports:
   an early-close day). Hong Kong half days (final at 12:10) and Hong Kong
   holidays do not wait. An A-share-only portfolio is made at 15:40. A wait that
   could only end after the 09:00 deadline is a failure (`close_not_final`).
+  The engine prices each holding from Yahoo, then, in one request, from Tencent
+  for the holdings Yahoo did not price (Today's reading of Tencent,
+  `core/market/tencent.py`; reached directly unless `TRACKER_TENCENT_PROXY=1`,
+  `tencent_url` in its `config.json` replaces the endpoint; `TRACKER_QUOTE_SOURCE`
+  `tencent` or `yahoo` uses that one alone, `eastmoney` Yahoo alone, as the
+  snapshot has no reading of Eastmoney's quotes). A holding waiting for its
+  market's close to become final is not asked of Tencent: every source waits.
+  A Tencent row is booked only as a closing row: stamped on its session's own
+  date, at or after that session's closing print (the mainland 15:00, Hong
+  Kong 16:08, New York the bell) and, in New York, within a minute of the bell
+  (Tencent does not say whether a later price is an after-hours trade). A row
+  stamped earlier is never booked, however late the run; an earlier session's
+  close is carried forward only from a row Tencent marks suspended; and a wait
+  for Yahoo's closing print ends only with Tencent's verified close. Tencent is
+  asked only while the run has time for it (at most 6 s, and 30 s left for the
+  exchange rates within the pipeline's 120 s), so a slow Yahoo leaves the run
+  to end or ask for its retry as before. Each position records the source of
+  its price (`price_source`: `yahoo` or `tencent`), and the daily report's
+  footer names the sources the day used (数据来源: Yahoo Finance、腾讯; Yahoo
+  Finance alone, as before, when every price came from Yahoo).
   Each price is judged by Today's decision table (`core/market/quotes.py`), so
   a price Today calls stale is not taken for the close: Hong Kong still
   stamped 15:55 at 16:10 is before the closing auction's print and waits for
@@ -163,7 +184,8 @@ The close snapshot reports:
   delay is 15 minutes, so the 16:08 print arrives about 16:23), so the run
   looks again on the clock's five-minute marks (16:15, 16:20, 16:25;
   `next_attempt_at`, the engine's `CHECK_AT`) with the reason
-  等待港股收盘价确定，最晚 16:28 记入, and books the close, unmarked, as soon as it
+  等待港股收盘价确定，最晚 16:28 记入 (Tencent is asked on each look and its closing
+  row is booked if it already has one), and books the close, unmarked, as soon as it
   is verified, at the latest by the print plus the sources' usual delay
   (16:28, the mainland 15:20; the run detail's `book_by`). Meanwhile Today's
   status chip names the next look (今日快照 16:15 后记入); the latest time is only
@@ -183,8 +205,9 @@ The close snapshot reports:
   rate is the one Today takes: Yahoo's first, Eastmoney's offshore rate when
   Yahoo's is stale or has no time, and the latest of them, marked, only when
   neither is verified; only the source `TRACKER_QUOTE_SOURCE` selects when it
-  names `yahoo` or `eastmoney`; `eastmoney_url` in the engine's `config.json`
-  replaces Eastmoney's endpoint), or
+  names `yahoo` or `eastmoney`, both when it names `tencent`, which has no
+  rates; `eastmoney_url` in the engine's `config.json` replaces Eastmoney's
+  endpoint), or
   holdings from the legacy files not yet confirmed into the ledger
   (持仓来自旧版持仓文件，尚未迁移到账本; Today then shows 还没有已确认的持仓 (no
   confirmed holdings yet) with no totals, while the snapshot is still made from those files). The summary names the first reason; the
@@ -221,7 +244,8 @@ when the backend starts), then restart the backend.
 | `TRACKER_POSTMARKET_TIME` | `15:45` | due time, `HH:MM` Asia/Shanghai |
 | `TRACKER_BRIEF_COMMENTARY` | off | `1` adds the chat model's commentary to briefs (needs a configured model) |
 | `TRACKER_CLOSE_SNAPSHOT` | on | `0` switches the automatic close snapshot off (its time, 15:40, is fixed) |
-| `TRACKER_QUOTE_SOURCE` | Eastmoney, then Yahoo | `eastmoney` or `yahoo` uses only that source; `fake` reads scripted quotes from `PORTFOLIO_DIR/fake_quotes.json` |
+| `TRACKER_QUOTE_SOURCE` | Eastmoney, then Tencent, then Yahoo | `eastmoney`, `tencent` or `yahoo` uses only that source for quotes (rates: see the close snapshot above); `fake` reads scripted quotes from `PORTFOLIO_DIR/fake_quotes.json` |
+| `TRACKER_TENCENT_PROXY` | off | `1` reaches Tencent through the proxy in the environment (Today and the close snapshot) |
 
 ## Running it
 

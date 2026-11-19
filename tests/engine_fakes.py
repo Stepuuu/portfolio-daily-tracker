@@ -6,10 +6,11 @@
         subprocess.run([sys.executable, SCRIPTS / 'portfolio_snapshot.py', ...], env=env)
 
 ``price_server`` answers the Yahoo chart requests that ``portfolio_snapshot``
-makes, and the Eastmoney rate requests it makes when Yahoo has no current
-rate, on a loopback port; the snapshot reaches it through ``yahoo_base`` and
-``eastmoney_url`` in the portfolio's ``config.json``. Nothing here touches
-the network.
+makes, the Eastmoney rate requests it makes when Yahoo has no current
+rate, and the Tencent quote requests it makes for the holdings Yahoo did not
+price, on a loopback port; the snapshot reaches it through ``yahoo_base``,
+``eastmoney_url`` and ``tencent_url`` in the portfolio's ``config.json``.
+Nothing here touches the network.
 """
 from __future__ import annotations
 
@@ -44,6 +45,7 @@ CURRENCIES = {'HKG': 'HKD', 'NASDAQ': 'USD', 'NYSE': 'USD'}
 
 
 EASTMONEY_PATH = '/api/qt/ulist.np/get'
+TENCENT_PATH = '/tencent/'
 
 
 def eastmoney_url(yahoo_base: str) -> str:
@@ -51,10 +53,16 @@ def eastmoney_url(yahoo_base: str) -> str:
     return yahoo_base.rsplit('/chart', 1)[0] + EASTMONEY_PATH
 
 
+def tencent_url(yahoo_base: str) -> str:
+    """The Tencent endpoint ``price_server`` serves beside the Yahoo base URL it yields."""
+    return yahoo_base.rsplit('/chart', 1)[0] + TENCENT_PATH
+
+
 @contextmanager
 def price_server(prices: Dict[str, float], currencies: Optional[Dict[str, Optional[str]]] = None,
                  times: Optional[Dict[str, Optional[int]]] = None,
-                 eastmoney: Optional[Dict[str, Tuple[float, Optional[int]]]] = None) -> Iterator[str]:
+                 eastmoney: Optional[Dict[str, Tuple[float, Optional[int]]]] = None,
+                 tencent: Optional[Dict[str, str]] = None) -> Iterator[str]:
     """Serve ``prices`` (by ticker) as Yahoo chart responses; yields the base URL.
 
     A ticker that is not listed gets HTTP 404, as for a failed download. Each
@@ -63,7 +71,9 @@ def price_server(prices: Dict[str, float], currencies: Optional[Dict[str, Option
     them per ticker, ``None`` leaves the field out. ``eastmoney`` (secid ->
     ``(rate, Unix seconds or None)``, such as ``'133.USDCNH'``) are the rows
     Eastmoney's ``ulist.np`` answers at ``eastmoney_url(base)``; it knows no
-    other (``rc`` 102), as by default.
+    other (``rc`` 102), as by default. ``tencent`` (symbol -> the ``~``-separated
+    fields, such as ``'sh600001'``) are the rows Tencent answers at
+    ``tencent_url(base)``, GBK-encoded; it knows no other (``v_pv_none_match``).
     """
     def field(table, ticker, default):
         return (table or {}).get(ticker, default)
@@ -77,6 +87,9 @@ def price_server(prices: Dict[str, float], currencies: Optional[Dict[str, Option
             if urlsplit(self.path).path == EASTMONEY_PATH:
                 self.answer(eastmoney_rows(parse_qs(urlsplit(self.path).query).get('secids', [''])[0]))
                 return
+            if urlsplit(self.path).path == TENCENT_PATH:
+                self.answer(tencent_rows(parse_qs(urlsplit(self.path).query).get('q', [''])[0]), 'text/html; charset=GBK')
+                return
             symbol = self.path.split('?')[0].rsplit('/', 1)[-1]
             if symbol not in by_symbol:
                 self.send_error(404)
@@ -89,10 +102,10 @@ def price_server(prices: Dict[str, float], currencies: Optional[Dict[str, Option
                 meta['regularMarketTime'] = moment
             self.answer({'chart': {'result': [{'meta': meta}]}})
 
-        def answer(self, payload):
-            body = json.dumps(payload).encode()
+        def answer(self, payload, content_type='application/json'):
+            body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -110,6 +123,10 @@ def price_server(prices: Dict[str, float], currencies: Optional[Dict[str, Option
                              **({'f124': moment} if moment is not None else {})})
         return {'rc': 0, 'data': {'total': len(rows), 'diff': rows}} if rows else {'rc': 102, 'data': None}
 
+    def tencent_rows(symbols):
+        lines = [f'v_{symbol}="{tencent[symbol]}";' for symbol in filter(None, symbols.split(',')) if symbol in (tencent or {})]
+        return ('\n'.join(lines) if lines else 'v_pv_none_match="1";').encode('gbk')
+
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -123,11 +140,12 @@ def price_server(prices: Dict[str, float], currencies: Optional[Dict[str, Option
 
 def engine_portfolio(directory: Path, yahoo_base: str, *, day: str = '2026-11-16',
                      positions: Iterable[dict] = (), cash: float = 1000, cost_basis: float = 2000) -> Path:
-    """A legacy-holdings portfolio priced only through ``yahoo_base`` (and the Eastmoney endpoint beside it);
-    no exchange rates."""
+    """A legacy-holdings portfolio priced only through ``yahoo_base`` (and the Eastmoney and Tencent endpoints
+    beside it); no exchange rates."""
     (directory / 'holdings').mkdir(parents=True)
     (directory / 'config.json').write_text(json.dumps({'fx_tickers': {}, 'yahoo_base': yahoo_base,
-                                                       'eastmoney_url': eastmoney_url(yahoo_base)}))
+                                                       'eastmoney_url': eastmoney_url(yahoo_base),
+                                                       'tencent_url': tencent_url(yahoo_base)}))
     (directory / 'holdings' / f'{day}.json').write_text(json.dumps({'date': day, 'groups': {
         'Example': {'cash': cash, 'fund': 0, 'cost_basis': cost_basis, 'positions': list(positions)}}}))
     return directory
