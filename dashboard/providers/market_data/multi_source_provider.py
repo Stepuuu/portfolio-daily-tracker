@@ -10,6 +10,13 @@ from core.data.base import MarketDataProvider
 from core.models import Stock, Quote, Market
 
 
+def _kept(missed: Optional[Quote], quote: Optional[Quote]) -> Optional[Quote]:
+    """Of two quotes without a price, the one to answer with: the earlier, unless only the later gives a previous close."""
+    if missed is None or (not missed.prev_close and quote is not None and quote.prev_close):
+        return quote or missed
+    return missed
+
+
 class MultiSourceProvider(MarketDataProvider):
     """
     多数据源组合 Provider
@@ -98,11 +105,17 @@ class MultiSourceProvider(MarketDataProvider):
         """
         获取单个股票实时行情
         依次尝试各个数据源，直到成功
+
+        A quote without a price (the source's missing marker, a suspended
+        stock) is a miss: the next source is asked. Only when every source
+        misses is that quote returned, with what its source did give (the
+        first one that gave a previous close, see ``_kept``).
         """
         cache_key = self._cache_key(symbol, market)
         cached_quote = self._get_cached_quote(cache_key, self.cache_ttl)
         if cached_quote:
             return cached_quote
+        missed = None
 
         # 优先使用上次成功的数据源
         if self._last_successful_provider:
@@ -112,9 +125,10 @@ class MultiSourceProvider(MarketDataProvider):
                     symbol,
                     market
                 )
-                if quote:
+                if quote and quote.price is not None:
                     self._store_quote(symbol, market, quote)
                     return quote
+                missed = _kept(missed, quote)
 
         # 依次尝试其他数据源
         for provider in self.providers:
@@ -125,12 +139,13 @@ class MultiSourceProvider(MarketDataProvider):
                 continue
 
             quote = await self._get_quote_from_provider(provider, symbol, market)
-            if quote:
+            if quote and quote.price is not None:
                 self._last_successful_provider = provider
                 self._store_quote(symbol, market, quote)
                 return quote
+            missed = _kept(missed, quote)
 
-        return self._get_cached_quote(cache_key, self.stale_ttl)
+        return self._get_cached_quote(cache_key, self.stale_ttl) or missed
 
     async def get_quotes(self, symbols: List[str], market: Market) -> List[Quote]:
         """
@@ -160,9 +175,24 @@ class MultiSourceProvider(MarketDataProvider):
                     timeout=self.provider_timeout
                 )
                 if quotes:
+                    missed = {}
                     for quote in quotes:
-                        self._store_quote(quote.stock.symbol, quote.stock.market, quote)
-                    return cached_quotes + quotes
+                        if quote.price is None:
+                            missed[quote.stock.symbol] = quote
+                        else:
+                            self._store_quote(quote.stock.symbol, quote.stock.market, quote)
+                    filled = {}
+                    if missed:
+                        # A quote without a price is a miss: the later sources are asked for those symbols,
+                        # one batch each, all of it within one timeout.
+                        later = self.providers[self.providers.index(provider) + 1:]
+                        try:
+                            await asyncio.wait_for(self._fill(later, missed, filled, market),
+                                                   timeout=self.provider_timeout)
+                        except asyncio.TimeoutError:
+                            print("[多数据源] 补充行情超时")
+                    return cached_quotes + [filled.get(quote.stock.symbol) or missed.get(quote.stock.symbol) or quote
+                                            if quote.price is None else quote for quote in quotes]
             except asyncio.TimeoutError:
                 print(f"[{provider.name}] 批量获取超时")
                 continue
@@ -178,6 +208,34 @@ class MultiSourceProvider(MarketDataProvider):
                 quotes.append(quote)
 
         return quotes
+
+    async def _fill(self, providers: List[MarketDataProvider], missed: dict, filled: dict, market: Market) -> None:
+        """Ask ``providers`` in turn, one batch each, for the symbols of ``missed`` not yet in ``filled``.
+
+        A priced quote goes to ``filled``; one without a price may replace the
+        ``missed`` one (``_kept``). Both dicts are updated as answers come, so
+        what came before a timeout is kept.
+        """
+        for provider in providers:
+            wanted = [symbol for symbol in missed if symbol not in filled]
+            if not wanted:
+                return
+            if market not in provider.supported_markets:
+                continue
+            try:
+                quotes = await provider.get_quotes(wanted, market)
+            except Exception as e:
+                print(f"[{provider.name}] 补充行情失败: {type(e).__name__}")
+                continue
+            for quote in quotes or []:
+                symbol = quote.stock.symbol
+                if symbol not in missed or symbol in filled:
+                    continue
+                if quote.price is not None:
+                    filled[symbol] = quote
+                    self._store_quote(symbol, market, quote)
+                else:
+                    missed[symbol] = _kept(missed[symbol], quote)
 
     async def search_stock(self, keyword: str) -> List[Stock]:
         """搜索股票"""

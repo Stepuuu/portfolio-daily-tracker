@@ -1,0 +1,92 @@
+{
+  "_comment": "Exchange calendars per market and year. 'closed' lists the weekdays on which the exchange is closed all day; weekends are always closed, including make-up working days. 'early_close' maps a trading day that ends early to the local time continuous trading stops (Hong Kong: the morning session only, until 12:00; US: 13:00 New York time). 'source' names the official notice the year was copied from, when it was retrieved, and what it was cross-checked against. A year that is not listed is unknown: the calendar then falls back to weekdays only and says so (confidence 'weekday_only'). Unscheduled closures cannot be listed; Hong Kong keeps trading in typhoons and black rainstorms since 2024-09-23 (HKEX Severe Weather Trading). CN 2027 is not listed: on 2026-11-17 the State Council had published its 2027 holiday notice (2026-11-05) but neither SSE nor SZSE had published its 2027 closure notice.",
+  "CN": {
+    "2026": {
+      "source": {
+        "title": "上海证券交易所关于2026年部分节假日休市安排的通知（上证公告〔2025〕45号，2025-12-22）",
+        "url": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml",
+        "retrieved": "2026-11-17",
+        "cross_check": "深圳证券交易所关于2026年部分节假日休市安排的通知（深证会〔2025〕481号）https://www.szse.cn/disclosure/notice/general/t20251222_618087.html lists the same closures; earlier checked against the Sina trading calendar"
+      },
+      "closed": [
+        "2026-01-01", "2026-01-02",
+        "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-23",
+        "2026-04-06",
+        "2026-05-01", "2026-05-04", "2026-05-05",
+        "2026-06-19",
+        "2026-09-25",
+        "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"
+      ]
+    }
+  },
+  "HK": {
+    "2026": {
+      "source": {
+        "title": "HKEX circular CT/075/25 (2025-06-02), Hong Kong Securities Market Holiday Schedule for Year 2026",
+        "url": "https://www.hkex.com.hk/Services/Circulars-and-Notices/Participant-and-Members-Circulars/SEHK/2025/SEHK_CT_075_2025?sc_lang=en",
+        "retrieved": "2026-11-17",
+        "cross_check": "weekday general holidays of the HKSAR Government https://www.1823.gov.hk/common/ical/en.json (same 14 days); half days in HKEX circular MO/DT/121/25 https://www.hkex.com.hk/Services/Circulars-and-Notices/Participant-and-Members-Circulars/SEHK/2025/20250602_MO_DT_121_25?sc_lang=en"
+      },
+      "closed": [
+        "2026-01-01",
+        "2026-02-17", "2026-02-18", "2026-02-19",
+        "2026-04-03", "2026-04-06", "2026-04-07",
+        "2026-05-01", "2026-05-25",
+        "2026-06-19",
+        "2026-07-01",
+        "2026-10-01", "2026-10-19",
+        "2026-12-25"
+      ],
+      "early_close": {"2026-02-16": "12:00", "2026-12-24": "12:00", "2026-12-31": "12:00"}
+    },
+    "2027": {
+      "source": {
+        "title": "HKEX circular CT/077/26 (2026-06-01), Hong Kong Securities Market Holiday Schedule for Year 2027",
+        "url": "https://www.hkex.com.hk/Services/Circulars-and-Notices/Participant-and-Members-Circulars/SEHK/2026/SEHK_CT_077_2026Jun01162846?sc_lang=en",
+        "retrieved": "2026-11-17",
+        "cross_check": "weekday general holidays of the HKSAR Government https://www.1823.gov.hk/common/ical/en.json (same 13 days); half days in HKEX circular MO/DT/133/26 https://www.hkex.com.hk/Services/Circulars-and-Notices/Participant-and-Members-Circulars/SEHK/2026/20260601_MO_DT_133_26?sc_lang=en"
+      },
+      "closed": [
+        "2027-01-01",
+        "2027-02-08", "2027-02-09",
+        "2027-03-26", "2027-03-29",
+        "2027-04-05",
+        "2027-05-13",
+        "2027-06-09",
+        "2027-07-01",
+        "2027-09-16",
+        "2027-10-01", "2027-10-08",
+        "2027-12-27"
+      ],
+      "early_close": {"2027-02-05": "12:00", "2027-12-24": "12:00", "2027-12-31": "12:00"}
+    }
+  },
+  "US": {
+    "2026": {
+      "source": {
+        "title": "NYSE Holidays & Trading Hours",
+        "url": "https://www.nyse.com/trade/hours-calendars",
+        "retrieved": "2026-11-17",
+        "cross_check": "Nasdaq Trader U.S. Equity and Options Markets Holiday Schedule https://www.nasdaqtrader.com/trader.aspx?id=calendar lists the same closures and 13:00 early closes"
+      },
+      "closed": [
+        "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+        "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25"
+      ],
+      "early_close": {"2026-11-27": "13:00", "2026-12-24": "13:00"}
+    },
+    "2027": {
+      "source": {
+        "title": "NYSE Holidays & Trading Hours",
+        "url": "https://www.nyse.com/trade/hours-calendars",
+        "retrieved": "2026-11-17",
+        "cross_check": "US federal holidays for 2027 from OPM https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/ less Columbus Day and Veterans Day, plus Good Friday (Easter is 2027-03-28); Nasdaq Trader listed only 2026 on the retrieval date, so the 2027 early close rests on NYSE alone"
+      },
+      "closed": [
+        "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+        "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"
+      ],
+      "early_close": {"2027-11-26": "13:00"}
+    }
+  }
+}

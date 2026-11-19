@@ -12,6 +12,7 @@ import httpx
 
 from core.data.base import MarketDataProvider
 from core.models import Stock, Quote, Market
+from core.models.market import provider_count, provider_number, provider_price
 
 
 class EastmoneyDirectProvider(MarketDataProvider):
@@ -68,15 +69,12 @@ class EastmoneyDirectProvider(MarketDataProvider):
             return f"0.{symbol}"
         return None
 
-    def _scale_price(self, value) -> float:
-        if value in (None, "-", ""):
-            return 0.0
-        return float(value)
+    def _scale_price(self, value) -> Optional[float]:
+        """A price; ``None`` for the missing marker ("-", sent before the open and for a suspended stock)."""
+        return provider_price(value)
 
     def _scale_turnover(self, value) -> Optional[float]:
-        if value in (None, "-", ""):
-            return None
-        return float(value)
+        return provider_number(value)
 
     async def _fetch_quote_data(self, symbol: str) -> Optional[dict]:
         secid = self._secid_for_symbol(symbol)
@@ -125,11 +123,11 @@ class EastmoneyDirectProvider(MarketDataProvider):
             high=self._scale_price(payload.get("f44")),
             low=self._scale_price(payload.get("f45")),
             prev_close=prev_close,
-            volume=int(float(payload.get("f47") or 0)),
-            amount=float(payload.get("f48") or 0),
+            volume=provider_count(payload.get("f47")),
+            amount=provider_number(payload.get("f48")),
             timestamp=datetime.now(),
             turnover=self._scale_turnover(payload.get("f168")),
-            pe=float(payload.get("f162")) if payload.get("f162") not in (None, "-", "") else None,
+            pe=provider_number(payload.get("f162")),
         )
 
     async def get_quote(self, symbol: str, market: Market) -> Optional[Quote]:

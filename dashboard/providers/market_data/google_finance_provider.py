@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from core.data.base import MarketDataProvider
 from core.models import Stock, Quote, Market
+from core.models.market import provider_count, provider_price
 
 
 class GoogleFinanceProvider(MarketDataProvider):
@@ -116,13 +117,14 @@ class GoogleFinanceProvider(MarketDataProvider):
 
         return Quote(
             stock=stock,
-            price=float(data.get('regularMarketPrice', 0) or 0),
-            open=float(data.get('regularMarketOpen', 0) or 0),
-            high=float(data.get('regularMarketDayHigh', 0) or 0),
-            low=float(data.get('regularMarketDayLow', 0) or 0),
-            prev_close=float(data.get('regularMarketPreviousClose', 0) or 0),
-            volume=int(data.get('regularMarketVolume', 0) or 0),
-            amount=0.0,
+            # A field Yahoo leaves out (or a 0 price) is missing: None, never 0. It gives no amount.
+            price=provider_price(data.get('regularMarketPrice')),
+            open=provider_price(data.get('regularMarketOpen')),
+            high=provider_price(data.get('regularMarketDayHigh')),
+            low=provider_price(data.get('regularMarketDayLow')),
+            prev_close=provider_price(data.get('regularMarketPreviousClose')),
+            volume=provider_count(data.get('regularMarketVolume')),
+            amount=None,
             timestamp=datetime.now()
         )
 

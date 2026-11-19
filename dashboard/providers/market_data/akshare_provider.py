@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from core.data.base import MarketDataProvider
 from core.models import Stock, Quote, Market
+from core.models.market import provider_count, provider_number, provider_price
 
 
 class AKShareProvider(MarketDataProvider):
@@ -109,13 +110,14 @@ class AKShareProvider(MarketDataProvider):
 
             return Quote(
                 stock=stock,
-                price=float(row["最新价"]) if row["最新价"] != "-" else 0.0,
-                open=float(row["今开"]) if row["今开"] != "-" else 0.0,
-                high=float(row["最高"]) if row["最高"] != "-" else 0.0,
-                low=float(row["最低"]) if row["最低"] != "-" else 0.0,
-                prev_close=float(row["昨收"]) if row["昨收"] != "-" else 0.0,
-                volume=int(row["成交量"]) if row["成交量"] != "-" else 0,
-                amount=float(row["成交额"]) if row["成交额"] != "-" else 0.0,
+                # "-" or NaN (no trade yet, suspended) is missing: None, never 0
+                price=provider_price(row["最新价"]),
+                open=provider_price(row["今开"]),
+                high=provider_price(row["最高"]),
+                low=provider_price(row["最低"]),
+                prev_close=provider_price(row["昨收"]),
+                volume=provider_count(row["成交量"]),
+                amount=provider_number(row["成交额"]),
                 timestamp=datetime.now()
             )
         except Exception as e:
