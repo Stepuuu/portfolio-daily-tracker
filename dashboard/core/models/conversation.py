@@ -103,6 +103,9 @@ class AgentContext:
     recent_alerts: List[Alert] = field(default_factory=list)
     current_time: datetime = field(default_factory=datetime.now)
     session_phase: str = "unknown"  # pre_market, trading, post_market
+    # The value fields the context shows (core.agent_context.LiveContext.evidence): what the
+    # grounding check may count as data from the context. The text is never parsed for numbers.
+    evidence: List[Any] = field(default_factory=list)
 
     def to_context_string(self) -> str:
         """生成上下文字符串，供 Agent 使用"""

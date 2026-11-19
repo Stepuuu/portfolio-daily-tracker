@@ -26,6 +26,8 @@ CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
 # 图片保存目录
 IMAGES_DIR = Path("data/conversation_images")
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+STORED_IMAGE_PREFIX = "data/conversation_images/"
+IMAGE_MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
 
 class ChatRequest(BaseModel):
@@ -61,7 +63,12 @@ def get_service():
 
 
 def _chat_error_to_http(error: Exception) -> HTTPException:
-    detail = str(error).strip() or "聊天服务调用失败"
+    # A plain RuntimeError is what the agent loop and the model adapters raise, with their own fixed texts
+    # (providers/llm/error_utils). Anything else said by a library is not shown: its class goes to the log.
+    detail = str(error).strip() if type(error) is RuntimeError else ""
+    if not detail:
+        print(f"[对话] 调用失败: {type(error).__name__}")
+        detail = "聊天服务调用失败"
     lower = detail.lower()
 
     if "401" in lower or "鉴权失败" in detail:
@@ -339,10 +346,23 @@ async def get_conversation_by_date(date: str):
 async def serve_conversation_image(image_path: str):
     """提供历史对话中保存的图片"""
     from fastapi.responses import FileResponse
-    full_path = Path(image_path)
-    if not full_path.exists():
+    # Saved turns store "data/conversation_images/<name>". Accept that form or a bare
+    # file name, and never use any directory part of the request.
+    name = image_path.replace("\\", "/")
+    if name.startswith(STORED_IMAGE_PREFIX):
+        name = name[len(STORED_IMAGE_PREFIX):]
+    media_type = IMAGE_MEDIA_TYPES.get(Path(name).suffix.lower())
+    if not name or "/" in name or "\x00" in name or media_type is None:
         raise HTTPException(status_code=404, detail="图片不存在")
-    return FileResponse(str(full_path), media_type="image/jpeg")
+    try:
+        images_root = IMAGES_DIR.resolve()
+        full_path = (images_root / name).resolve()
+        inside = full_path.parent == images_root and full_path.is_file()
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return FileResponse(str(full_path), media_type=media_type)
 
 
 @router.post("/conversations/{date}/load")

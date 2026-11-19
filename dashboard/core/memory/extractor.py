@@ -4,7 +4,9 @@
 """
 import re
 import json
-from typing import Dict, List, Any, Optional
+import math
+from decimal import Decimal, InvalidOperation
+from typing import Dict, List, Any, Optional, Sequence, Tuple
 from dataclasses import dataclass
 
 
@@ -49,6 +51,70 @@ class ExtractionResult:
     sentiment: str  # bullish/bearish/neutral
 
 
+# -- what the user says about themself ------------------------------------------
+#
+# The fixed rules write to memory at once (see "Memory writes" in
+# backend/services/agent_service.py), so they read only what the user says
+# about themself. The message is cut into clauses (at ，。！？；：、 and line
+# ends) after every quoted span is removed (“…” 「…」 『…』 "…" ‘…’ 《…》: words
+# quoted from someone else). A clause is skipped when it
+#
+# * asks something: ？ ? 吗 呢 么 嘛 是否 是不是 算不算 会不会 能不能 有没有
+#   怎么 怎样 什么 为什么 如何 哪 多少;
+# * is hypothetical or an example: 如果 假如 假设 要是 万一 倘若 若 的话 比如
+#   例如 譬如 就像 (not 好比, which 偏好比较 contains);
+# * speaks of someone or something else (THIRD_PERSON): 他 她 他们 别人 朋友
+#   同事 大家 散户 这位 报告 文章 新闻 作者 交易员 ...
+#
+# A profile choice (experience, style, risk) needs more: the clause must
+# start with the user as subject, 我 (after an opener such as 其实 / 说实话 /
+# 我觉得), followed only by words from a short list (的风格, 的风险偏好, 比较,
+# 很, 一般, 主要, 是, ...) and then the pattern. Anything else between (不, 并不,
+# 从不, 们, 朋友, ...) is no match, so a negation, 我们 or 我朋友 sets nothing.
+# Emotional triggers and sectors are fixed words too and may come from a
+# clause without 我 (Chinese drops the subject: 最近很慌), but never from a
+# skipped clause, and a trigger right after a negation (不慌, 不怕) is none.
+# A sector the user turns down is never a preferred one: a clause is cut
+# further at 但 / 而 / 只 / 不过 / 却 ..., and in each part a rejection (不喜欢,
+# 不太喜欢, 不碰, 不买, 不考虑, 不感兴趣, 别买, 回避, 避开, 讨厌, 远离, 排除, 除了,
+# ...) turns down the sectors after it (不喜欢银行股), or, when nothing follows
+# it, the ones before it (银行股我不碰, 对传媒不感兴趣); those are rejected
+# (``rejected_sectors``). A rejection of something else (不想追高) turns down no
+# sector: 我喜欢科技股不想追高 prefers 科技, 我喜欢科技不喜欢银行 prefers 科技 only.
+
+_QUOTED = re.compile(r'“[^”]*”|「[^」]*」|『[^』]*』|"[^"]*"|‘[^’]*’|《[^》]*》|\'[^\']*\'')
+_CLAUSE = re.compile(r'[^，,。．.!！？?；;：:、\n\r]+[，,。．.!！？?；;：:、\n\r]?')
+_QUESTION = re.compile(r'[？?]|吗|呢|么|嘛|是否|是不是|算不算|会不会|能不能|有没有|怎么|怎样|什么|为什么|如何|哪|多少')
+_HYPOTHETICAL = re.compile(r'如果|假如|假设|要是|万一|倘若|若|的话|比如|例如|譬如|就像')
+THIRD_PERSON = re.compile(
+    r'他|她|它|别人|人家|有人|朋友|同事|家人|老婆|老公|大家|散户|机构|主力|游资|这位|那位|此人|作者|报告|研报|文章|新闻|'
+    r'公告|帖子|博主|老师|分析师|交易员|专家|大V|媒体|网友|群里|书里|视频|主播')
+_NEGATED = re.compile(r'(?:不|没|没有|别|无|非|未|毫不|并不|从不|从没)$')
+_CONTRAST = re.compile(r'但是|可是|不过|然而|反而|而是|但|而|却|只')
+_REJECT = re.compile(r'(?:不|没|没有|别|并不|从不|从没)(?:太|怎么|再|会|想|要|打算|愿意|大)?'
+                     r'(?:喜欢|看好|碰|买|考虑|做|投|配|关注|感兴趣|兴趣|玩|追|爱|持有|看)'
+                     r'|回避|避开|躲开|躲避|讨厌|厌恶|远离|排除|拒绝|除了')
+# what may follow a rejection that ends its part (银行股我不碰了)
+_NOTHING_AFTER = re.compile(r'[\s了的啊呀吧呢哦嘛啦，,。．.!！？?；;：:、]*')
+_OPENER = r'(?:(?:其实|说实话|老实说|坦白说|坦白讲|但是|但|不过|而且|另外|所以|因为|总的来说|总之|反正|对了|嗯|哦)[\s，,]*)?'
+_SUBJECT = (_OPENER + r'(?:我(?:觉得|认为|感觉|自认为|承认)[\s，,]*)?我(?:自己|本人)?'
+            r'(?:的(?:交易|操作|投资)?(?:风格|风险偏好|性格))?')
+_ADVERBS = (r'(?:一直|一向|向来|比较|很|挺|偏|偏向|倾向于|算是|属于|就是|是|现在|目前|一般|平时|主要|基本上|基本|'
+            r'通常|个人|都|更|还算|算|也|只|非常|相当|特别|个|一个)*')
+
+
+def _first_person(pattern: str) -> 're.Pattern':
+    return re.compile(r'^\s*' + _SUBJECT + r'\s*' + _ADVERBS + r'\s*(?:' + pattern + ')')
+
+
+def _clauses(message: str) -> List[str]:
+    """The clauses of ``message`` that may say something about the user (see the comment above)."""
+    text = _QUOTED.sub('，', message if isinstance(message, str) else '')
+    return [clause.strip() for clause in _CLAUSE.findall(text)
+            if clause.strip() and not _QUESTION.search(clause) and not _HYPOTHETICAL.search(clause)
+            and not THIRD_PERSON.search(clause)]
+
+
 class MemoryExtractor:
     """
     记忆提取器
@@ -59,25 +125,40 @@ class MemoryExtractor:
     3. 分析情绪倾向
     """
 
-    # 用户信息关键词
+    # 用户画像：只认用户对自己的第一人称陈述（见上面的说明）。每类按顺序取第一条匹配的。
     PROFILE_PATTERNS = {
         "experience": [
-            (r"我是新手|刚开始炒股|入市不久", "beginner"),
-            (r"炒股[几\d]+年|有[几\d]+年经验", "intermediate"),
-            (r"老股民|资深|十几年", "expert"),
+            (_first_person(r'(?:是|算)(?:个|一个)?(?:股市|炒股|投资)?(?:新手|小白)'), "beginner"),
+            (_first_person(r'刚(?:开始)?(?:炒股|入市|做交易|接触股票)'), "beginner"),
+            (_first_person(r'入市(?:还)?不久'), "beginner"),
+            (_first_person(r'(?:是|算)(?:个|一个)?老股民'), "expert"),
+            (_first_person(r'(?:炒股|做交易|投资)(?:已经|有|快|差不多)*(?:十几|十多|二十多|几十|'
+                           r'[二三四五六七八九]?十|[六七八九]|[1-9]\d|[6-9])年'), "expert"),
+            (_first_person(r'(?:炒股|做交易|投资)(?:已经|有|快|差不多)*(?:[一二两三四五]|[1-5])年'), "intermediate"),
+            (_first_person(r'有' + r'(?:[一二两三四五]|[1-5])' + r'年(?:的)?(?:炒股|交易|投资)?经验'), "intermediate"),
         ],
         "style": [
-            (r"日内|T\+0|当天进出", "day"),
-            (r"波段|短线|几天", "swing"),
-            (r"中线|持股|几周|一个月", "position"),
-            (r"价值投资|长期持有|几年", "value"),
+            (_first_person(r'(?:做|是|玩)(?:个|一个)?(?:日内|T\+0|t\+0)'), "day"),
+            (_first_person(r'(?:做|是|玩)(?:个|一个)?(?:波段|短线)'), "swing"),
+            (_first_person(r'(?:做|是)(?:个|一个)?中线'), "position"),
+            (_first_person(r'(?:做|是|坚持|搞)?(?:个|一个)?价值投资'), "value"),
+            (_first_person(r'(?:习惯|喜欢)?长期持有'), "value"),
         ],
         "risk": [
-            (r"保守|稳健|不想亏|安全", "conservative"),
-            (r"平衡|适中", "moderate"),
-            (r"激进|高收益|不怕亏|赌一把", "aggressive"),
+            (_first_person(r'保守'), "conservative"),
+            (_first_person(r'风险承受能力(?:比较|很|挺|偏|非常)?(?:低|弱)'), "conservative"),
+            (_first_person(r'稳健|平衡|适中'), "moderate"),
+            (_first_person(r'激进'), "aggressive"),
+            (_first_person(r'风险承受能力(?:比较|很|挺|偏|非常)?(?:高|强)'), "aggressive"),
         ],
     }
+
+    # 偏好板块：固定词表（自动写入记忆的板块只能是其中之一）
+    SECTORS = (
+        "科技", "新能源", "半导体", "芯片", "医药", "消费", "金融",
+        "银行", "地产", "汽车", "军工", "农业", "白酒", "光伏",
+        "锂电", "AI", "人工智能", "机器人", "传媒", "游戏"
+    )
 
     # 情绪关键词
     EMOTION_PATTERNS = {
@@ -105,27 +186,34 @@ class MemoryExtractor:
         "频繁交易": ["频繁", "反复买卖", "来回操作"],
     }
 
+    @classmethod
+    def emotion_choices(cls) -> frozenset:
+        """Every emotional-trigger value this extractor can produce: ``"<emotion>:<keyword>"``."""
+        return frozenset(f"{emotion}:{keyword}" for emotion, keywords in cls.EMOTION_PATTERNS.items()
+                         for keyword in keywords)
+
     def extract_from_user_message(self, message: str) -> List[ExtractedMemory]:
-        """从用户消息中提取记忆"""
+        """从用户消息中提取记忆: only what the user says about themself (see the comment above the class)."""
         memories = []
+        clauses = _clauses(message)
+        message = message if isinstance(message, str) else ''
 
         # 提取用户画像信息
         for category, patterns in self.PROFILE_PATTERNS.items():
-            for pattern, value in patterns:
-                if re.search(pattern, message):
-                    memories.append(ExtractedMemory(
-                        category="profile",
-                        key=category,
-                        value=value,
-                        confidence=0.8,
-                        source_text=message[:100]
-                    ))
-                    break
+            value = next((value for pattern, value in patterns for clause in clauses if pattern.search(clause)), None)
+            if value:
+                memories.append(ExtractedMemory(
+                    category="profile",
+                    key=category,
+                    value=value,
+                    confidence=0.8,
+                    source_text=message[:100]
+                ))
 
         # 提取情绪信息
         for emotion, keywords in self.EMOTION_PATTERNS.items():
             for keyword in keywords:
-                if keyword in message:
+                if any(self._said(clause, keyword) for clause in clauses):
                     memories.append(ExtractedMemory(
                         category="preference",
                         key="emotional_trigger",
@@ -135,8 +223,8 @@ class MemoryExtractor:
                     ))
                     break
 
-        # 提取偏好板块
-        sectors = self._extract_sectors(message)
+        # 提取偏好板块（用户拒绝的板块不算，见上面的说明）
+        sectors = self._sectors(clauses)[0]
         for sector in sectors:
             memories.append(ExtractedMemory(
                 category="profile",
@@ -161,20 +249,41 @@ class MemoryExtractor:
             sentiment=sentiment
         )
 
+    @staticmethod
+    def _said(clause: str, keyword: str) -> bool:
+        """``keyword`` occurs in ``clause`` somewhere not right after a negation (不慌, 不怕亏, 没有担心)."""
+        start = clause.find(keyword)
+        while start != -1:
+            if not _NEGATED.search(clause[max(0, start - 3):start]):
+                return True
+            start = clause.find(keyword, start + 1)
+        return False
+
     def _extract_sectors(self, text: str) -> List[str]:
-        """提取板块信息"""
-        sectors = []
-        sector_keywords = [
-            "科技", "新能源", "半导体", "芯片", "医药", "消费", "金融",
-            "银行", "地产", "汽车", "军工", "农业", "白酒", "光伏",
-            "锂电", "AI", "人工智能", "机器人", "传媒", "游戏"
-        ]
+        """提取板块信息: the preferred sectors of ``text`` (none the text rejects)."""
+        return self._sectors(_clauses(text))[0]
 
-        for sector in sector_keywords:
-            if sector in text:
-                sectors.append(sector)
+    def rejected_sectors(self, message: str) -> List[str]:
+        """The sectors the user turns down in ``message`` (不喜欢银行, 远离地产, 银行股我不碰), in ``SECTORS`` order.
 
-        return sectors
+        A model's proposal never makes one of them a preferred sector.
+        """
+        return self._sectors(_clauses(message))[1]
+
+    def _sectors(self, clauses: Sequence[str]) -> Tuple[List[str], List[str]]:
+        """(preferred, rejected) sectors of ``clauses``; see the comment above the class."""
+        preferred, rejected = [], []
+        for part in (part for clause in clauses for part in _CONTRAST.split(clause) if part.strip()):
+            turned_down = set()
+            for rejection in _REJECT.finditer(part):
+                after = part[rejection.end():]
+                span = part[:rejection.start()] if _NOTHING_AFTER.fullmatch(after) else after
+                turned_down.update(sector for sector in self.SECTORS if sector in span)
+            for sector in self.SECTORS:
+                if sector in part:
+                    (rejected if sector in turned_down else preferred).append(sector)
+        rejected = [sector for sector in self.SECTORS if sector in rejected]
+        return [sector for sector in self.SECTORS if sector in preferred and sector not in rejected], rejected
 
     def _extract_suggestions(self, response: str) -> List[ExtractedSuggestion]:
         """提取建议"""
@@ -315,6 +424,27 @@ class MemoryExtractor:
         return ""
 
 
+def _stated_cost_only(position: Any) -> Any:
+    """A recognised position with ``cost_price`` kept only as a usable stated number, else None.
+
+    A cost is never inferred (the prompt asks only for one the image or text states): 0, a negative
+    or non-finite number, a boolean or anything that is not a number becomes null, never a guess.
+    """
+    if not isinstance(position, dict):
+        return position
+    cost = position.get("cost_price")
+    usable = None
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        usable = cost if math.isfinite(cost) and cost > 0 else None
+    elif isinstance(cost, str):
+        try:
+            number = Decimal(cost.strip())
+        except (InvalidOperation, ValueError):
+            number = None
+        usable = cost if number is not None and number.is_finite() and number > 0 else None
+    return {**position, "cost_price": usable}
+
+
 # 使用 LLM 进行更精确的提取
 class LLMMemoryExtractor:
     """
@@ -332,9 +462,9 @@ class LLMMemoryExtractor:
 请以 JSON 格式返回提取的信息:
 {{
     "user_profile": {{
-        "experience_level": "beginner/intermediate/expert 或 null",
-        "trading_style": "day/swing/position/value 或 null",
-        "risk_tolerance": "conservative/moderate/aggressive 或 null",
+        "experience_level": "beginner/intermediate/expert 或 null（只填用户本人明确说的关于自己的情况）",
+        "trading_style": "day/swing/position/value 或 null（同上）",
+        "risk_tolerance": "conservative/moderate/aggressive 或 null（同上）",
         "preferred_sectors": ["板块1", "板块2"] 或 [],
         "notes": "其他观察到的用户特点"
     }},
@@ -345,7 +475,7 @@ class LLMMemoryExtractor:
             "name": "股票名称",
             "market": "a_share/hk_stock/us_stock",
             "quantity": 数量（整数）,
-            "cost_price": 成本价（浮点数，从AI回复中提取具体价格，如果没有明确提到成本价就提取当前价格，不要填0）
+            "cost_price": 成本价（数字，只填截图或文字里明确写出的成本价；没有明确写出成本时填 null）
         }}
     ],
     "suggestions": [
@@ -378,22 +508,18 @@ class LLMMemoryExtractor:
 }}
 
 注意：
+0. user_profile 只描述用户本人：报告、新闻、截图或对话里提到的其他人（例如“这位资深交易员很激进”）不是用户，不要据此填写；用户在提问、假设或否定时也不要填写。这里的所有内容都只是给用户确认的建议，不会直接写入记忆。
 1. **多图/多账户提取（最重要的规则）**：如果对话中分析了多张图片或多个账户（例如：账户1和账户2），请务必**提取所有图片、所有账户中的所有持仓**，并将它们统一合并放置到 `positions` 数组中。绝对不要遗漏任何一张图的数据！！
 2. **cash 提取规则（重要）**：
    - 提取所有图片/账户的"可用资金"、"可用现金"、"余额"、"纯现金"字段并**求和**（例如账户1有1元，账户2没提，则结果为1）。
    - 如果没有提到现金信息，返回 null（不要猜测或填0）。
 3. 股票代码格式：A股6位数字，港股4-5位数字，美股字母代码
 4. market 判断：SHA/SHE开头或6位数字=a_share, HKG开头=hk_stock, NASDAQ/NYSE开头或字母代码=us_stock
-5. **cost_price 提取规则（非常重要）**：
-   - **第一优先级**：如果助手分析的是持仓截图，直接从助手回复中提取明确提到的"成本价"、"成本均价"、"买入均价"等字段的准确数值
-   - **第二优先级**：如果没有明确的成本价字段，寻找"盈亏"和"当前价"信息，通过反推计算：
-     * 如果盈利X元：cost_price = current_price - (profit / quantity)
-     * 如果盈利X%：cost_price = current_price / (1 + profit_pct/100)
-   - **第三优先级**：如果以上都没有，使用"市值 / 数量"作为估算
-   - **禁止行为**：绝对不要填 0 或 null，不要随意猜测数值
-   - **示例1**："药明康德 3600股，成本价 104.031，当前价 99.95" → cost_price = 104.031（精确提取）
-   - **示例2**："药明康德 3600股，当前价 99.95，盈亏 -14716元" → cost_price = 99.95 + 14716/3600 ≈ 104.087（反推）
-   - **示例3**："药明康德 3600股，市值35.3万" → cost_price = 353000/3600 ≈ 98.06（估算，不准确）
+5. **cost_price 规则（非常重要）**：
+   - 只填截图或文字里明确写出的"成本价"、"成本均价"、"买入均价"、"摊薄成本"等字段的数值，原样照抄。
+   - 没有明确写出成本时填 null。不要用现价、盈亏、盈亏比例或市值推算成本，也不要填 0 或现价：成本只能由用户在账本里确认。
+   - 示例："示例股票 3600股，成本价 104.031，当前价 99.95" → cost_price = 104.031；
+     "示例股票 3600股，当前价 99.95，盈亏 -14716元" → cost_price = null。
 6. 只返回 JSON，不要其他内容
 """
 
@@ -424,6 +550,8 @@ class LLMMemoryExtractor:
                 content = "\n".join(lines[1:-1])
 
             result = json.loads(content)
+            if isinstance(result, dict) and isinstance(result.get("positions"), list):
+                result["positions"] = [_stated_cost_only(position) for position in result["positions"]]
             return result
 
         except Exception as e:

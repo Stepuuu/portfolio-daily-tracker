@@ -14,6 +14,7 @@ from core.models import (
     Portfolio
 )
 from core.tools import ToolExecutor
+from . import history
 from .prompts import build_system_prompt
 
 
@@ -27,6 +28,11 @@ class TraderAgent:
         self.max_tool_iterations = 5  # Includes the final model response
         self.max_tool_calls = 20
         self.tool_timeout_seconds = 30
+        self.history_max_turns = history.MAX_TURNS
+        self.history_max_chars = history.MAX_CHARS
+        # The results the tools returned in the latest ``chat`` call, in call
+        # order, for the grounding check of its answer.
+        self.last_tool_results: List = []
 
     def start_conversation(self, conversation_id: str = "default") -> Conversation:
         """开始新对话"""
@@ -47,11 +53,16 @@ class TraderAgent:
 
         Streaming and buffered requests use the same loop. Only the registered
         tools can run, and cancellation propagates to the active model/tool call.
+        When the message had to be shortened to fit the history budget
+        (``history.window``), the reply ends with ``history.shortened_note``
+        (in streaming, as its last chunk), which is stored with the reply.
         """
         if not self.conversation:
             self.start_conversation()
+        self.last_tool_results = []
         self.conversation.add_message(MessageRole.USER, user_message)
         messages = self._build_messages(context)
+        note = history.shortened_note(getattr(messages, "shortened", None))
         tools = self.tool_executor.get_tool_schemas() if self.tool_executor else None
         transcript = []
         total_calls = 0
@@ -132,6 +143,7 @@ class TraderAgent:
                 except (TypeError, ValueError):
                     result = {"error": "工具没有返回有效的结构化数据。"}
                     serialized = json.dumps(result, ensure_ascii=False)
+                self.last_tool_results.append(result)
                 results.append({"type": "tool_result", "tool_use_id": call["id"], "content": serialized,
                                 "is_error": isinstance(result, dict) and bool(result.get("error"))})
             messages.append({"role": "user", "content": results})
@@ -141,13 +153,20 @@ class TraderAgent:
             if stream:
                 yield terminal
 
-        final_response = "\n\n".join(transcript) if stream else terminal
+        final_response = ("\n\n".join(transcript) if stream else terminal) + note
         self.conversation.add_message(MessageRole.ASSISTANT, final_response)
         if not stream:
             yield final_response
+        elif note:
+            yield note
 
     def _build_messages(self, context: Optional[AgentContext] = None) -> list:
-        """构建发送给 LLM 的消息列表"""
+        """构建发送给 LLM 的消息列表
+
+        The history is windowed (``history.window``): the newest turns that
+        fit ``history_max_turns`` / ``history_max_chars``, never a tool call
+        without its result, and a fixed note that older prices may be stale.
+        """
         # 构建 system prompt
         context_str = ""
         if context:
@@ -165,7 +184,7 @@ class TraderAgent:
             if msg.role != MessageRole.SYSTEM:
                 messages.append(msg.to_llm_format())
 
-        return messages
+        return history.window(messages, self.history_max_turns, self.history_max_chars)
 
     def get_conversation_history(self, n: int = 10) -> list:
         """获取最近 n 条对话历史"""

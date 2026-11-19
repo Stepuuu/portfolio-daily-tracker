@@ -1,25 +1,96 @@
 """
 Agent 服务
 整合 LLM、持仓、记忆等功能
+
+Memory writes
+-------------
+The memory file (``data/memory.json``) is shown to the model in every later
+conversation. What may reach it without the person's confirmation is
+decided by who found the value and by its *shape*, never by its words or by
+the category an extractor gave it:
+
+* only the fixed rules on the user's own message (``MemoryExtractor``) write
+  at once, and only a member of a closed set of choices defined in code
+  (``_PROFILE_CHOICES``, ``MemoryExtractor.SECTORS``,
+  ``MemoryExtractor.emotion_choices()``) that the user stated about
+  themself: a first-person statement for the profile choices, and never
+  from a quotation, a question, a hypothetical, a negation or a sentence
+  about someone else (see ``core/memory/extractor.py``). Such a value can
+  only be one of those fixed words, so it carries nothing of its own into a
+  prompt;
+* everything the model extracts is a proposal the person confirms: a
+  profile choice or a sector is a ``profile`` proposal (the model may have
+  read it from a report about another trader), every free text a ``lesson``
+  proposal (``core/lessons.py``), whatever its wording and category.
+
+Every automatic write of this service, and why::
+
+    method (input)                   field                         value must be              written
+    -------------------------------  ----------------------------  -------------------------  ----------------------
+    _apply_memory                    profile.experience_level      an ExperienceLevel member  at once: a fixed choice
+      (fixed rules on the user's     profile.trading_style         a TradingStyle member        the user stated about
+      own message,                   profile.risk_tolerance        a RiskTolerance member       themself, found by code
+      MemoryExtractor)               profile.preferred_sectors     one of SECTORS               in the user's own
+                                     preferences.emotional_        one of emotion_choices()     words, not by the model
+                                       triggers                      ("fear:慌")
+    _apply_profile_update            experience_level,             the enum member            profile proposal;
+      (model extraction,             trading_style, risk_tolerance                              anything else dropped
+      ``user_profile``)              preferred_sectors             one of SECTORS, not one    profile proposal;
+                                                                   the message rejects        others dropped
+                                     notes                         free text                  lesson proposal
+    _apply_memory_update             any category                  free text                  lesson proposal
+      (model extraction,
+      ``memory_updates``)
+
+Nothing else is written automatically: no memory entry, no profile note,
+no free-text trigger, sector or pattern. The person's own edits through
+``/api/memory`` are theirs and are saved directly.
+
+Demo mode (``TRACKER_DEMO_MODE=1``) writes nothing on any of these paths: the
+memory manager refuses every save and the proposal store every proposal, each
+with a fixed Chinese text (an extracted update then has ``status:
+not_proposed`` and that text as ``error``), whether or not an HTTP middleware
+stands in front.
 """
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, List, AsyncIterator
-from datetime import datetime
+from typing import Optional, Dict, Any, List, AsyncIterator, Sequence
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from config import get_config
 from core.llm import LLMConfig
-from core.models import AgentContext, Market
+from core.models import AgentContext, Market, MessageRole, CASH_CURRENCY
 from core.memory import MemoryManager, MemoryExtractor, LLMMemoryExtractor
+from core.memory.models import ExperienceLevel, RiskTolerance, TradingStyle
+from core import lessons  # registers the ``lesson`` proposal kind
 from providers.llm import create_llm_provider, LLMProviderType
 from providers.market_data import EastmoneyDirectProvider, GoogleFinanceProvider, AKShareProvider, MultiSourceProvider
 from providers.news import RSSNewsProvider
 from providers.portfolio.manual import ManualPortfolioProvider
 from agents.trader import TraderAgent
 
+
+# The profile fields that are written without confirmation, and the closed set each value must belong to.
+_PROFILE_CHOICES = {"experience_level": ExperienceLevel, "trading_style": TradingStyle,
+                    "risk_tolerance": RiskTolerance}
+# MemoryExtractor's keys for them
+_RULE_PROFILE_KEYS = {"experience": "experience_level", "style": "trading_style", "risk": "risk_tolerance"}
+# why a model's preferred sector is not proposed: the user's message of the same turn turned it down
+SECTOR_REJECTED = "你在这条消息里表示不考虑这个板块，所以没有把它作为偏好板块提出。"
+
+
+def _choice(field: str, value: Any) -> Optional[str]:
+    """``value`` when it is one of ``field``'s fixed choices, else ``None``."""
+    choices = _PROFILE_CHOICES.get(field)
+    if choices is None or not isinstance(value, str):
+        return None
+    return value if value in {member.value for member in choices} else None
+
+
+# Seconds the chat context waits to read the ledger (a commit in progress, reading and replaying).
+CONTEXT_LEDGER_SECONDS = 5.0
 
 class AgentService:
     """
@@ -163,6 +234,9 @@ class AgentService:
     def _init_memory_manager(self):
         """初始化记忆管理器"""
         self.memory_manager = MemoryManager(data_file="data/memory.json")
+        # A confirmed lesson proposal writes through this instance, which owns
+        # the memory file's state (core/lessons.py).
+        lessons.use_memory_manager(lambda: self.memory_manager)
 
     def _init_agent(self):
         """初始化 Agent"""
@@ -187,6 +261,8 @@ class AgentService:
             get_tracker_snapshot_tool(),
             propose_ledger_tool(),
         ]
+        from core import agent_tools
+        tools += agent_tools.build_all(self, exclude=[tool.name for tool in tools])
 
         tool_executor = ToolExecutor(tools)
 
@@ -220,9 +296,7 @@ class AgentService:
         context = await self._build_context()
 
         # 从用户消息中提取记忆
-        user_memories = self.memory_extractor.extract_from_user_message(message)
-        for mem in user_memories:
-            self._apply_memory(mem)
+        self._apply_user_message(message)
 
         # 调用 Agent
         full_response = ""
@@ -230,8 +304,53 @@ class AgentService:
             full_response += chunk
             yield chunk
 
+        # Numbers this turn's data does not contain get a code-built footnote,
+        # sent as one more chunk (in streaming, the final one).
+        footnote = self._grounding_footnote(full_response, context, message)
+        if footnote:
+            full_response += footnote
+            yield footnote
+
         # 从 AI 回复中提取结构化数据
         await self._extract_from_response(message, full_response)
+
+    def _grounding_footnote(self, answer: str, context: Optional[AgentContext], user_message: str, *,
+                            image: bool = False) -> str:
+        """``"\\n\\n" + footnote`` for the numbers of ``answer`` found in no data of this turn, else ``""``.
+
+        ``image``: an image turn (``chat_with_images``). It calls no tools, so
+        only the context and the user's text are its data; the footnote says
+        that numbers read from the image can only be checked against it (see
+        "Image turns" in ``core/agent_tools/grounding.py``). Its reply is not
+        stored yet, so the caller stores it with the footnote.
+
+        The data is the value fields of the live context the model saw
+        (``context.evidence``: prices, quantities, amounts and percentages the
+        system computed, never the context's text, so its instructions,
+        codes, ids, dates, counts and stored notes prove nothing) and the
+        results of this turn's tool calls; numbers the user typed in this
+        conversation are the user's own. The footnote is also added to the
+        stored reply, so the history shows what the user saw.
+        """
+        from core.agent_tools import grounding
+        try:
+            conversation = getattr(self.agent, "conversation", None)
+            messages = list(getattr(conversation, "messages", None) or [])
+            user_text = "\n".join([m.content for m in messages
+                                   if m.role == MessageRole.USER and isinstance(m.content, str)] + [user_message])
+            evidence = list(getattr(context, "evidence", None) or []) if context is not None else []
+            tool_results = [] if image else list(getattr(self.agent, "last_tool_results", None) or [])
+            missing = grounding.ungrounded_numbers(answer, tool_results, context_numbers=evidence, user_text=user_text)
+            note = grounding.footnote(missing, image=image)
+        except Exception as exc:   # the check must never cost the user the answer
+            print(f"[数字核对] 跳过: {type(exc).__name__}")
+            return ""
+        if not note:
+            return ""
+        addition = "\n\n" + note
+        if not image and messages and messages[-1].role == MessageRole.ASSISTANT:
+            messages[-1].content += addition
+        return addition
 
     async def chat_with_extraction(
         self,
@@ -253,14 +372,13 @@ class AgentService:
         context = await self._build_context()
 
         # 从用户消息中提取记忆
-        user_memories = self.memory_extractor.extract_from_user_message(message)
-        for mem in user_memories:
-            self._apply_memory(mem)
+        self._apply_user_message(message)
 
         # 调用 Agent
         full_response = ""
         async for chunk in self.agent.chat(message, context, stream=False):
             full_response += chunk
+        full_response += self._grounding_footnote(full_response, context, message)
 
         extraction_result = await self.extract_chat_artifacts(message, full_response)
         return {
@@ -275,13 +393,7 @@ class AgentService:
     ) -> Dict[str, Any]:
         """对已生成的回复做结构化提取，不重新生成回答。"""
         extraction = await self.llm_extractor.extract(user_message, ai_response)
-
-        for update in extraction.get("memory_updates", []):
-            self._apply_memory_update(update)
-
-        user_profile = extraction.get("user_profile", {})
-        if user_profile:
-            self._apply_profile_update(user_profile)
+        memory_updates = self._apply_extraction(extraction, user_message)
 
         self._recent_suggestions = extraction.get("suggestions", [])
         self._recent_risks = extraction.get("risks", [])
@@ -290,9 +402,24 @@ class AgentService:
             "suggestions": self._recent_suggestions,
             "risks": self._recent_risks,
             "sentiment": extraction.get("sentiment", "neutral"),
-            "memory_updates": extraction.get("memory_updates", []),
+            "memory_updates": memory_updates,
             "imported_positions": 0,
         }
+
+    def _apply_extraction(self, extraction: Dict[str, Any], user_message: str = "") -> List[Dict[str, Any]]:
+        """Apply a model extraction (see "Memory writes"); return its memory updates, each with its status.
+
+        A free-text profile note is reported as one more update with
+        ``source: "user_profile.notes"``. ``user_message`` is the turn's
+        message: a sector it rejects is never proposed as a preferred one.
+        """
+        updates = [update for update in extraction.get("memory_updates") or [] if isinstance(update, dict)]
+        for update in updates:
+            self._apply_memory_update(update)
+        user_profile = extraction.get("user_profile")
+        if isinstance(user_profile, dict) and user_profile:
+            updates += self._apply_profile_update(user_profile, MemoryExtractor().rejected_sectors(user_message))
+        return updates
 
     async def chat_with_images(
         self,
@@ -314,7 +441,13 @@ class AgentService:
         # 构建上下文
         context = await self._build_context()
 
-        # 构建带图片的消息内容
+        # 构建系统提示
+        from agents.trader import history
+        from agents.trader.prompts import build_system_prompt
+        context_str = context.to_context_string() if context else ""
+        system_prompt = build_system_prompt(context_str)
+
+        # 构建带图片的消息内容: the text is shortened like an oversized chat message (history.shorten)
         content = []
         for img in images:
             content.append({
@@ -325,21 +458,19 @@ class AgentService:
                     "data": img.get("data", "")
                 }
             })
-        
+
+        text = message if message else "请分析这些图片中的持仓信息"
+        sent_text, cut = history.shorten(text, history.MAX_CHARS - len(system_prompt))
+        shortened_note = history.shortened_note({"total": len(text), "omitted": cut} if cut else None)
         content.append({
             "type": "text",
-            "text": message if message else "请分析这些图片中的持仓信息"
+            "text": sent_text
         })
 
         image_message = {
             "role": "user",
             "content": content
         }
-
-        # 构建系统提示
-        from agents.trader.prompts import build_system_prompt
-        context_str = context.to_context_string() if context else ""
-        system_prompt = build_system_prompt(context_str)
 
         # 直接调用 LLM（绕过 Agent 以支持图片）
         messages = [
@@ -349,9 +480,12 @@ class AgentService:
 
         try:
             response = await self.llm_provider.chat(messages)
-            full_response = response.content
+            full_response = response.content or ""
+            # The same grounding footnote as a text answer, worded for an image turn.
+            full_response += self._grounding_footnote(full_response, context, message, image=True)
+            full_response += shortened_note
 
-            # 保存到对话历史
+            # 保存到对话历史（含核对脚注，与用户看到的一致）
             from core.models import MessageRole
             self.agent.conversation.add_message(
                 MessageRole.USER,
@@ -363,20 +497,9 @@ class AgentService:
             )
 
             if extract_data:
-                # 使用 LLM 提取结构化数据
+                # 使用 LLM 提取结构化数据；记忆只按 "Memory writes" 的规则写入或提出方案
                 extraction = await self.llm_extractor.extract(message, full_response)
-
-                # 调试：打印提取结果
-
-
-                # 应用记忆更新
-                for update in extraction.get("memory_updates", []):
-                    self._apply_memory_update(update)
-
-                # 从用户画像提取中更新结构化数据
-                user_profile = extraction.get("user_profile", {})
-                if user_profile:
-                    self._apply_profile_update(user_profile)
+                memory_updates = self._apply_extraction(extraction, message)
 
                 # Image recognition is advisory; balances require an explicit ledger preview.
                 positions = extraction.get("positions", [])
@@ -392,7 +515,7 @@ class AgentService:
                     "suggestions": self._recent_suggestions,
                     "risks": self._recent_risks,
                     "sentiment": extraction.get("sentiment", "neutral"),
-                    "memory_updates": extraction.get("memory_updates", []),
+                    "memory_updates": memory_updates,
                     "imported_positions": imported_count,
                     "cash_updated": False,
                     "proposed_positions": positions
@@ -401,11 +524,11 @@ class AgentService:
                 return {"response": full_response}
 
         except Exception as e:
-            print(f"图片对话失败: {e}")
+            print(f"图片对话失败: {type(e).__name__}")
             import traceback
             traceback.print_exc()
             return {
-                "response": f"抱歉，处理图片时出错: {str(e)}",
+                "response": "抱歉，处理图片时出错，没有完成这次对话。请稍后重试。",
                 "suggestions": [],
                 "risks": [],
                 "sentiment": "neutral",
@@ -413,17 +536,45 @@ class AgentService:
             }
 
     async def _build_context(self) -> AgentContext:
-        """构建 Agent 上下文"""
-        # 获取持仓信息
-        portfolio = await self.portfolio_provider.get_portfolio()
-        portfolio_summary = portfolio.to_summary()
-        from core.ledger import active_ledger, encode
-        ledger = active_ledger()
-        if ledger:
-            portfolio_summary = "Confirmed ledger (native currencies; average costs, not live valuations): " + encode(ledger.state())
+        """构建 Agent 上下文
+
+        The portfolio part is the live context built from the same payload
+        as ``GET /api/today`` (``core.agent_context``). Holdings come only
+        from the confirmed ledger: with no ledger, or one that cannot be
+        opened, the block says so and still gives the session, alerts and
+        watchlist; no other holdings source (such as the legacy manual
+        portfolio) is ever asked. Nothing here raises.
+        """
+        import asyncio
+        from core.agent_context import build_live_context
+        from core.ledger import READ_FAILED, LedgerUnavailable, read_confirmed
+        from core.market.runtime import get_market_runtime
+
+        runtime = get_market_runtime()
+        ledger, ledger_error = None, None
+        try:
+            # Read-only (never creates, initialises or grows ledger.sqlite3) and bounded in time.
+            ledger = await asyncio.to_thread(read_confirmed, timeout=CONTEXT_LEDGER_SECONDS)
+        except LedgerUnavailable as exc:   # busy or damaged: its fixed reason
+            print(f"[上下文] 账本无法读取: {type(exc).__name__}")
+            ledger_error = exc.reason
+        except Exception as exc:   # an unreadable ledger must not end the conversation
+            print(f"[上下文] 账本无法读取: {type(exc).__name__}")
+            ledger_error = READ_FAILED
+        evidence = []
+        try:
+            live = await asyncio.to_thread(build_live_context, ledger, runtime, ledger_error=ledger_error)
+            portfolio_summary, evidence = live.text, live.evidence
+        except Exception as exc:
+            print(f"[上下文] 实时数据无法生成: {type(exc).__name__}")
+            portfolio_summary = "【实时持仓与行情】暂时无法生成，本轮没有可引用的实时数字。"
 
         # 获取用户记忆
-        memory_context = self.memory_manager.get_context_string()
+        try:
+            memory_context = self.memory_manager.get_context_string()
+        except Exception as exc:
+            print(f"[上下文] 记忆无法读取: {type(exc).__name__}")
+            memory_context = ""
 
         # 组合上下文
         combined_context = ""
@@ -431,85 +582,71 @@ class AgentService:
             combined_context += memory_context + "\n\n"
         combined_context += portfolio_summary
 
-        # 确定市场阶段
-        session_phase = self._get_session_phase()
-
         context = AgentContext(
             conversation=self.agent.conversation,
             portfolio_summary=combined_context,
-            current_time=datetime.now(),
-            session_phase=session_phase
+            current_time=runtime.clock.now(),
+            session_phase=self._get_session_phase(runtime),
+            evidence=evidence,
         )
 
         return context
 
-    def _get_session_phase(self) -> str:
-        """获取当前市场阶段"""
-        now = datetime.now()
-        hour, minute = now.hour, now.minute
-        time_value = hour * 60 + minute
+    def _get_session_phase(self, runtime=None) -> str:
+        """获取当前市场阶段（A 股），由交易日历 SessionClock 判断，含节假日。"""
+        from core.agent_context import session_label
+        return session_label(runtime)
 
-        # A股交易时间
-        if time_value < 9 * 60 + 15:
-            return "盘前"
-        elif time_value < 9 * 60 + 30:
-            return "集合竞价"
-        elif time_value < 11 * 60 + 30:
-            return "盘中交易"
-        elif time_value < 13 * 60:
-            return "午间休市"
-        elif time_value < 15 * 60:
-            return "盘中交易"
-        else:
-            return "盘后"
+    def _apply_user_message(self, message: str):
+        """Apply what the fixed rules find in the user's own message; a failed save never ends the chat."""
+        for memory in self.memory_extractor.extract_from_user_message(message):
+            try:
+                self._apply_memory(memory)
+            except Exception as exc:
+                print(f"[记忆更新] 未保存: {type(exc).__name__}")
 
     def _apply_memory(self, memory):
-        """应用提取的记忆"""
-        if memory.category == "profile":
-            if memory.key == "experience":
-                self.memory_manager.update_profile(experience_level=memory.value)
-            elif memory.key == "style":
-                self.memory_manager.update_profile(trading_style=memory.value)
-            elif memory.key == "risk":
-                self.memory_manager.update_profile(risk_tolerance=memory.value)
-            elif memory.key == "preferred_sector":
+        """应用规则提取的记忆: only a value from a fixed set of choices is written (see "Memory writes")."""
+        if memory.category == "profile" and memory.key in _RULE_PROFILE_KEYS:
+            field = _RULE_PROFILE_KEYS[memory.key]
+            value = _choice(field, memory.value)
+            if value:
+                self.memory_manager.update_profile(**{field: value})
+        elif memory.category == "profile" and memory.key == "preferred_sector":
+            if memory.value in MemoryExtractor.SECTORS:
                 self.memory_manager.add_preferred_sector(memory.value)
-        elif memory.category == "preference":
-            if memory.key == "emotional_trigger":
+        elif memory.category == "preference" and memory.key == "emotional_trigger":
+            if memory.value in MemoryExtractor.emotion_choices():
                 self.memory_manager.add_emotional_trigger(memory.value)
 
     def _apply_memory_update(self, update: Dict[str, Any]):
-        """应用从 LLM 提取的记忆更新"""
-        content = update.get("content", "")
-        category = update.get("category", "profile")
-        confidence = update.get("confidence", 0.8)
+        """应用从 LLM 提取的记忆更新: free text, so always a ``lesson`` proposal (see "Memory writes").
 
-        if not content:
+        Neither the words nor the ``category`` the extractor gave it decide
+        anything: nothing about it is stored until the person confirms the
+        proposal. ``update`` is marked with ``status``
+        (``awaiting_user_confirmation`` and ``proposal_id``, or
+        ``not_proposed`` and ``error``).
+        """
+        content = update.get("content")
+        if not isinstance(content, str) or not content.strip():
             return
+        self._propose_lesson(update, content, lessons.lesson_type(content))
 
-        # 添加到通用记忆条目
-        self.memory_manager.add_memory_entry(
-            content=content,
-            category=category,
-            source="extracted",
-            confidence=confidence
-        )
-
-        # 根据类别尝试更新结构化数据
-        if category == "preference" and "情绪" in content:
-            self.memory_manager.add_emotional_trigger(content)
-        elif category == "history" and ("教训" in content or "失败" in content or "亏" in content):
-            self.memory_manager.add_lesson(
-                description=content,
-                lesson_type="failure",
-                lesson=content
-            )
-        elif category == "history" and ("成功" in content or "赚" in content):
-            self.memory_manager.add_lesson(
-                description=content,
-                lesson_type="success",
-                lesson=content
-            )
+    def _propose_lesson(self, update: Dict[str, Any], content: str, lesson_type: str):
+        """Store an extracted lesson as a proposal for the user to confirm."""
+        from core import proposals
+        try:
+            proposal = lessons.propose({"description": content, "lesson": content, "type": lesson_type},
+                                       source="agent:chat")
+        except proposals.ProposalError as exc:
+            update.update(status="not_proposed", error=str(exc))
+            return
+        except Exception as exc:   # a busy or broken store must not end the conversation
+            print(f"[记忆更新] 教训方案未保存: {type(exc).__name__}")
+            update.update(status="not_proposed", error="暂时无法保存这条教训方案。")
+            return
+        update.update(status="awaiting_user_confirmation", proposal_id=proposal["id"])
 
     async def _import_position(self, pos: Dict[str, Any]):
         """导入单个持仓"""
@@ -566,48 +703,53 @@ class AgentService:
         )
         print(f"[持仓导入] {name}({symbol}) 数量:{quantity} 成本:{cost_price}")
 
-    def _apply_profile_update(self, user_profile: Dict[str, Any]):
-        """应用从 LLM 提取的用户画像更新"""
-        updates = {}
+    def _apply_profile_update(self, user_profile: Dict[str, Any],
+                              rejected: Sequence[str] = ()) -> List[Dict[str, Any]]:
+        """应用从 LLM 提取的用户画像更新 (see "Memory writes"): nothing is written, everything is proposed.
 
-        # 经验等级
-        exp_level = user_profile.get("experience_level")
-        if exp_level and exp_level != "null":
-            updates["experience_level"] = exp_level
+        Each of the three fixed choices that is a member of its enum, and
+        each sector that is one of ``MemoryExtractor.SECTORS``, becomes a
+        ``profile`` proposal; anything else in them is dropped. A sector in
+        ``rejected`` (the user turned it down this turn) is never proposed:
+        it is ``not_proposed`` with ``SECTOR_REJECTED``. The free-text
+        ``notes`` become a lesson proposal. Each is returned as an update with
+        its status (``awaiting_user_confirmation`` and ``proposal_id``, or
+        ``not_proposed`` and ``error``).
+        """
+        found = [(field, value) for field in _PROFILE_CHOICES
+                 for value in [_choice(field, user_profile.get(field))] if value]
+        sectors = user_profile.get("preferred_sectors")
+        found += [("preferred_sector", sector) for sector in (sectors if isinstance(sectors, list) else [])
+                  if isinstance(sector, str) and sector in MemoryExtractor.SECTORS]
+        updates = []
+        for field, value in found:
+            update = {"category": "profile", "field": field, "value": value, "source": f"user_profile.{field}"}
+            if field == "preferred_sector" and value in rejected:
+                update.update(status="not_proposed", error=SECTOR_REJECTED)
+            else:
+                self._propose_profile(update)
+            updates.append(update)
 
-        # 交易风格
-        style = user_profile.get("trading_style")
-        if style and style != "null":
-            updates["trading_style"] = style
-
-        # 风险偏好
-        risk = user_profile.get("risk_tolerance")
-        if risk and risk != "null":
-            updates["risk_tolerance"] = risk
-
-        # 备注
         notes = user_profile.get("notes")
-        if notes and notes != "null" and notes.strip():
-            # 追加到现有备注
-            current_notes = self.memory_manager.memory.profile.notes or ""
-            if notes not in current_notes:
-                new_notes = f"{current_notes}\n{notes}".strip() if current_notes else notes
-                updates["notes"] = new_notes
+        if not isinstance(notes, str) or not notes.strip() or notes.strip() == "null":
+            return updates
+        update = {"category": "profile", "content": notes.strip(), "source": "user_profile.notes"}
+        self._propose_lesson(update, update["content"], lessons.lesson_type(notes))
+        return updates + [update]
 
-        # 应用更新
-        if updates:
-            try:
-                self.memory_manager.update_profile(**updates)
-                print(f"[记忆更新] 自动更新用户画像: {updates}")
-            except Exception as e:
-                print(f"[记忆更新] 更新失败: {e}")
-
-        # 偏好板块
-        sectors = user_profile.get("preferred_sectors", [])
-        for sector in sectors:
-            if sector:
-                self.memory_manager.add_preferred_sector(sector)
-                print(f"[记忆更新] 添加偏好板块: {sector}")
+    def _propose_profile(self, update: Dict[str, Any]):
+        """Store an extracted profile choice as a ``profile`` proposal; mark ``update`` with its status."""
+        from core import proposals
+        try:
+            proposal = lessons.propose_profile(update["field"], update["value"], source="agent:chat")
+        except proposals.ProposalError as exc:
+            update.update(status="not_proposed", error=str(exc))
+            return
+        except Exception as exc:   # a busy or broken store must not end the conversation
+            print(f"[记忆更新] 画像方案未保存: {type(exc).__name__}")
+            update.update(status="not_proposed", error="暂时无法保存这项画像修改方案。")
+            return
+        update.update(status="awaiting_user_confirmation", proposal_id=proposal["id"], content=proposal["summary"])
 
     async def _extract_from_response(self, user_message: str, ai_response: str):
         """从回复中提取信息"""
@@ -650,7 +792,13 @@ class AgentService:
     # ==================== 持仓接口 ====================
 
     async def get_portfolio(self) -> Dict[str, Any]:
-        """获取持仓"""
+        """获取持仓
+
+        Amounts are in each position's own currency (``currency``) and are only added up
+        per currency (``totals_by_currency``). ``total_market_value`` / ``total_assets`` /
+        ``total_profit`` are numbers in ``currency`` while the portfolio is in one currency,
+        and null with ``mixed_currency`` true when it holds several (see core.models.Portfolio).
+        """
         portfolio = await self.portfolio_provider.get_portfolio()
         return {
             "positions": [
@@ -658,6 +806,7 @@ class AgentService:
                     "symbol": p.stock.symbol,
                     "name": p.stock.name,
                     "market": p.stock.market.value,
+                    "currency": p.currency,
                     "quantity": p.quantity,
                     "available_qty": p.available_qty,
                     "cost_price": p.cost_price,
@@ -669,6 +818,11 @@ class AgentService:
                 for p in portfolio.positions
             ],
             "cash": portfolio.cash,
+            "cash_currency": CASH_CURRENCY,
+            "currency": portfolio.currency,
+            "currencies": portfolio.currencies,
+            "mixed_currency": portfolio.mixed_currency,
+            "totals_by_currency": portfolio.totals_by_currency,
             "total_market_value": portfolio.total_market_value,
             "total_assets": portfolio.total_assets,
             "total_profit": portfolio.total_profit
@@ -713,6 +867,9 @@ class AgentService:
         return Market(market_aliases.get(market, market))
 
     def _serialize_quote(self, quote) -> Dict[str, Any]:
+        price, previous = quote.price, quote.prev_close
+        # null without a price or a previous close (a missing value is 不可用, never 0)
+        moved = price is not None and bool(previous)
         return {
             "symbol": quote.stock.symbol,
             "name": quote.stock.name,
@@ -725,8 +882,8 @@ class AgentService:
             "amount": quote.amount,
             "turnover": quote.turnover,
             "pe": quote.pe,
-            "change": quote.price - quote.prev_close if quote.prev_close else 0,
-            "change_pct": (quote.price - quote.prev_close) / quote.prev_close * 100 if quote.prev_close else 0,
+            "change": price - previous if moved else None,
+            "change_pct": (price - previous) / previous * 100 if moved else None,
             "timestamp": quote.timestamp.isoformat()
         }
 

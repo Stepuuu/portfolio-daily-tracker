@@ -6,6 +6,31 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 from enum import Enum
 import json
+import re
+
+# How much of each stored text the prompt gets (UserMemory.to_context_string), and of each list.
+PROMPT_TEXT_LIMITS = {'short': 40, 'item': 30, 'habit': 80, 'lesson': 150, 'long': 200}
+PROMPT_LIST_ITEMS = 8
+
+
+def text_key(text: Any) -> str:
+    """``text`` reduced to what makes it a different text: NFKC, case-folded, without whitespace,
+    punctuation or control characters. ``'满仓 单票亏损！'`` and ``'满仓单票亏损'`` have the same key."""
+    import unicodedata
+    if not isinstance(text, str):
+        return ''
+    folded = unicodedata.normalize('NFKC', text).casefold()
+    return ''.join(ch for ch in folded if unicodedata.category(ch)[0] not in ('P', 'Z', 'C') and not ch.isspace())
+
+
+def lesson_key(lesson: Any) -> str:
+    """The key of a lesson's text (description and lesson), for a ``TradingLesson`` or a lesson payload."""
+    if isinstance(lesson, dict):
+        description, learned = lesson.get('description'), lesson.get('lesson')
+    else:
+        description, learned = getattr(lesson, 'description', ''), getattr(lesson, 'lesson', '')
+    description = text_key(description)
+    return description + '\x1f' + (text_key(learned) or description)
 
 
 class ExperienceLevel(str, Enum):
@@ -111,15 +136,21 @@ class TradingLesson:
     type: str  # "success" or "failure"
     symbol: Optional[str] = None
     lesson: str = ""
+    # The confirmed proposal that wrote this lesson, so a retried write is
+    # recognised (core/lessons.py). None for lessons entered by hand.
+    source_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "date": self.date,
             "description": self.description,
             "type": self.type,
             "symbol": self.symbol,
             "lesson": self.lesson
         }
+        if self.source_id:
+            data["source_id"] = self.source_id
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TradingLesson":
@@ -128,7 +159,8 @@ class TradingLesson:
             description=data.get("description", ""),
             type=data.get("type", ""),
             symbol=data.get("symbol"),
-            lesson=data.get("lesson", "")
+            lesson=data.get("lesson", ""),
+            source_id=data.get("source_id")
         )
 
 
@@ -242,51 +274,68 @@ class UserMemory:
         )
 
     def to_context_string(self) -> str:
-        """生成给 Agent 的上下文字符串"""
-        parts = []
+        """生成给 Agent 的上下文字符串
+
+        The fixed choices (experience, style, risk) are written in system
+        words. Every text the person or an extractor stored (nickname, notes,
+        position size, holding period, sectors, habits, emotional triggers,
+        avoid patterns, the five newest lessons, goals) is data: it goes into
+        one delimited data section as ``untrusted_text`` values, the
+        convention of ``core.agent_context`` (one line each, delimiter
+        characters neutralised), cut per field (``PROMPT_TEXT_LIMITS``) and per
+        list (the newest ``PROMPT_LIST_ITEMS``), so it can neither pose as an
+        instruction nor grow the prompt without bound (under 6,000 characters).
+        """
+        from core.agent_context import data_entry, data_section
+        parts: List[str] = []
+        entries = []
+
+        def text(label: str, field_name: str, value: Any, limit: int) -> None:
+            if isinstance(value, str) and value.strip():
+                entries.append(data_entry(label, field_name, value, limit))
+
+        def items(label: str, field_name: str, values: Any) -> None:
+            listed = [value for value in values or [] if isinstance(value, str) and value.strip()]
+            for value in listed[-PROMPT_LIST_ITEMS:]:
+                text(label, field_name, value, PROMPT_TEXT_LIMITS['item'])
 
         # 用户画像
         if self.profile.name or self.profile.notes:
-            parts.append("【用户画像】")
-            if self.profile.name:
-                parts.append(f"昵称: {self.profile.name}")
-            parts.append(f"经验等级: {self._translate_experience(self.profile.experience_level)}")
-            parts.append(f"交易风格: {self._translate_style(self.profile.trading_style)}")
-            parts.append(f"风险偏好: {self._translate_risk(self.profile.risk_tolerance)}")
-            if self.profile.preferred_sectors:
-                parts.append(f"偏好板块: {', '.join(self.profile.preferred_sectors)}")
-            parts.append(f"典型仓位: {self.profile.typical_position_size}")
-            parts.append(f"持仓周期: {self.profile.holding_period}")
-            if self.profile.notes:
-                parts.append(f"备注: {self.profile.notes}")
+            parts.append(f"【用户画像】经验等级: {self._translate_experience(self.profile.experience_level)}；"
+                         f"交易风格: {self._translate_style(self.profile.trading_style)}；"
+                         f"风险偏好: {self._translate_risk(self.profile.risk_tolerance)}。"
+                         "昵称、备注、偏好板块、典型仓位和持仓周期见文字数据。")
+            text('用户画像', '昵称', self.profile.name, PROMPT_TEXT_LIMITS['short'])
+            text('用户画像', '备注', self.profile.notes, PROMPT_TEXT_LIMITS['long'])
+            items('用户画像', '偏好板块', self.profile.preferred_sectors)
+            text('用户画像', '典型仓位', self.profile.typical_position_size, PROMPT_TEXT_LIMITS['short'])
+            text('用户画像', '持仓周期', self.profile.holding_period, PROMPT_TEXT_LIMITS['short'])
 
         # 交易偏好
         if self.preferences.emotional_triggers or self.preferences.avoid_patterns:
-            parts.append("\n【交易偏好】")
-            parts.append(f"止损习惯: {self.preferences.stop_loss_habit}")
-            parts.append(f"止盈方式: {self.preferences.take_profit_style}")
-            if self.preferences.emotional_triggers:
-                parts.append(f"情绪触发点: {', '.join(self.preferences.emotional_triggers)}")
-            if self.preferences.avoid_patterns:
-                parts.append(f"避免的模式: {', '.join(self.preferences.avoid_patterns)}")
+            parts.append("【交易偏好】止损习惯、止盈方式、情绪触发点和避免的模式见文字数据。")
+            text('交易偏好', '止损习惯', self.preferences.stop_loss_habit, PROMPT_TEXT_LIMITS['habit'])
+            text('交易偏好', '止盈方式', self.preferences.take_profit_style, PROMPT_TEXT_LIMITS['habit'])
+            items('交易偏好', '情绪触发点', self.preferences.emotional_triggers)
+            items('交易偏好', '避免的模式', self.preferences.avoid_patterns)
 
         # 历史教训
         if self.history.lessons:
-            parts.append("\n【历史教训】")
-            for lesson in self.history.lessons[-5:]:  # 最近5条
-                parts.append(f"- {lesson.date}: {lesson.description}")
-                if lesson.lesson:
-                    parts.append(f"  教训: {lesson.lesson}")
+            recent = self.history.lessons[-5:]  # 最近5条
+            parts.append(f"【历史教训】最近 {len(recent)} 条用户确认过的经验教训见文字数据。")
+            for lesson in recent:
+                day = str(lesson.date or '')
+                label = '历史教训' + (f' {day}' if re.fullmatch(r'\d{4}-\d{2}-\d{2}', day) else '')
+                text(label, '事件', lesson.description, PROMPT_TEXT_LIMITS['lesson'])
+                text(label, '教训', lesson.lesson, PROMPT_TEXT_LIMITS['lesson'])
 
         # 目标
         if self.goals.short_term or self.goals.long_term:
-            parts.append("\n【投资目标】")
-            if self.goals.short_term:
-                parts.append(f"短期: {self.goals.short_term}")
-            if self.goals.long_term:
-                parts.append(f"长期: {self.goals.long_term}")
+            parts.append("【投资目标】见文字数据。")
+            text('投资目标', '短期', self.goals.short_term, PROMPT_TEXT_LIMITS['long'])
+            text('投资目标', '长期', self.goals.long_term, PROMPT_TEXT_LIMITS['long'])
 
-        return "\n".join(parts) if parts else ""
+        return "\n".join(parts + data_section(entries)) if parts else ""
 
     def _translate_experience(self, level: ExperienceLevel) -> str:
         mapping = {

@@ -9,7 +9,11 @@ from .market import (
     Quote,
     Position,
     Portfolio,
-    TradeOrder
+    TradeOrder,
+    MARKET_CURRENCY,
+    CURRENCY_SYMBOLS,
+    CASH_CURRENCY,
+    currency_symbol
 )
 
 from .conversation import (
@@ -31,6 +35,10 @@ __all__ = [
     "Position",
     "Portfolio",
     "TradeOrder",
+    "MARKET_CURRENCY",
+    "CURRENCY_SYMBOLS",
+    "CASH_CURRENCY",
+    "currency_symbol",
     # Conversation models
     "MessageRole",
     "AlertLevel",

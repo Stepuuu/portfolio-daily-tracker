@@ -1,11 +1,25 @@
 """
 记忆 API 路由
+
+A save the memory manager refuses (``MemoryWriteRefused``: demo mode, or an
+unreadable memory.json without a verified copy) is answered 409 with its
+Chinese reason, never 500.
 """
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException
+from contextlib import contextmanager
+from typing import Any, Dict, Optional, List
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter()
+
+
+@contextmanager
+def _saving():
+    from core.memory.manager import MemoryWriteRefused
+    try:
+        yield
+    except MemoryWriteRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 class UpdateProfileRequest(BaseModel):
@@ -23,6 +37,11 @@ class AddLessonRequest(BaseModel):
     lesson_type: str  # win/loss/mistake/insight
     lesson: str = ""
     symbol: Optional[str] = None
+
+
+class DeleteLessonRequest(BaseModel):
+    """The lesson the page shows at that place (as ``GET /api/memory`` lists it); see ``delete_lesson``."""
+    expect: Optional[Dict[str, Any]] = None
 
 
 class AddSectorRequest(BaseModel):
@@ -93,7 +112,8 @@ async def update_profile(request: UpdateProfileRequest):
         updates["notes"] = request.notes
 
     if updates:
-        service.update_profile(**updates)
+        with _saving():
+            service.update_profile(**updates)
 
     return {"message": "用户画像已更新", "updates": updates}
 
@@ -110,7 +130,8 @@ async def get_preferences():
 async def add_preferred_sector(request: AddSectorRequest):
     """添加偏好板块"""
     service = get_service()
-    service.memory_manager.add_preferred_sector(request.sector)
+    with _saving():
+        service.memory_manager.add_preferred_sector(request.sector)
     return {"message": f"已添加偏好板块: {request.sector}"}
 
 
@@ -118,7 +139,8 @@ async def add_preferred_sector(request: AddSectorRequest):
 async def delete_preferred_sector(request: DeleteSectorRequest):
     """删除偏好板块"""
     service = get_service()
-    service.memory_manager.remove_preferred_sector(request.sector)
+    with _saving():
+        service.memory_manager.remove_preferred_sector(request.sector)
     return {"message": f"已删除偏好板块: {request.sector}"}
 
 
@@ -126,7 +148,8 @@ async def delete_preferred_sector(request: DeleteSectorRequest):
 async def add_emotional_trigger(request: AddTriggerRequest):
     """添加情绪触发器"""
     service = get_service()
-    service.memory_manager.add_emotional_trigger(request.trigger)
+    with _saving():
+        service.memory_manager.add_emotional_trigger(request.trigger)
     return {"message": f"已添加情绪触发器: {request.trigger}"}
 
 
@@ -134,7 +157,8 @@ async def add_emotional_trigger(request: AddTriggerRequest):
 async def delete_emotional_trigger(request: DeleteTriggerRequest):
     """删除情绪触发器"""
     service = get_service()
-    service.memory_manager.remove_emotional_trigger(request.trigger)
+    with _saving():
+        service.memory_manager.remove_emotional_trigger(request.trigger)
     return {"message": f"已删除情绪触发器: {request.trigger}"}
 
 
@@ -150,20 +174,28 @@ async def get_trading_history():
 async def add_lesson(request: AddLessonRequest):
     """添加交易教训"""
     service = get_service()
-    service.add_lesson(
-        description=request.description,
-        lesson_type=request.lesson_type,
-        lesson=request.lesson,
-        symbol=request.symbol
-    )
+    with _saving():
+        service.add_lesson(
+            description=request.description,
+            lesson_type=request.lesson_type,
+            lesson=request.lesson,
+            symbol=request.symbol
+        )
     return {"message": "交易教训已记录"}
 
 
 @router.delete("/history/lesson/{index}")
-async def delete_lesson(index: int):
-    """删除指定索引的交易教训"""
+async def delete_lesson(index: int, request: Optional[DeleteLessonRequest] = Body(None)):
+    """删除指定索引的交易教训.
+
+    With a body ``{"expect": <the lesson as listed>}`` the lesson is deleted only when that place still
+    holds it; otherwise 409 with a fixed Chinese text and nothing changes (a list read in another tab before
+    a lesson was deleted there must not delete the lesson that moved into the place). Without a body, as
+    before: by position only.
+    """
     service = get_service()
-    service.memory_manager.remove_lesson(index)
+    with _saving():
+        service.memory_manager.remove_lesson(index, expected=request.expect if request else None)
     return {"message": f"已删除交易教训"}
 
 
@@ -180,12 +212,13 @@ async def add_goal(request: AddGoalRequest):
     """添加目标"""
     service = get_service()
 
-    if request.goal_type == "short_term":
-        service.memory_manager.add_short_term_goal(request.goal)
-    elif request.goal_type == "long_term":
-        service.memory_manager.add_long_term_goal(request.goal)
-    else:
-        raise HTTPException(status_code=400, detail="无效的目标类型")
+    with _saving():
+        if request.goal_type == "short_term":
+            service.memory_manager.add_short_term_goal(request.goal)
+        elif request.goal_type == "long_term":
+            service.memory_manager.add_long_term_goal(request.goal)
+        else:
+            raise HTTPException(status_code=400, detail="无效的目标类型")
 
     return {"message": f"已添加{request.goal_type}目标"}
 
@@ -202,5 +235,6 @@ async def get_memory_context():
 async def reset_memory():
     """重置记忆（危险操作）"""
     service = get_service()
-    service.memory_manager.clear_all()
+    with _saving():
+        service.memory_manager.clear_all()
     return {"message": "记忆已重置"}

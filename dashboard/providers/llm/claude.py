@@ -4,7 +4,7 @@ Claude LLM Provider 实现
 from typing import List, Dict, Any, AsyncIterator, Optional
 import httpx
 
-from core.llm.base import LLMProvider, LLMConfig, LLMResponse
+from core.llm.base import LLMProvider, LLMConfig, LLMResponse, exact_dumps, exact_loads
 from .error_utils import format_httpx_error
 
 
@@ -22,6 +22,13 @@ class ClaudeProvider(LLMProvider):
     @property
     def name(self) -> str:
         return getattr(self, "display_name", "Claude")
+
+    def _post_headers(self) -> Dict[str, str]:
+        """The headers of a JSON body sent as bytes (``exact_dumps``): a content type is always given."""
+        headers = dict(self._get_headers())
+        if not any(name.lower() == "content-type" for name in headers):
+            headers["content-type"] = "application/json"
+        return headers
 
     def _get_headers(self) -> Dict[str, str]:
         # 如果有自定义 headers，使用自定义的（用于第三方 API 代理）
@@ -77,11 +84,11 @@ class ClaudeProvider(LLMProvider):
             async with httpx.AsyncClient(timeout=self.config.timeout, trust_env=False) as client:
                 response = await client.post(
                     f"{self.base_url}/messages",
-                    headers=self._get_headers(),
-                    json=payload
+                    headers=self._post_headers(),
+                    content=exact_dumps(payload).encode("utf-8")
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = exact_loads(response.text)   # tool-call numbers exactly (core.llm.base)
         except Exception as e:
             raise RuntimeError(format_httpx_error(self.name, e)) from e
 
@@ -144,8 +151,8 @@ class ClaudeProvider(LLMProvider):
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/messages",
-                    headers=self._get_headers(),
-                    json=payload
+                    headers=self._post_headers(),
+                    content=exact_dumps(payload).encode("utf-8")
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -155,7 +162,7 @@ class ClaudeProvider(LLMProvider):
                                 break
                             try:
                                 import json
-                                data = json.loads(data_str)
+                                data = exact_loads(data_str)
                                 event_type = data.get("type")
 
                                 # 处理工具调用开始
@@ -182,7 +189,7 @@ class ClaudeProvider(LLMProvider):
                                 elif event_type == "content_block_stop":
                                     if current_tool_input_json and tool_calls:
                                         try:
-                                            tool_calls[-1]["input"] = json.loads(current_tool_input_json)
+                                            tool_calls[-1]["input"] = exact_loads(current_tool_input_json)
                                         except json.JSONDecodeError as e:
                                             print(f"[Stream] 工具输入 JSON 解析失败: {e}")
                                         current_tool_input_json = ""

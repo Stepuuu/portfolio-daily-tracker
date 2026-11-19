@@ -5,7 +5,7 @@ import json
 from typing import Any, AsyncIterator
 import httpx
 
-from core.llm.base import LLMProvider, LLMResponse
+from core.llm.base import LLMProvider, LLMResponse, exact_dumps, exact_loads
 from .error_utils import format_httpx_error
 
 
@@ -23,11 +23,11 @@ def _messages_for_openai(messages: list[dict]) -> list[dict]:
                 raise ValueError("Message blocks must be objects")
             if block.get("type") == "tool_use":
                 calls.append({"id": block["id"], "type": "function", "function": {
-                    "name": block["name"], "arguments": json.dumps(block.get("input", {}), ensure_ascii=False)}})
+                    "name": block["name"], "arguments": exact_dumps(block.get("input", {}))}})
             elif block.get("type") == "tool_result":
                 result = block.get("content", "")
                 results.append({"role": "tool", "tool_call_id": block["tool_use_id"],
-                                "content": result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)})
+                                "content": result if isinstance(result, str) else exact_dumps(result)})
             elif block.get("type") == "image" and isinstance(block.get("source"), dict):
                 source = block["source"]
                 if source.get("type") == "base64":
@@ -59,7 +59,7 @@ def _tool_calls(calls: list[dict]) -> list[dict]:
         function = call.get("function", {})
         arguments = function.get("arguments", "{}")
         try:
-            arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+            arguments = exact_loads(arguments) if isinstance(arguments, str) else arguments
         except (ValueError, TypeError) as exc:
             raise ValueError("Model returned invalid tool arguments") from exc
         if not isinstance(arguments, dict) or not function.get("name") or not call.get("id"):
@@ -89,6 +89,13 @@ class OpenAIProvider(LLMProvider):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
+    def _post_headers(self):
+        """The headers of a JSON body sent as bytes (``exact_dumps``): a content type is always given."""
+        headers = dict(self._get_headers())
+        if not any(name.lower() == "content-type" for name in headers):
+            headers["Content-Type"] = "application/json"
+        return headers
+
     def _payload(self, messages, kwargs, stream=False):
         payload = {"model": kwargs.get("model", self.config.model),
                    "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
@@ -105,10 +112,10 @@ class OpenAIProvider(LLMProvider):
     async def chat(self, messages, **kwargs) -> LLMResponse:
         try:
             async with httpx.AsyncClient(timeout=kwargs.get("timeout", self.config.timeout), trust_env=False) as client:
-                response = await client.post(f"{self.base_url}/chat/completions", headers=self._get_headers(),
-                                             json=self._payload(messages, kwargs))
+                response = await client.post(f"{self.base_url}/chat/completions", headers=self._post_headers(),
+                                             content=exact_dumps(self._payload(messages, kwargs)).encode("utf-8"))
                 response.raise_for_status()
-                data = response.json()
+                data = exact_loads(response.text)   # tool-call numbers exactly, also as an object (core.llm.base)
             choice = data["choices"][0]
             if choice.get("finish_reason") == "length" and choice["message"].get("tool_calls"):
                 raise ValueError("Model truncated a tool call")
@@ -126,8 +133,8 @@ class OpenAIProvider(LLMProvider):
         finish = None
         try:
             async with httpx.AsyncClient(timeout=kwargs.get("timeout", self.config.timeout), trust_env=False) as client:
-                async with client.stream("POST", f"{self.base_url}/chat/completions", headers=self._get_headers(),
-                                         json=self._payload(messages, kwargs, stream=True)) as response:
+                async with client.stream("POST", f"{self.base_url}/chat/completions", headers=self._post_headers(),
+                                         content=exact_dumps(self._payload(messages, kwargs, stream=True)).encode("utf-8")) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
@@ -135,7 +142,7 @@ class OpenAIProvider(LLMProvider):
                         raw = line[5:].strip()
                         if raw == "[DONE]":
                             break
-                        data = json.loads(raw)
+                        data = exact_loads(raw)
                         if data.get("error"):
                             raise RuntimeError("Upstream stream reported an error")
                         for choice in data.get("choices") or []:
