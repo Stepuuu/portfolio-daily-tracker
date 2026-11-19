@@ -14,3 +14,5 @@ pydantic>=2.7.0
 numpy>=1.26.0
 pandas>=2.2.0
 yfinance>=0.2.54
+openpyxl>=3.1.0
+xlrd>=2.0.1

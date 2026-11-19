@@ -1,6 +1,7 @@
 """
 FastAPI 后端主入口
 """
+import logging
 import sys
 import os
 from pathlib import Path
@@ -14,7 +15,10 @@ from contextlib import asynccontextmanager
 
 from backend.api import chat, portfolio, market, memory, suggestions, settings
 from backend.api import backtest, portfolio_tracker, ledger, lab
+from backend import features
 from backend.services.agent_service import AgentService
+from backend.trusted_hosts import HostAllowList, allowed_hosts
+from core import sqlite_guard
 from core.lab_service import LabService
 
 
@@ -41,13 +45,18 @@ async def application_lifespan(app: FastAPI):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if sqlite_guard.notice():
+        logging.getLogger("backend").warning(sqlite_guard.notice())
     app.state.lab_service = LabService(demo=os.environ.get("TRACKER_DEMO_MODE") == "1")
     await app.state.lab_service.start()
     try:
-        if os.environ.get("TRACKER_LAB_ONLY") == "1" or os.environ.get("TRACKER_DEMO_MODE") == "1":
+        if os.environ.get("TRACKER_LAB_ONLY") == "1":
             yield
+        elif os.environ.get("TRACKER_DEMO_MODE") == "1":
+            async with features.background(app):
+                yield
         else:
-            async with application_lifespan(app):
+            async with application_lifespan(app), features.background(app):
                 yield
     finally:
         await app.state.lab_service.stop()
@@ -56,7 +65,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="交易助手 API",
     description="智能股票交易辅助系统 API",
-    version="3.2.1",
+    version="4.0.0",
     lifespan=lifespan
 )
 
@@ -81,6 +90,7 @@ async def protect_demo_data(request, call_next):
     if (os.environ.get("TRACKER_DEMO_MODE") == "1"
             and request.method not in {"GET", "HEAD", "OPTIONS"}
             and not (request.method == "POST" and (request.url.path == "/api/lab/runs"
+                     or request.url.path == "/api/backtest/runs" or request.url.path.startswith("/api/backtest/runs/") and request.url.path.endswith(("/cancel", "/reflect"))
                      or request.url.path.startswith("/api/lab/runs/") and request.url.path.endswith(("/cancel", "/retry"))))):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"detail": "Demo mode is read-only"})
@@ -96,6 +106,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The API has no authentication. Answer only for loopback names, the Compose
+# service name and TRACKER_ALLOWED_HOSTS (read here, once, at startup), so a
+# website cannot reach it through a DNS name pointed at this machine. Added
+# last, which makes it the first middleware a request meets.
+app.add_middleware(HostAllowList, allowed_hosts=allowed_hosts())
+
 # 注册路由
 app.include_router(lab.router)
 app.include_router(chat.router, prefix="/api/chat", tags=["对话"])
@@ -107,6 +123,8 @@ app.include_router(settings.router, prefix="/api/settings", tags=["设置"])
 app.include_router(backtest.router, tags=["回测"])
 app.include_router(ledger.router, prefix="/api/ledger", tags=["账本"])
 app.include_router(portfolio_tracker.router, prefix="/api/tracker", tags=["投资组合跟踪"])
+for _router, _prefix, _tags in features.routers():
+    app.include_router(_router, prefix=_prefix, tags=_tags)
 
 
 @app.get("/")
@@ -114,7 +132,7 @@ async def root():
     """根路径"""
     return {
         "name": "交易助手 API",
-        "version": "3.2.1",
+        "version": "4.0.0",
         "status": "running",
         "docs": "/docs"
     }
@@ -144,7 +162,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=os.environ.get("BACKEND_HOST", "127.0.0.1"),
+        port=int(os.environ.get("BACKEND_PORT", "8000")),
         reload=True
     )

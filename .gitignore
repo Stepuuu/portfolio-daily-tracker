@@ -36,10 +36,6 @@ dashboard/data/
 !dashboard/data/portfolio.example.json
 !dashboard/config.example.json
 
-# ── Dashboard: browser-mcp ──
-dashboard/tools/browser-mcp/node_modules/
-dashboard/tools/browser-mcp/package-lock.json
-
 # ── Python ──
 __pycache__/
 *.pyc

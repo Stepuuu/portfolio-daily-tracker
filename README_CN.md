@@ -1,440 +1,395 @@
 <div align="center">
 
-# 📊 投资组合日报追踪器
+# 投资组合日报追踪器 Portfolio Daily Tracker
 
-**自托管投资组合记录与 Agent 股票研究工作台**
+**给个人用的自托管交易台：已确认的账本、实时行情、价格提醒、交易计划和盘前盘后简报**
 
+[![Checks](https://github.com/Stepuuu/portfolio-daily-tracker/actions/workflows/checks.yml/badge.svg)](https://github.com/Stepuuu/portfolio-daily-tracker/actions/workflows/checks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org)
 
-[🇬🇧 English](README_EN.md) &nbsp;·&nbsp; [🔬 研究指南](docs/RESEARCH_CN.md) &nbsp;·&nbsp; [飞书工作台](docs/FEISHU_WORKBENCH.md) &nbsp;·&nbsp; [📖 完整使用指南 (CN)](docs/FULL_GUIDE_CN.md)
+[English](README.md) · 中文 · [更新记录](CHANGELOG.md) · [后续计划](docs/ROADMAP.md) · [完整使用指南](docs/FULL_GUIDE_CN.md)
 
 </div>
 
----
+持仓记在本机的账本里，只有你核对预览并点「确认入账」后才会变化；页面按公开行情源的实时报价给账本估值，
+每个价格都标着来源和交易所时间。围绕账本，它还提供价格提醒、交易计划、盘前盘后简报、
+只能「提出方案」的助手，以及把局限写清楚的回测。
 
-### News / Versions
+当前版本 4.0.0（2026-11-19）。
 
-| 版本 | 日期 | 更新摘要 |
+## 适合谁，不是什么
+
+适合在一家或几家券商买卖 A 股、港股、美股的个人投资者：想在一个地方记下每笔成交、按人民币看整个组合，
+并且愿意在自己电脑上跑一个小服务。
+
+它**不是**：
+
+- **券商接口**。不登录券商，不下单。成交只来自你手动记的、你上传的券商导出文件，或你确认的方案。
+- **投资建议**。提醒、计划、简报、回测和助手只报告数字和你自己设的规则，不告诉你买什么。
+- **实时行情终端**。行情来自公开接口（先东方财富，失败时用雅虎），不需要账号。2026-11-17 实测一次：
+  东方财富的 A 股和港股价格约 2 秒到达，雅虎的约晚 15 分钟，汇率约 10 秒。每个价格都标明状态，
+  过时的价格不会显示成实时。
+- **多人服务**。没有登录功能，请只在自己的机器上使用（见 [SECURITY.md](SECURITY.md)）。
+
+## 六个板块
+
+### 今日 `/`
+
+![今日页：两个虚构账户按模拟行情估值，显示今日盈亏、持仓盈亏、占比，以及计划和提醒标签](docs/images/today.png)
+
+所有账户的已确认持仓按实时价格估值：总资产、今日盈亏、持仓盈亏（未实现）、总盈亏（总资产减累计净投入）、
+各币种现金和每个持仓的占比。每个价格都显示来源和交易所时间，不是最新价格时有标签：
+
+| 标签 | 含义 | 算核实价格吗 |
 |---|---|---|
-| [V3.x](CHANGELOG.md) | 2026-03-08† → 2026-09-14 | 从组合追踪、AI 对话与回测，扩展到需确认的交易账本、手动与 Agent 股票研究及[飞书卡片工作台](docs/FEISHU_WORKBENCH.md)。 |
-| [V2 · 自托管引擎](CHANGELOG.md#v2--self-hosted-portfolio-engine) | 2026-03-08† | 转为 Python 自托管，使用本地 JSON/CSV，支持多市场行情、风险指标与自动日报。 |
-| [V1 · Google Sheets](CHANGELOG.md#v1--google-sheets) | 2025-09-25† | 基于 Google Sheets 与 Apps Script，实现每日快照、行情更新、资产图表与月度盈亏记录。 |
+| （无标签） | 实时：交易所时间在 1 分钟内 | 是 |
+| 延迟 | 晚 1–20 分钟 | 是 |
+| 收盘价 hh:mm | 最近一个交易日的收盘价 | 是；没有节假日表的年份标为估算；美股收盘后 30 分钟内（纽约时间 16:30 前，提前收市日 13:30 前）官方收盘价尚未最终确定，也标为估算 |
+| 已过期 hh:mm | 交易时段内超过 20 分钟没更新，或收盘后拿到的不是收盘价 | 否，估算 |
+| 昨收价 | 今天还没成交（开盘前或停牌），按昨收估值 | 否，估算 |
+| 时间未知 | 有价格但没有交易所时间 | 否，估算 |
+| 不可用 | 没有可用价格 | 不计算 |
 
-† 历史里程碑：V1 日期取自最早的指南更新记录；V2 与 V3 首次收录于同一次仓库提交。这些日期不代表正式 Release 发布日。
+用了未经核实的价格或汇率算出的数字带琥珀色 **估算**；算不出来的数字显示 **不可用**，不会显示成 0，
+包含它的合计也是不可用。行情节假日表目前收录：A 股 2026 年，港股和美股 2026、2027 年（含港股半日市和美股提前收市）；
+其他年份只按工作日推算，页面会写「交易日历未核实（按工作日推算）」。
+数量、成本按账本里的原始数字显示；超过 8 位小数时显示为 `≈` 加 8 位小数，鼠标悬停可看完整值。
+持仓下方是 **今日提醒**、**今日事项**（到复查日的计划）和待你确认的方案。
 
-[完整更新记录](CHANGELOG.md) · [GitHub Releases](https://github.com/Stepuuu/portfolio-daily-tracker/releases) · [后续计划](docs/ROADMAP.md)
+<img src="docs/images/today-mobile.png" alt="手机上的今日页：合计、一项持仓及其计划和提醒标签，底部导航 今日 · 行情 · 记一笔 · 助手 · 更多" width="300">
 
-### ✨ 功能特性
+手机底部导航：今日 · 行情 · 记一笔 · 助手 · 更多。
 
-| 功能 | 说明 |
-|------|------|
-| 🌍 **多市场支持** | A 股 (SHA/SHE)、港股 (HKG)、美股 (NASDAQ/NYSE) 统一管理 |
-| 💱 **自动汇率** | 实时 HKD/CNY、USD/CNY，所有资产折算人民币 |
-| 📈 **量化指标** | 夏普比率、年化波动率、最大回撤、胜率、盈亏比 |
-| 💰 **融资杠杆** | 负现金自动识别融资额，计算杠杆比例 |
-| 🤖 **AI 对话助手** | 自然语言问持仓、盈亏、风险，支持 GPT/Claude/DeepSeek |
-| 🔬 **股票研究工作台** | CSV/缓存/行情导入，手动与 Agent 实验、基线比较、净值曲线、任务恢复与导出 |
-| 📊 **Web 面板** | React + TailwindCSS，5 KPI · 双饼图 · 净值曲线 · 月度收益 |
-| 📉 **策略回测** | 内置双均线/RSI/自定义策略回测引擎 |
-| 🔔 **每日推送** | 收盘后自动通知 → 确认变化 → 推送飞书/Telegram 日报 |
-| ⏰ **自动调度** | Python 调度器（无需 cron），18:00 通知，19:00 兜底管道 |
+### 行情 `/market`、`/alerts`
 
-### 🔬 从问题到可复查的实验
+- **自选**（最多 200 只）：实时行情、备注和指数条。任何页面按 `Ctrl K` / `⌘K` 或 `/` 搜索代码或名称；
+  输入 `000001` 得到平安银行 `SHE:000001`，不会是上证指数。
+- 点任一标的打开详情抽屉：日线图、你的持仓、相关提醒和计划，以及 **设提醒**、**加入自选**、**去回测**。
+- **提醒**：止损、目标价、涨跌幅、仓位上限四种规则，由后端里的监控在交易时段检查。
 
-研究工作台提供动量、均值回归和波动率三个股票日线学习模板，按时间划分训练、验证与测试，剔除跨分段边界的标签，并展示基线误差、成本假设和净值曲线。先用合成数据熟悉流程，再导入自己的 CSV、已有缓存或明确下载的市场数据。合成结果不代表真实市场证据，当前不包含期权曲面、多腿期权回测或实盘交易。
+![提醒页：规则的条件、现价与距离、状态，以及监控状态行](docs/images/alerts.png)
 
-Agent 模式可以在预算内规划实验、读取验证集反馈、有限迭代、冻结方案后评价最终测试结果。连接支持 OpenAI 兼容 API、Anthropic API 及已有官方 Codex/Claude Code 登录；登录检查不保证模型或订阅额度可用。任务、事件与阶段保存在本机，支持取消、重试、定时触发和 JSON 导出。CLI、HTTP、MCP 与 Python 注册表可复用和扩展研究能力。
+### 账本 `/ledger`、`/ledger/positions`、`/ledger/import`
 
-远程模型会收到研究问题、数据元信息和计算证据等上下文；本地存储不等于全程离线。导出**不会自动脱敏**，分享前请检查。方法假设、命令行示例与故障处理见 [研究指南](docs/RESEARCH_CN.md)，开发接口见 [扩展指南](docs/RESEARCH_EXTENSIONS.md)。
+- **记一笔**：买入、卖出、分红、入金、出金、换汇、转账、拆股/送转、冲销等。按代码或名称选标的，
+  价格可 **按现价** 或按 **昨收** 填入，费用按账户费率预填并标为 **估算**。**预览入账** 显示现金、
+  股数、成本的前后变化以及与交易计划的对照；点 **确认入账** 之前什么都不会改变。
 
-### 📁 项目结构
+![记一笔的核对页：一笔虚构买入，费用为估算，现金前后对比，并提示价格高于计划入场区间](docs/images/entry-review.png)
 
-```
-portfolio-daily-tracker/
-├── engine/                      # 🔧 投资组合快照引擎
-│   ├── scripts/
-│   │   ├── portfolio_snapshot.py      # 核心：获取行情 → 计算 → 保存
-│   │   ├── portfolio_daily_update.py  # 每日：克隆 → 解析变更 → 管道
-│   │   ├── portfolio_report.py        # Markdown 报告生成
-│   │   ├── portfolio_manager.py       # 持仓管理 CLI
-│   │   ├── portfolio_scheduler.py     # Python 调度器（替代 cron）
-│   │   ├── portfolio-cron.sh          # Cron 入口脚本
-│   │   └── portfolio-daily.sh         # 传统每日脚本
-│   └── portfolio/
-│       ├── config.example.json        # 配置模板
-│       └── holdings/example.json      # 持仓格式示例
-│
-├── dashboard/                   # 📱 完整交易助手 Web 应用
-│   ├── main.py                        # 应用入口
-│   ├── config.example.json            # 配置模板（复制为 config.json）
-│   ├── config/                        # 配置模块
-│   ├── core/                          # LLM、记忆、模型、工具
-│   ├── providers/                     # LLM 和行情数据提供者
-│   ├── agents/                        # AI 交易 Agent
-│   ├── backtesting/                   # 策略回测引擎
-│   ├── ui/                            # CLI 终端模式
-│   ├── tools/                         # 浏览器 MCP 截图工具
-│   ├── docs/                          # Agent 工具文档
-│   ├── backend/                       # FastAPI REST API
-│   │   ├── api/                       # 路由处理器（对话/行情/记忆/回测等）
-│   │   ├── services/                  # AgentService
-│   │   └── main.py                    # API 入口
-│   └── frontend/                      # React + TailwindCSS
-│       └── src/
-│           ├── pages/                 # 面板/持仓/行情/记忆/回测 等页面
-│           ├── components/            # ChatPanel/Layout/Sidebar 等组件
-│           └── services/              # API 客户端层
-│
-├── openclaw/                    # 可选 OpenClaw 消息接入
-│   ├── tools/portfolio_tools.py       # Agent 工具定义
-│   ├── skills/SKILL.md                # 完整技能指南（中文）
-│   └── examples/config.example.json
-│
-├── v1-google-sheets/            # 📋 V1：Google Sheets 版本（归档）
-├── docker-compose.yml
-├── scripts/research.py          # 研究任务 JSON CLI
-├── Makefile                     # make setup / make lab / make demo / make start
-├── start.sh                     # 开发启动脚本
-├── stop.sh                      # 停止所有服务
-└── README.md
-```
+- **流水**（可 **冲销** 某一笔）和 **持仓与成本**（各账户的持仓和加权平均成本）。
+- **导入**：券商的交割单、资金对账单、持仓文件（CSV、TXT、XLS、XLSX；UTF-8 或 GBK）。每一行都有状态；
+  看不清的行标为 **需处理**，不会猜；重复导入不会重复入账；文件带余额列时自动对账。同花顺、东方财富、
+  通达信的预设**没有用各家券商的真实文件逐一验证过**。详见 [docs/IMPORT.md](docs/IMPORT.md)。
 
-### 🚀 快速开始
+![一份合成交割单的导入预览：各状态的行数、逐行状态和对账结果](docs/images/import-preview.png)
 
-本地启动需要 **Python 3.10+、Node.js 22.12+ 和 Bash 4.3+**，无需 Docker，可直接在主机或已有容器内运行。
+### 计划与复盘 `/review`、`/plans`、`/tracker`、`/notes`
 
-#### 一键安装（推荐）
+- **今日简报**：A 股交易日 08:45 的 **盘前简报** 和 15:45 的 **盘后简报**，每个数字都带来源和时间。
+- **计划**：买入前写下理由、失效条件、入场区间、止损、目标、计划仓位和复查日。启用的计划会自动建立提醒；
+  记一笔和导入会对照计划给出提示，只提醒，不拦截。
+- **组合走势**（按每日收盘快照画出的历史）和 **笔记**（带复查日的研究笔记）。
+
+![一个虚构交易日的盘前、盘后简报](docs/images/brief.png)
+
+### 研究 `/lab`、`/backtest`
+
+- **回测**：一只标的、五种预设方法，与一直持有和大盘指数对比；见下文 [回测](#回测)。
+- **工作台**：在日线数据上做可复查的实验，手动或交给 Agent；见 [docs/RESEARCH_CN.md](docs/RESEARCH_CN.md)。
+
+![演示数据上的一次回测结果：结论、与一直持有和指数的对比，以及提醒事项](docs/images/backtest-result.png)
+
+### 设置 `/settings/<分区>`
+
+**账户与费率**、**模型**（对话模型和研究工作台的模型连接）、**数据与行情**（行情源、日线缓存、交易日历覆盖的年份）、
+**自动化与通知**（提醒监控、每日例行任务、通知渠道）、**交易偏好**（助手记住的内容和它提出待确认的修改）、
+**备份与导出**、**关于与帮助**（版本、外观、快捷键、重新运行设置向导）。
+
+## 快速开始
+
+需要 Python 3.10+、Node.js 22.12+，本地启动脚本需要 Bash 4.3+；或者使用 Docker（含 Compose）。
+
+**本机运行**
 
 ```bash
 git clone https://github.com/Stepuuu/portfolio-daily-tracker.git
 cd portfolio-daily-tracker
-
 python3 -m venv .venv
 source .venv/bin/activate
-make setup    # 安装依赖、复制配置模板
-make lab      # 研究模式：后端 127.0.0.1:8000，前端 :3000
-# 浏览器访问 http://localhost:3000/lab
+make setup     # 安装 Python 和 Node 依赖，复制配置模板
+make start     # 后端 127.0.0.1:8000，网页 127.0.0.1:3000
 ```
 
-手动研究不需要 LLM 密钥或账户配置。`make demo` 提供隔离的虚构组合与合成研究数据，组合保持只读。配置自己的组合和对话模型后使用 `make start`；同样可以访问研究工作台。命令行连接已运行的后端，例如 `python scripts/research.py datasets`，完整示例见 [研究指南](docs/RESEARCH_CN.md)。
-
-交易入账需要预览和确认，AI 与截图识别不会自动入账。期初迁移、冲销与备份见 [账本指南](docs/LEDGER.md)，多币种现金与收益口径见 [核算说明](docs/ACCOUNTING.md)。
-
-#### 方式 1：仅引擎（投资组合追踪器）
-
-最简部署 — 只需 Python + `requests`：
+**Docker**
 
 ```bash
-cd engine
-pip install requests
-
-cp portfolio/config.example.json portfolio/config.json
-# 编辑 config.json：设置 proxy、分组名、成本基础
-
-cp portfolio/holdings/example.json portfolio/holdings/$(date +%Y-%m-%d).json
-# 编辑为你的实际持仓
-
-python3 scripts/portfolio_snapshot.py    # 生成快照
-python3 scripts/portfolio_report.py      # 生成报告
+docker compose up -d   # 或 make docker（构建并在前台运行）
 ```
 
-#### 方式 2：完整交易助手
+然后打开 http://localhost:3000/setup。全新安装时，今日页会自动带你去一次。设置向导依次是
+**账户与期初**（第一个账户和期初余额：从零开始、导入券商文件，或从 v3.2 的文件迁移）、**费率**、
+**行情与提醒**（检查行情、提醒监控和例行任务）和 **AI 助手**（可选的对话模型和密钥）。每一步都可以跳过，
+之后在 设置 › 关于与帮助 里重新打开。不需要手动编辑任何配置文件。
+
+Docker 后端镜像不含快照引擎脚本，所以收盘自动快照显示 **不可用**；替代做法见
+[docs/ALERTS_AND_ROUTINES.md](docs/ALERTS_AND_ROUTINES.md#running-it) 和
+[完整使用指南](docs/FULL_GUIDE_CN.md#收盘后自动快照)。
+
+## 演示模式
 
 ```bash
-cd dashboard
-pip install -r requirements.txt
-
-cp config.example.json config.json
-# 编辑 config.json：添加 AI API Key（OpenAI / Claude / DeepSeek）
-
-# 启动后端
-python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
-
-# 启动前端
-cd frontend && npm install && npm run dev
-# 浏览器访问 http://localhost:3000
+make demo
 ```
 
-或使用启动脚本：
+第一次运行时在 `.demo/portfolio` 生成虚构的账户、虚构代码（`SHA:DEMO`、`NASDAQ:DEMO` 等）、模拟行情、
+自选、计划、提醒和简报，然后以 `TRACKER_DEMO_MODE=1` 启动。打开 http://localhost:3000 即可，不需要 API Key。
+旧版本留下的演示目录（v3.2.1 的没有账本）会重新生成，但只在目录里全是演示数据生成程序写入的内容时；
+里面多了任何别的内容（多一笔确认过的交易、多一行自选、多一个文件），或者根本不是生成的演示数据，会提示后退出，不改动任何文件。
+演示模式只读：所有写入都会被拒绝，提醒监控和例行任务不启动；只能对演示持仓里的代码用程序生成的行情做回测，
+以及在独立存储里做合成数据的研究实验。它不会碰你自己的数据目录。
+
+`make lab` 只启动 研究 和 设置（`TRACKER_LAB_ONLY=1`），不需要任何账户就能做研究。
+
+## 配置
+
+没有必填项。设置向导负责保存模型设置；其余都是环境变量，后端启动时从进程环境或仓库根目录的 `.env` 读取，
+修改后重启后端。用 Docker 时，把变量加到 `docker-compose.yml` 里 `backend` 服务的 `environment`
+（默认只传入 `TRACKER_ALLOWED_HOSTS` 和两个 API Key）。
+
+| 变量 | 默认值 | 作用 |
+|---|---|---|
+| **数据与模式** | | |
+| `PORTFOLIO_DIR` | `engine/portfolio`（Docker 中为 `/app/portfolio`） | 账本、桌面数据、旧版持仓文件和快照 |
+| `TRACKER_CONFIG_FILE` | 后端工作目录（`dashboard/`）下的 `config.json` | 设置向导写入的对话模型设置和密钥 |
+| `TRACKER_BACKTEST_DIR` | `dashboard/data` | 回测的日线缓存和运行历史 |
+| `TRACKER_LAB_DIR` | `dashboard/data/lab` | 研究工作台的数据 |
+| `TRACKER_DEMO_MODE` | 关 | `1`：虚构数据、只读（`make demo` 会设置） |
+| `TRACKER_LAB_ONLY` | 关 | `1`：只有研究和设置（`make lab` 会设置） |
+| **访问** | | |
+| `TRACKER_ALLOWED_HOSTS` | 本机名称和 `backend` | API 额外接受的主机名，逗号分隔；见 [SECURITY.md](SECURITY.md) |
+| `BACKEND_HOST`、`BACKEND_PORT` | `127.0.0.1`、`8000` | 后端地址（`start.sh`；端口也用于 Compose） |
+| `FRONTEND_HOST`、`FRONTEND_PORT` | `127.0.0.1`、`3000` | 网页地址（`start.sh`；端口也用于 Compose） |
+| `PYTHON` | `python3` | `start.sh` 和引擎 shell 脚本使用的解释器 |
+| **行情** | | |
+| `TRACKER_QUOTE_SOURCE` | 先东方财富，再雅虎 | `eastmoney` 或 `yahoo`：只用这一个源；`fake`：读取 `PORTFOLIO_DIR/fake_quotes.json` 中的模拟行情 |
+| `TRACKER_EASTMONEY_PROXY` | 关 | `1`：通过环境中的代理访问东方财富 |
+| `TRACKER_YAHOO_PROXY` | 使用 `HTTPS_PROXY` | 访问雅虎的代理地址 |
+| `TRACKER_SYMBOL_INDEX` | 开 | `0`：搜索不加载 A 股 / ETF 名称列表（代码仍可搜索） |
+| **提醒与例行任务** | | |
+| `TRACKER_ALERTS_ENABLED` | 开 | `0`：不启动提醒监控 |
+| `TRACKER_ALERT_INTERVAL_SECONDS` | `5` | 监控检查间隔，1 到 300 秒 |
+| `TRACKER_CLOSE_SNAPSHOT` | 开 | `0`：关闭 15:40 的收盘自动快照 |
+| `TRACKER_PREMARKET`、`TRACKER_PREMARKET_TIME` | 开、`08:45` | 盘前简报的开关和时间 |
+| `TRACKER_POSTMARKET`、`TRACKER_POSTMARKET_TIME` | 开、`15:45` | 盘后简报的开关和时间 |
+| `TRACKER_BRIEF_COMMENTARY` | 关 | `1`：简报附上对话模型的点评 |
+| **助手** | | |
+| `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` | 无 | 官方接口的密钥；对官方接口优先于设置向导保存的密钥；设置了它，设置向导保存到对应的官方地址时不用再填密钥 |
+| `TRACKER_AGENT_BREADTH` | 关 | `1`：开启市场宽度和板块工具 |
+| `TRACKER_AGENT_CLS_FLASH` | 关 | `1`：开启财联社电报工具 |
+| **回测与研究** | | |
+| `TRACKER_ALLOW_CUSTOM_STRATEGIES` | 关 | `1`：允许上传 Python 策略（以后端进程的权限运行） |
+| `TRACKER_LAB_PLUGINS`、`TRACKER_LAB_URL` | 无、`http://127.0.0.1:8000` | 研究扩展和命令行连接的后端；见 [docs/RESEARCH_CN.md](docs/RESEARCH_CN.md) |
+| **旧版引擎脚本** | | |
+| `CONDA_ENV`、`CONDA_EXE` | 无、`conda` | 让引擎的子脚本在指定 conda 环境中运行 |
+
+## 一个交易日怎么用
+
+1. **08:45**：计划与复盘 › 今日简报 里出现 **盘前简报**（铃铛里也有通知）：隔夜指数、每个持仓离止损和目标还有多远、
+   到复查日的计划和笔记、A 股持仓的公告。
+2. **盘中**：今日页按实时价格显示组合。后端运行期间，价格触及止损、目标、涨跌幅或仓位上限时，提醒进入铃铛。
+3. **成交之后**：按 `N`（**记一笔**），填入成交，看预览和计划对照，确认。也可以在收盘后或周末从券商导出交割单，
+   在 账本 › 导入 里导入：已经记过的行显示 **已导入**。
+4. **15:40**：后端生成收盘快照、`history.csv` 当日记录和日报（配置了飞书时推送日报）。持有港股时等港股收盘价确定（16:10）；
+   到时数据源还没拿到收盘竞价的成交价，就在 16:15、16:20、16:25 再看，看到已核实的收盘价就记入；
+   到 16:28 仍没有，就按当日最后价格记入并标「含估算」。
+5. **15:45**：**盘后简报**：今天的成交与计划的对照、各持仓的今日盈亏、触发的提醒、越过止损或目标的持仓，
+   以及助手提出、等你确认或放弃的教训。
+
+## 数据与备份
+
+所有数据都在你的电脑上：
+
+| 文件 | 内容 |
+|---|---|
+| `PORTFOLIO_DIR/ledger.sqlite3` | 全部已确认的流水（期初、买卖、分红、入金出金、换汇、拆股和冲销）、还没确认的账本方案、研究笔记 |
+| `PORTFOLIO_DIR/desk.sqlite3` | 提醒规则和触发记录、交易计划及其与成交的关联、自选、助手提出的方案（包括你放弃过的教训）、简报和例行任务记录、导入记录和列对应、各账户费率、站内通知、设置向导的完成状态 |
+| `PORTFOLIO_DIR/snapshots/`、`history.csv`、`holdings/` | 每日收盘快照和旧版持仓文件 |
+| `dashboard/data/memory.json` | 助手的记忆（交易画像、情绪触发点、教训） |
+| `TRACKER_CONFIG_FILE`、`.env` | 模型设置和密钥 |
+| `TRACKER_BACKTEST_DIR`、`TRACKER_LAB_DIR` | 回测和研究数据 |
+
+**备份**：在 设置 › 备份与导出 点 **下载账本备份**（得到 `ledger-backup.sqlite3`）和 **下载桌面数据备份**
+（得到 `desk-backup.sqlite3`）。这是后端在运行中生成的一致副本，两个都要保存；两份是分两次下载的，备份时先不要记账，连续下载两份；**导出流水（JSON）** 只供查看，不能用来恢复。
+保留收盘快照的话，另外备份整个数据目录；助手记忆、模型设置和密钥、回测和研究数据也不在这两个备份里。
+
+**恢复**：
+
+1. 关闭所有已打开的网页，停止后端（`make stop`，Docker 用 `docker compose stop backend`）；
+2. 把数据目录（`PORTFOLIO_DIR`，默认 `engine/portfolio`；Docker 中是挂载进容器的同一个 `engine/portfolio`）里现有的
+   `ledger.sqlite3`、`desk.sqlite3` 以及同名的 `-wal`、`-shm` 文件移到别处；
+3. 把 `ledger-backup.sqlite3` 改名为 `ledger.sqlite3`、`desk-backup.sqlite3` 改名为 `desk.sqlite3`，放进数据目录；
+4. 启动后端，再打开网页，核对账户余额、流水条数、提醒和计划。
+
+更细的检查步骤见 [完整使用指南](docs/FULL_GUIDE_CN.md#备份与恢复)。
+
+## 从 v3.2 升级
+
+1. 先按上面的方法备份（3.2 在账本页点 **备份**；3.2 还没有桌面数据文件），或停止后端后直接复制数据目录。
+2. 更新代码，运行 `make setup`，再 `make start`（或重新构建 Docker 镜像：`docker compose up -d --build`）。
+3. 数据库结构会自动升级；读取不会改动账本和桌面数据。打开 `/setup`：还没有账本时选 **迁移旧版持仓** 或 **导入券商文件** 建立期初。
+4. 账本启用后，旧的「持仓」页和接口只读；旧链接自动跳转到新页面。
+5. 指标改为标准定义，旧回测结果会不同；v3.2 保存的回测记录只能打开和导出，不能重跑。重复的提醒规则会被合并。
+   升级前生成、还没确认的导入预览（包括 3.2 的 CSV 导入）和 B 股方案不能再确认：导入预览请重新导入同一文件，B 股方案直接放弃。
+   完整说明见 [更新记录](CHANGELOG.md#upgrade-notes)。
+
+## 助手
+
+助手（页头的「助手」按钮）是可选的。没有配置模型时，账本、导入、行情、提醒、计划、简报、回测和手动研究都能正常使用。
+配置了模型（DeepSeek、OpenAI、Anthropic 或任何 OpenAI 兼容接口，在设置向导或 设置 › 模型 里设置）之后：
+
+- 它能读取今日页的估值、行情、自选、提醒规则、交易计划、简报、已确认的成交、研究笔记、日线、技术指标，
+  以及个股新闻和公告。
+- 它只能**提出方案**：记账、提醒、计划、加自选和教训都是待你确认或放弃的预览。它从对话里归纳出的教训和
+  交易画像修改，会成为 设置 › 交易偏好 里待确认的提议。
+- 新闻、行情源返回的文字和你自己保存的笔记，都以「不可信数据」的形式交给模型；回答中出现、但本轮数据里没有的数字，
+  会附上程序生成的脚注。它的回答不构成投资建议。
+- 你发给它的内容（问题、今日数字、工具结果、图片）会发送到你配置的模型服务商。
+
+## 回测
+
+研究 › 回测 在一段时间内对一只标的检验一个简单规则：**一直持有（对照）**、**均线趋势**、**超跌反弹**、**突破**
+或 **止损止盈（持仓）**。每个结果都和「同样本金、同样每手、同样费用和成交规则下一直持有这只股票」以及大盘指数比较，
+并列出提醒事项。下一根 K 线开盘价成交，滑点 0.05%；按 A 股 T+1、每手股数、涨跌停和按日期变化的税费计算；
+数据结束时还没卖出的持仓单独列在 **期末仍持有**，按最后收盘价估值，不算完整交易。
+每次运行保存运行清单，可以重跑并比较差异（v3.2 保存的记录只能打开和导出，不能重跑）。没有建模：分钟数据、做空、融资、期权、多股票筛选、港股每手股数
+（按 100 股假设并注明）、按持有期计算的红利税。回测只是复权价格上的一段历史，参数也是在同一段历史上看出来的，
+不是预测。
+
+![同一次回测的完整交易表和期末仍持有表：数据结束时还没卖出的一笔按最后收盘价估值](docs/images/backtest-held.png)
+
+## 飞书工作台与研究工作台
+
+- [docs/FEISHU_WORKBENCH.md](docs/FEISHU_WORKBENCH.md)：通过 OpenClaw 在飞书私聊里用卡片做每日更新、查看资产、日报和研究。
+  卡片写入的是旧版持仓文件，账本启用后会被拒绝。
+- [docs/RESEARCH_CN.md](docs/RESEARCH_CN.md)（[English](docs/RESEARCH.md)）：研究工作台的数据、模板、Agent 模式、命令行和 MCP。
+
+## 开发
+
+CI（`.github/workflows/checks.yml`）在 Python 3.10、3.11、3.12 和 Node 22 上运行：
+
 ```bash
-./start.sh          # 同时启动后端 + 前端
-./start.sh backend  # 仅启动后端
-./start.sh engine   # 运行一次快照引擎
-./stop.sh           # 停止所有服务
+# Python
+python -m pip install -r dashboard/requirements.txt pytest
+python scripts/check_public_artifacts.py
+python -m pytest -q
+(cd dashboard && python -c 'import backend.main')
+
+# Node
+node --test openclaw/feishu-workbench-bridge.test.mjs
+(cd dashboard/frontend && npm ci)
+node --experimental-strip-types --test "dashboard/frontend/tests/*.test.mjs"
+(cd dashboard/frontend && npm run build && npm audit --audit-level=high)
+
+# 浏览器冒烟测试（无界面 Chromium）
+python -m pip install -r dashboard/requirements.txt playwright
+python -m playwright install --with-deps chromium
+for smoke in tests/browser_*smoke.py; do python "$smoke" || exit 1; done
 ```
 
-#### 方式 3：Docker Compose 一键启动
+`make test` 运行 `python3 -m pytest -q`。设置 `TRACKER_SCREENSHOT_DIR` 时，浏览器冒烟测试会保存截图。
+参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-```bash
-docker compose up -d
-# 前端: http://localhost:3000
-# API 文档: http://localhost:8000/docs
-```
+## 哪些仍需手动
 
-#### 方式 4：CLI 终端模式
+- **不与券商同步**。成交只来自你手动记的、你导出的文件或你确认的方案。
+- **成交价和费用**。「按现价」只是方便填写，请按成交回报填写实际价格。费用按账户费率预填并标为 **估算**；
+  不改就入账时，「费用为估算」只记在这笔流水的备注里，用它算出的成本和盈亏不再标估算。券商实际收费不同的话，
+  在流水里冲销后按实际费用重记，或导入券商文件。
+- **场外基金**。账本按账户记一个人民币合计估值，不记份额；查看后用「基金估值」更新。
+- **公司行动**。分红和送转由你记录，或随导入的交割单进来；目前不会自动提出。导入的分红在文件写明税前金额、
+  扣除的税费和到账金额且三者对得上时按到账金额记，否则请填写实际到账的金额。
+- **特殊情况**。新股中签缴款与入账、配股、ETF 申赎、场外基金申购、可转债和通用的资金调整需要手动处理；
+  北交所和 B 股不支持；港股通只在导入里支持，记一笔不支持。
+- **截图**。助手可以看截图并讨论，识别出的持仓只在对话里展示，不会入账；成本价只取图片里明确写出的，没写就为空。
+  入账请用记一笔或导入文件。
+- **历史与理由**。累计净投入的历史、投资理由、失效条件和教训，都是你自己写的。
 
-```bash
-cd dashboard && python3 main.py
-# 支持 /portfolio, /add, /import, /refresh, /models 等命令
-```
+## 已知限制
 
-### 可选消息接入
+4.0.0 发布时已知、暂不修改的地方：
 
-组合追踪、网页、回测和手动／Agent 研究均可独立运行，无需 OpenClaw。
-研究能力也可通过 CLI、HTTP 或 MCP 接入其他客户端。
+- **记一笔**：「昨收」没有自己的时间戳，显示的是当前报价的时间。不经页面、直接调用入账接口建立期初时可以不带
+  累计净投入，这时按 0 记账；记一笔、设置向导、流水页的旧持仓预览和助手都会先要求填写。
+  升级前已用两种写法记入同一标的的旧账本（如 `HKG:700` 与 `HKG:00700`）保持原样，仍显示为两行、分别计算；
+  升级后新记的交易记入账户在成交日期持有的那种写法。
+- **设置向导**：累计净投入的建议值按「现金＋持仓成本＋基金估值」估算，入账后不再标为估算，今日页的总盈亏按它计算，
+  请改成实际累计转入的本金。向导会原样显示已保存的 API 地址（包括路径，不含查询参数），请不要把密钥写进地址，
+  填在「API 密钥」一栏。
+- **升级**：升级前生成、还没确认的导入预览（包括 3.2 CSV 导入的预览）确认时会被拒绝一次，请重新导入同一文件；
+  升级前生成的 B 股方案确认时会被拒绝，可以直接放弃。
+- **备份与恢复**：恢复前请关闭所有已打开的页面，恢复后再打开。页面开着时恢复，新通知可能沿用恢复前的编号，
+  点开旧通知会把新的提醒一起标为已读；备份之后已经确认过的提议，恢复后再次确认会显示「已应用」但不会再生效，
+  这类改动请到设置里直接修改。账本和桌面数据两份备份分两次下载，各自是下载那一刻的内容；备份时先不要记账，连续下载两份。
+- **导入**：同花顺、东方财富、通达信的预设没有用各家券商的真实文件逐一验证过。同一只港股在账本里有两种写法时
+  （两个账户分别是 `HKG:700` 和 `HKG:00700`，或同一账户先以 `HKG:00700` 清仓、再以 `HKG:700` 买回），
+  导入持有 `HKG:700` 的账户的卖出，预览可能提示「卖出 … 股，但账本当时只持有 0 股」：文件里的代码会被读成另一种写法，
+  改文件里的代码或在行编辑里改代码也一样。请把这一行设为跳过，用记一笔记这笔卖出（记一笔会记入该账户当时持有的写法）。
+  没有成交时间、也没有资金余额的文件里，同一天的买入排在为它付款的入金之前时，这笔买入会提示现金不足、需要处理：
+  在处理这一行时勾选「允许融资」，或在文件里把入金行移到买入之前再导入。
+- **回测**：对比另一个市场的指数时，回测区间落在休市表没有收录的年份（目前 A 股 2026 年，港股和美股 2026–2027 年），
+  指数缺少的交易日无法确认是休市，整段指数对比显示为不可用。A 股 ETF 一律按 T+1 模拟：黄金、债券、货币和跨境 ETF
+  （如 518880、511010、513100、159941）实际可以当天买卖，回测里当天买入的份额不能当天卖出，期末估值也会把当天买入的份额说成因 T+1 卖不出。
+  3.2 保存的回测结果只能打开和导出（标为旧版本记录，缺少的部分显示不可用），不能重跑。
+  收盘后不久（如 15:45）跑过一次、数据源还没有当天日线时，一小时内再跑同一标的不会重新下载，结果仍截至前一个交易日；
+  一小时后再跑，或在 **数据** 里点 **更新到今天**，才会再去取。
+- **行情与快照**：纽约收盘后 30 分钟内，美股价格显示为收盘价但标估算（尚未最终确定），满 30 分钟后读到的才算核实的收盘价。
+  持有港股时，收盘快照在 15:40 显示「等待中」，港股收盘价确定（16:10）后记入；数据源那时还没拿到收盘竞价的成交价，
+  就每 5 分钟（16:15、16:20、16:25）再看一次，看到已核实的收盘价就记入，到 16:28 仍没有就把当日最后价格按「含估算」记入；
+  等待中手动运行会立即再看一次，仍核实不了就继续等待（不消耗重试次数、不发通知）。只有 A 股时仍是 15:40。
+  等待期间今日页状态条写的是下一次查看的时间（如「今日快照 16:15 后记入」），最晚记入时间（16:28）在悬停提示里。
+  快照标为「含估算」的日子（停牌、汇率未核实、持仓来自旧版持仓文件等），之后数据恢复也不会自动重做。
+  成交稀少、当天收盘后数据源没有再刷新时间戳的持仓，晚上会一直显示「已过期」（估算），直到下一次有带时间的报价；
+  午盘同理：午间休市前 20 分钟以上的报价在午休期间显示为已过期；而数据源停在休市前 20 分钟以内的一笔成交（如 11:16）时，
+  午休期间按它显示为「收盘价 11:16」，算作核实的价格，也不再问备用数据源，下午开盘后恢复正常。
+- **助手**：回答里的百分比只核对「是否在本轮数据的某个百分比字段里出现过」，不核对它是不是对应的那个指标
+  （例如仓位 100% 可以让「涨了 100%」不被加注）；金额、股数同样只按单位类别（金额、数量）核对。请以页面上的数字为准。
+- **通知与简报**：提醒和简报只进站内通知；只有收盘日报按飞书配置推送。简报的「待确认」统计按当前账本版本生成、
+  仍能确认的全部预览，账本页最多列出 30 条常规方案和 10 条手动预览，条数更多时两边会不一致。
+- **页面**：组合走势仍在 `/tracker`；没有单独的教训页面，教训在 设置 › 交易偏好。
 
-仓库保留了 OpenClaw 工具适配器和飞书事件桥接。工具适配器可读取组合记录、
-生成待确认的交易方案，入账需在账本页面确认。当前飞书日报发送器调用 OpenClaw CLI，
-卡片工作台复用已有 OpenClaw 飞书连接；这些消息功能需要单独配置。
+## 文档
 
-参见[飞书工作台指南](docs/FEISHU_WORKBENCH.md)、
-[工具适配器](openclaw/tools/portfolio_tools.py)与[Agent 技能说明](openclaw/skills/SKILL.md)。
+[完整使用指南](docs/FULL_GUIDE_CN.md) · [账本](docs/LEDGER.md) · [导入](docs/IMPORT.md) ·
+[提醒与例行任务](docs/ALERTS_AND_ROUTINES.md) · [记账口径](docs/ACCOUNTING.md) · [安全](docs/SECURITY.md) ·
+[后续计划](docs/ROADMAP.md) · [更新记录](CHANGELOG.md)
 
-### 🏗 系统架构
+## 版本
 
-```
-┌──────────────────────────────────────────────────────┐
-│                    数据来源                           │
-│  Yahoo Finance  ·  AKShare  ·  holdings/*.json        │
-└─────────────────────┬────────────────────────────────┘
-                      ▼
-┌──────────────────────────────────────────────────────┐
-│          portfolio_snapshot.py（~450 行）              │
-│  fetch_prices() → fetch_fx() → calculate() →          │
-│  quant_metrics() → save_snapshot() → sync()           │
-└────────────────┬────────────────┬────────────────────┘
-                 ▼                ▼
-        ┌────────────┐   ┌─────────────────────────────┐
-        │ 快照 JSON  │   │  FastAPI 后端（端口 8000）    │
-        │ + CSV      │   │  /api/chat /api/market       │
-        └────────────┘   │  /api/memory /api/backtest   │
-                         └──────────────┬──────────────┘
-                                        ▼
-                         ┌─────────────────────────────┐
-                         │  React 前端（端口 3000）      │
-                         │  对话·持仓·行情·记忆·回测     │
-                         └─────────────────────────────┘
-                                        ▲
-                         ┌─────────────────────────────┐
-                         │  OpenClaw（可选消息接入）     │
-                         │  飞书 / Telegram 推送         │
-                         └─────────────────────────────┘
-```
+| 版本 | 日期 | |
+|---|---|---|
+| [4.0.0](CHANGELOG.md#400--2026-11-19) | 2026-11-19 | 持仓只来自账本、设置向导、券商文件导入、记一笔、提醒、计划、简报、重建的回测、六个板块 |
+| [3.2.1](CHANGELOG.md#321--2026-09-14) | 2026-09-14 | 飞书资金与本金变动 |
+| [3.2.0](CHANGELOG.md#320--2026-09-12) | 2026-09-12 | 飞书工作台、股票研究工作台 |
+| [3.1.0](CHANGELOG.md#310--2026-09-09) | 2026-09-09 | 交易账本与研究笔记 |
+| [V1–V3](CHANGELOG.md#historical-milestones) | 2025–2026 | Google Sheets、Python 引擎、AI 面板 |
 
-### 📅 每日交互流程
+## 贡献与引用
 
-```
-18:00  ─ 调度器触发
-       1. 克隆昨日持仓 → 今日 .json
-       2. 飞书推送："今日持仓有变化吗？"
+欢迎提交 Issue 和 PR；请不要附上真实的持仓数据。见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题见 [SECURITY.md](SECURITY.md)。
 
-       ← 用户回复："卖了100股茅台，进攻现金变为-5万"
-         或者："未变化"
-
-       3. Agent 解析自然语言 → 更新持仓 JSON
-       4. 获取实时行情（Yahoo Finance）
-       5. 计算快照（盈亏 / 回撤 / 量化指标）
-       6. 生成 Markdown 日报
-       7. 推送飞书/Telegram 日报
-       8. 同步 Web Dashboard
-
-19:00  ─ 兜底：如用户未响应则自动运行
-```
-
-**启动调度器：**
-```bash
-nohup python engine/scripts/portfolio_scheduler.py &
-# 默认：18:00 通知，19:00 兜底管道
-```
-
-### 🤖 完整 AI 交易助手
-
-本项目提供的不只是持仓追踪器 — 而是一个**完整的多页面 AI 交易助手**。`docker compose up` 后即可获得配备 8 个功能页面的 React Web 应用，后端由 FastAPI + LLM 驱动。
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  💬 对话  │ 💼 持仓 │ 📊 追踪 │ 📈 行情 │ 🧠 记忆 │ 📉 回测         │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌─────────────────────────────────┐  ┌─────────────────────────┐   │
-│  │  💬 AI 交易助手                 │  │  💼 实时持仓              │   │
-│  │                                 │  │  进攻   ¥62.4万  +2.3%   │   │
-│  │  你：今天持仓分析一下           │  │  稳健   ¥76.8万  -0.8%   │   │
-│  │  🤖：茅台今日 +2.3%，进攻组     │  ├─────────────────────────┤   │
-│  │  主要贡献；平安压力较大，        │  │  💡 操作建议              │   │
-│  │  建议关注杠杆是否过高...        │  │  · 平安杠杆偏高，考虑减仓 │   │
-│  │                                 │  │  · 茅台突破前高，可持有   │   │
-│  │  你：帮我算一下夏普比率         │  └─────────────────────────┘   │
-│  │  🤖：当前夏普 1.23，波动率      │                                  │
-│  │  54.2%，处于合理区间...         │                                  │
-│  └─────────────────────────────────┘                                  │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-#### 各页面详细功能
-
-**💬 Dashboard（AI 对话）**
-- 流式对话，支持 GPT-4o / Claude / DeepSeek 任意切换
-- 上下文感知：每次对话自动携带最新持仓快照给 LLM
-- 实时持仓侧边栏 — 仓位、盈亏、今日涨跌实时刷新
-- AI 智能操作建议面板（可操作的具体建议，非泛泛分析）
-- 对话历史记录与搜索
-
-**💼 Portfolio（持仓管理）**
-- 内联表单添加 / 编辑 / 删除持仓
-- 多账户分组（进攻 / 稳健 或自定义任意分组）
-- 负现金自动识别为融资，显示杠杆徽章
-- 成本基础按组追踪，支持导出 JSON
-
-**📊 Tracker（投资组合追踪）**
-- 5 KPI 卡：总资产 · 总盈亏 · 今日盈亏 · 本月盈亏 · 最大回撤
-- 分组双饼图展示持仓权重分布
-- 资产净值曲线 vs 成本基线（交互式面积图）
-- 月度盈亏可折叠柱状图
-- 完整量化指标：夏普 · 波动率 · 胜率 · 盈亏比 · 平均盈亏
-
-**📈 Market（实时行情）**
-- 跨市场行情搜索：A 股 / 港股 / 美股
-- 自选股监控列表，实时涨跌展示
-- 价格预警设置（突破阈值自动通知）
-- AKShare（沪深港）+ Yahoo Finance（美股）双数据源
-
-**🧠 Memory（智能记忆）**
-- 持久化用户画像：投资风格、风险偏好、策略备注
-- 自动从对话中提炼关键决策（LLM 驱动摘要）
-- 交易日记：带日期戳的交易备注
-- 策略库：保存并回溯自己的交易规则与理由
-
-**📉 Backtest（策略回测）**
-- 内置策略：双均线交叉、RSI 均值回归、SMA 穿越
-- 支持自定义策略插件
-- 可配置：标的代码、时间范围、初始资金、手续费、滑点
-- 结果指标：总收益率、年化收益、夏普比率、最大回撤、交易日志
-- **AI 策略反思**：LLM 分析策略成败原因并给出改进建议
-- 净值曲线图 + 基准对比
-
-**⚙️ Settings（设置）**
-- 运行时切换 LLM 提供商和模型（无需重启）
-- 配置 API Key、代理地址、数据提供商
-- 飞书 / Telegram Webhook 配置
-
-| 页面 | 路由 | 后端接口 |
-|------|------|----------|
-| 对话 | `/` | `POST /api/chat` |
-| 持仓 | `/portfolio` | `GET/POST /api/portfolio` |
-| 追踪 | `/tracker` | `GET /api/portfolio/tracker` |
-| 行情 | `/market` | `GET /api/market/quote` |
-| 记忆 | `/memory` | `GET/POST /api/memory` |
-| 回测 | `/backtest` | `POST /api/backtest/run` |
-| 设置 | `/settings` | `GET/POST /api/settings` |
-
-### 📝 配置说明
-
-`engine/portfolio/config.json`：
-```json
-{
-  "groups": {
-    "进攻": { "cost_basis": 600000 },
-    "稳健": { "cost_basis": 400000 }
-  },
-  "proxy": "http://127.0.0.1:7890",
-  "feishu_chat_id": "your_feishu_chat_id",
-  "ticker_map": {
-    "贵州茅台": "SHA:600519",
-    "中国平安": "SHA:601318",
-    "腾讯控股": "HKG:0700",
-    "苹果":     "NASDAQ:AAPL"
-  }
+```bibtex
+@misc{portfolio-daily-tracker,
+  author       = {Stepuuu},
+  title        = {Portfolio Daily Tracker — Self-hosted Investment Portfolio Tracking \& AI Trading Assistant},
+  year         = {2026},
+  publisher    = {GitHub},
+  howpublished = {\url{https://github.com/Stepuuu/portfolio-daily-tracker}},
 }
 ```
 
-**持仓格式**（`holdings/YYYY-MM-DD.json`）：
-```json
-{
-  "date": "2026-03-06",
-  "groups": {
-    "进攻": {
-      "cost_basis": 600000,
-      "positions": [
-        { "name": "贵州茅台", "ticker": "SHA:600519", "quantity": 100,  "cost_price": 1580.00 },
-        { "name": "腾讯控股", "ticker": "HKG:0700",   "quantity": 500,  "cost_price": 398.60 }
-      ],
-      "fund": 50000,
-      "cash": -85000
-    },
-    "稳健": {
-      "cost_basis": 400000,
-      "positions": [
-        { "name": "中国平安", "ticker": "SHA:601318", "quantity": 2000, "cost_price": 42.50 }
-      ],
-      "fund": 80000,
-      "cash": 130000
-    }
-  }
-}
-```
+## 许可证
 
-### Ticker 格式
-
-| 市场 | 格式 | 示例 |
-|------|------|------|
-| A 股（沪） | `SHA:XXXXXX` | `SHA:600519` |
-| A 股（深） | `SHE:XXXXXX` | `SHE:000858` |
-| 港股 | `HKG:XXXX` | `HKG:0700` |
-| 美股 | `NASDAQ:XX` / `NYSE:XX` | `NASDAQ:AAPL` |
-
-### 🔄 自然语言更新
-
-| 指令模式 | 示例 | 说明 |
-|---------|------|------|
-| 未变化 | `持仓未变化` | 保持原样，直接生成快照 |
-| 现金变更 | `进攻现金变为-5万` | 更新指定组现金 |
-| 基金变更 | `基金变为8万` | 更新基金金额 |
-| 卖出 | `卖了100股茅台` | 减少持仓数量 |
-| 买入 | `买了200股中国平安` | 增加已有持仓数量 |
-| 买入新股 | `买了500股万润新能 代码是SHA:688275` | 自动新增新持仓 |
-| 直接设置 | `腾讯控股 800股` | 直接设定数量 |
-| 清仓 | `清仓茅台` / `万润新能清了` | 移除整个持仓 |
-| 新增 | `新增 苹果 ticker:NASDAQ:AAPL 数量:50 成本:175.5` | 添加新股票 |
-| 成本调整 | `进攻成本调整为620000` | 修改组成本基础 |
-
-**以下为旧版 CLI 解析规则，启用账本后不再用于写入持仓。账本要求显式价格、数量和原币金额，不会反推成交价。**
-
-多条变更用逗号 `,` 或分号 `；` 分隔。数字支持 `万` 后缀；对现金/基金字段，像 `-44.273`、`15.635` 这类省略 `万` 的写法也会自动按“万”解析。若新增持仓未填写成本价，系统会尝试根据同一条消息里的现金/基金变动反推单股成本。
-
-### 📋 V1：Google Sheets 版本
-
-V1 基于 Google Sheets + Apps Script，适合不想自托管的用户：
-- `v1-google-sheets/code.gs` — Apps Script 源码
-- `v1-google-sheets/` — 历史 Google Sheets 脚本与指南
-- `v1-google-sheets/User_Guide_CN.md` — 中文使用指南
-
-### 🆚 版本对比
-
-| 维度 | V1（Google Sheets） | 当前自托管版 |
-|------|---------------------|-------------|
-| 数据存储 | Google Drive | 本地 SQLite/JSON/CSV |
-| 行情来源 | Google Finance + 新浪 | Yahoo Finance + AKShare |
-| 多市场 | 部分支持 | ✅ A 股 + 港股 + 美股 |
-| 量化指标 | ❌ | ✅ 夏普 / 波动率 / 回撤 |
-| AI 对话 | ❌ | ✅ GPT / Claude / DeepSeek |
-| 策略回测 | ❌ | ✅ 自定义策略引擎 |
-| Web 面板 | Google Sheets 图表 | ✅ React + TailwindCSS |
-| 消息推送 | ❌ | ✅ 飞书 / Telegram / Slack |
-| 数据隐私 | 数据在 Google | 本地存储；远程模型接收请求上下文 |
-| Docker | ❌ | ✅ 一键部署 |
-
-### 📄 许可证
-
-MIT — 详见 [LICENSE](LICENSE)
-
----
-
-<div align="center">
-  <b>📊 用代码管理你的投资</b><br>
-  <a href="https://github.com/Stepuuu/portfolio-daily-tracker">GitHub</a> ·
-  MIT License
-</div>
+[MIT](LICENSE)

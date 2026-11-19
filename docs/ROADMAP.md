@@ -1,101 +1,81 @@
-# Roadmap: a dependable portfolio and research journal
+# Roadmap
 
 The direction is a private workspace connecting **records → evidence → decisions →
-review**. An AI response must never be the only record of a portfolio change.
-This roadmap separates shipped foundations from remaining work. Status reflects
-version 3.2.0; the [changelog](../CHANGELOG.md) lists release details.
+review**, where the confirmed ledger is the one record of the portfolio and an AI
+response is never the only record of a change. Status reflects version 4.0.0
+(2026-11-19); the [changelog](../CHANGELOG.md) lists release details.
 
-## 1. Ledger foundation — shipped; further reconciliation planned
+## Done
 
-The optional SQLite ledger now provides opening migration, native cash, decimal
-and fractional quantities, weighted average costs including fees, cash flows,
-FX exchanges, transfers, splits, reversals, standard CSV deduplication,
-revision-checked previews and idempotent confirmations. Snapshots read the ledger
-after explicit initialization. AI tools prepare proposals; users confirm in the UI.
+**In 4.0.0**
 
-Remaining: broker-specific column mapping, lot-level/FIFO accounting, account
-reconciliation statements, scalable history pagination, and automatic regeneration
-of historical valuations after backdated corrections. See [ledger conventions](LEDGER.md).
+- **One portfolio store.** Holdings come only from the confirmed ledger. The setup
+  wizard (`/setup`) creates the first account and opening balance from scratch,
+  from a broker file or from the v3.2 files; the manual portfolio is read-only once
+  a ledger exists.
+- **Less typing.** 记一笔 with code and name search, the price from the current
+  quote, fee estimates from per-account fee profiles and a review step; a broker
+  file importer for 交割单, 资金对账单 and 持仓 files with column mapping, row
+  statuses, account identities, deduplication, reconciliation and batches.
+- **Trustworthy valuation.** Quotes keyed by exchange-qualified tickers with their
+  source, exchange time and status; estimated and unavailable values marked, never
+  0; exchange holiday tables for the mainland (2026), Hong Kong and New York (2026,
+  2027); day profit that follows the shares traded.
+- **Daily routines.** Price alerts with a monitor during trading sessions; trade
+  plans with their alerts and a check of every trade; pre- and post-market briefs;
+  the close snapshot made by the backend at 15:40.
+- **Assistant boundaries.** Read tools for quotes, the watchlist, alerts, plans,
+  briefs, trades, notes, bars, indicators and news; every write is a proposal you
+  confirm; provider and stored text fenced as untrusted data; numbers checked
+  against the turn's data.
+- **Backtest, round 1.** One run service, five presets, buy-and-hold and index
+  comparison, dated fee schedules, T+1, lots and limit rules, code-written
+  headline and caveats, a reproducibility manifest and reruns.
+- **Interface.** Six sections, a shared UI kit, light and dark themes, a phone
+  layout with a bottom bar, settings in seven sections.
 
-## 2. Trustworthy valuation and performance — further work planned
+**Earlier**
 
-Store quote source, quote timestamp, market timezone and FX timestamp. Separate
-quote staleness from snapshot generation time. Add exchange calendars, historical
-price selection and a quote refresh/retry panel. Handle missing data explicitly.
+- 3.1: the transaction ledger with previews, confirmations, reversals, native-currency
+  cash, standard CSV import and the research journal.
+- 3.2: the stock research workbench (manual and agent experiments, immutable
+  datasets, schedules, CLI, HTTP and MCP) and the Feishu card workbench.
 
-Acceptance: deterministic fixtures cover cash-only accounts, borrowing, foreign cash,
-dividends, fees, deposits around valuation boundaries, splits and holidays. Report
-TWR and XIRR separately with their assumptions; compare to the same-currency benchmark.
-Separate investment P&L from currency P&L and realized from unrealized gains.
+## Next release
 
-## 3. Reproducible stock research — shipped in 3.2; broader methods planned
+| Item | What it means |
+|---|---|
+| Corporate actions | Propose A-share cash dividends and 送转 from public data as ledger previews (A-share stocks only; Hong Kong and US withholding stays manual) |
+| Screenshot to draft | Turn a broker screenshot into an editable row table that you correct before any preview is made; costs are never inferred from profit or current price, and the flow is off without a vision model |
+| Feishu to ledger | Let the Feishu card prepare ledger proposals instead of editing the legacy holdings files, so card users keep working once the ledger is active |
+| Assistant dock | Redesign the chat dock: inline proposal cards and a "生成入账草稿" path into 记一笔 |
+| 组合走势 | Rebuild the history page on the new layout (at `/history`, with `/tracker` redirecting), later from daily valuations of the ledger |
+| Backtest round 2 | 交易复盘 (replay your own trades from the ledger against buy-and-hold and the index), setup statistics as studies and assistant tools, robustness and out-of-sample checks over small parameter grids, and portfolio and 定投 backtests |
+| Cleanup | Remove `POST /api/settings/cash` and the `/api/portfolio` holdings endpoints; add the mainland 2027 holiday table once the exchanges publish it |
 
-Shipped: a shared manual/agent workbench with synthetic, CSV, cache and market
-datasets; immutable data versions; momentum, mean-reversion and volatility
-templates; chronological splits, label-boundary purging, baseline comparisons,
-cost assumptions and final holdout evaluation. Agent iterations use validation
-evidence before freezing a candidate. Local jobs, checkpoints, cancellation,
-retry, schedules and JSON exports preserve the experiment record.
+## Later
 
-API and official Codex/Claude Code CLI adapters, a JSON CLI, HTTP tools, an MCP
-bridge and trusted Python template/provider registration are available. UI
-parameters and provider choices follow the registry. Connection checks do not
-prove every subscription environment or model is usable. See the
-[research guide](RESEARCH.md), [中文指南](RESEARCH_CN.md) and
-[extension interfaces](RESEARCH_EXTENSIONS.md).
+- **Performance measurement.** Time-weighted and money-weighted (XIRR) returns
+  reported separately with their assumptions; investment P&L apart from currency
+  P&L and realized apart from unrealized; historical price selection so a
+  backdated correction can regenerate old valuations.
+- **Accounting depth.** Lot-level / FIFO accounting and tax reports; per-fund units
+  instead of one CNY fund value; 北交所 and B shares in the ledger.
+- **Research to decisions.** A security page with positions, trades, thesis
+  versions, sources, catalysts and the next review date; reports that cite source
+  URLs and retrieval dates; rolling and walk-forward evaluation in the research lab.
+- **Reach.** An English interface, a red/green preference, a shareable report with
+  privacy controls.
+- **Deployment.** Authenticated multi-user or remote deployment needs a separate
+  design; until then the app is a single-user local service (see
+  [SECURITY.md](SECURITY.md)).
 
-Remaining: richer point-in-time datasets, rolling/walk-forward evaluation,
-uncertainty and sensitivity analysis, stronger controls for repeated historical
-holdout use, and realistic market execution constraints. Options chains, implied
-volatility surfaces, Greeks and multi-leg options backtesting are not shipped.
-Arbitrary generated-code execution would require a separate sandbox design.
+## Not planned
 
-## 4. Research that connects to decisions — journal shipped; links planned
+Broker connections, order placement or paper trading; minute or tick data;
+shorting, margin and options in the backtest; strategies written by a model; an
+arbitrary-code sandbox.
 
-An append-only thesis/invalidation/review journal is available. Next, connect
-workbench experiments to a security page containing positions, transactions, thesis, sources,
-valuation assumptions, catalysts, invalidation conditions and next review date.
-Reports should cite source URL and retrieval date; show where evidence is missing.
-Keep thesis versions and link decisions to the version known at the time.
-
-Acceptance: an imported or manually created research note can be attached to a
-security and revisited alongside its subsequent price and portfolio decisions.
-An AI summary links to original evidence. Editing an assumption does not erase the
-old conclusion. Research schedules already persist across restarts; scheduled
-report publishing is a separate future workflow.
-
-## 5. Daily use and onboarding — research workflow shipped; further work planned
-
-Shipped: a credential-free synthetic experiment through `make lab`, isolated
-fictional data through `make demo`, mobile navigation, research drafts and task
-links, recovery after polling failures, experiment comparison and JSON export.
-The ledger includes transaction previews and explicit confirmation. Settings
-reports failed saves and routes balance changes through ledger entries.
-
-Remaining:
-
-- Extend standard CSV previews with broker-specific mapping and per-row diagnostics.
-- Improve the existing demo, CSV and opening-balance onboarding with broker templates.
-- Search by ticker/name/account; saved filters and watchlists.
-- Mobile quick entry; keyboard navigation; English/Chinese locale and red/green preference.
-- Weekly review: changes, concentration, thesis updates, unanswered questions.
-- Export a self-contained shareable report with privacy controls and an optional
-  redacted view. Current JSON exports are private records, not automatic redactions.
-
-Acceptance: a new user can see a fictional portfolio without keys and record their
-first verified change without editing JSON. Errors explain what happened and what
-can be retried. Browser tests cover mobile, empty, offline and partial-data states.
-
-## 6. Open-source release and maintenance — ongoing
-
-Available: fictional-data screenshots, local setup commands, research and ledger
-guides, migration notes, a changelog, CI checks and extension documentation.
-Continue improving release walkthroughs, contract tests and compatibility coverage
-so fixes can flow between deployments. Keep the public core portable; deployment
-configuration and credentials belong outside source control. Multi-tenant
-authentication and distributed remote workers require separate design work.
-
-Track installation success, first-record completion, repeat usage and issue
-resolution using voluntary feedback. Stars are a secondary signal, not a product
-guarantee. Prefer small reproducible releases over adding more integrations before
-the accounting loop is trustworthy.
+Contributions are welcome where an item has a clear acceptance check; see
+[CONTRIBUTING.md](../CONTRIBUTING.md). Prefer small, reproducible changes over new
+integrations.

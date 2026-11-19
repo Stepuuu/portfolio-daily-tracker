@@ -1,7 +1,6 @@
 config.json
 data/
 frontend/
-tools/
 **/__pycache__/
 **/*.pyc
 **/*.log

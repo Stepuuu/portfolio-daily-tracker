@@ -12,6 +12,7 @@ services:
     environment:
       - PORTFOLIO_DIR=/app/portfolio
       - TRACKER_CONFIG_FILE=/app/data/config.json
+      - TRACKER_ALLOWED_HOSTS=${TRACKER_ALLOWED_HOSTS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     healthcheck:
