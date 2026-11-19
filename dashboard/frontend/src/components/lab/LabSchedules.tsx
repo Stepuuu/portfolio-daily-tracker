@@ -43,7 +43,7 @@ export default function Schedules({
       <div className="space-y-4">
         {error && <Failure message={error} />}
         {notice && (
-          <p role="status" className="text-sm text-cyan-200">
+          <p role="status" className="text-body text-fg-2">
             {notice}
           </p>
         )}
@@ -56,11 +56,11 @@ export default function Schedules({
         {query.data?.map((s) => (
           <div
             key={s.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 p-3"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-3"
           >
             <div className="min-w-0">
-              <h3 className="text-sm break-words">{s.name}</h3>
-              <p className="mt-1 text-xs text-slate-500">
+              <h3 className="text-body break-words">{s.name}</h3>
+              <p className="mt-1 text-caption text-fg-3">
                 {s.enabled ? "已启用" : "已暂停"} · 每{" "}
                 {s.interval_seconds / 3600} 小时 · 已触发 {s.completed || 0} /{" "}
                 {s.max_runs} 次（不代表成功数） ·{" "}
@@ -83,7 +83,7 @@ export default function Schedules({
           </div>
         ))}
         <form
-          className="space-y-3 border-t border-slate-700 pt-4"
+          className="space-y-3 border-t border-line pt-4"
           onSubmit={(e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
@@ -133,8 +133,8 @@ export default function Schedules({
               />
             </Field>
           </div>
-          <div className="rounded-xl border border-slate-700 p-3">
-            <label className="flex items-center gap-2 text-sm text-slate-200">
+          <div className="rounded-lg border border-line p-3">
+            <label className="flex items-center gap-2 text-body text-fg">
               <input
                 key={draft.dataset_id}
                 type="checkbox"
@@ -147,7 +147,7 @@ export default function Schedules({
             </label>
             <p
               id="schedule-refresh-help"
-              className="mt-2 text-xs leading-6 text-slate-400"
+              className="mt-2 text-caption leading-6 text-fg-3"
             >
               {canRefresh
                 ? "沿用股票、起始日期与复权口径，更新到运行当天并保存新版本。缓存本身可能仍未更新。未勾选时使用固定版本。"

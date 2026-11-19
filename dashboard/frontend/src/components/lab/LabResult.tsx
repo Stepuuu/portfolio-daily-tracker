@@ -11,6 +11,8 @@ import {
 } from "recharts";
 import { BookOpen, Download } from "lucide-react";
 import type { LabRun } from "@/services/lab";
+import { UNAVAILABLE } from "@/lib/format";
+import { useTokens } from "@/components/ui";
 import { Panel, buttonClass } from "./LabUi";
 
 export const record = (value: unknown): Record<string, unknown> =>
@@ -20,7 +22,7 @@ export const record = (value: unknown): Record<string, unknown> =>
 export const finite = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 const number = (value: unknown, digits = 4) =>
-  finite(value) === null ? "—" : (value as number).toFixed(digits);
+  finite(value) === null ? UNAVAILABLE : (value as number).toFixed(digits);
 const strings = (value: unknown): string[] =>
   Array.isArray(value)
     ? value
@@ -119,8 +121,8 @@ export function ResultComparison({ runs }: { runs: LabRun[] }) {
       }
     >
       <div className="overflow-x-auto">
-        <table className="w-full whitespace-nowrap text-left text-sm">
-          <thead className="text-xs text-slate-400">
+        <table className="w-full whitespace-nowrap text-left text-table">
+          <thead className="text-caption text-fg-3">
             <tr>
               <th className="pb-3 pr-5">研究</th>
               <th className="pb-3 pr-5">验证 MAE</th>
@@ -130,18 +132,18 @@ export function ResultComparison({ runs }: { runs: LabRun[] }) {
           </thead>
           <tbody>
             {runs.map((run) => (
-              <tr key={run.id} className="border-t border-slate-700">
+              <tr key={run.id} className="border-t border-line">
                 <td
                   className="max-w-64 truncate py-3 pr-5"
                   title={run.request.objective}
                 >
                   {run.request.objective}
                 </td>
-                <td className="pr-5 font-mono">
+                <td className="pr-5 tabular-nums">
                   {number(metric(run, "validation"))}
                 </td>
-                <td className="pr-5 font-mono">{number(metric(run))}</td>
-                <td className="font-mono">
+                <td className="pr-5 tabular-nums">{number(metric(run))}</td>
+                <td className="tabular-nums">
                   {number(metric(run, "test", "improvement_pct"), 2)}%
                 </td>
               </tr>
@@ -155,6 +157,7 @@ export function ResultComparison({ runs }: { runs: LabRun[] }) {
 
 export default function LabResult({ run }: { run: LabRun }) {
   const [showMethod, setShowMethod] = useState(false);
+  const tokens = useTokens();
   const result = run.result || {};
   const metrics = record(result.metrics);
   const test = record(metrics.test),
@@ -202,36 +205,36 @@ export default function LabResult({ run }: { run: LabRun }) {
             [
               "相对基线改善",
               finite(test.improvement_pct) === null
-                ? "—"
+                ? UNAVAILABLE
                 : `${number(test.improvement_pct, 2)}%`,
               "负值表示不及基线",
             ],
           ].map(([title, value, help]) => (
             <div
               key={title}
-              className="rounded-xl border border-slate-700/70 bg-slate-950/70 p-3"
+              className="rounded-lg border border-line bg-bg p-3"
             >
-              <div className="text-xs text-slate-400">{title}</div>
-              <div className="my-2 font-mono text-xl font-medium tabular-nums text-slate-100">
+              <div className="text-caption text-fg-3">{title}</div>
+              <div className="my-2 text-page tabular-nums text-fg">
                 {value}
               </div>
-              <p className="text-[11px] leading-5 text-slate-500">{help}</p>
+              <p className="text-caption leading-5 text-fg-3">{help}</p>
             </div>
           ))}
         </div>
         {dataWarnings.length > 0 && (
           <div
             role="status"
-            className="mt-4 space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs leading-6 text-amber-200"
+            className="mt-4 space-y-2 rounded-md bg-warn/10 px-3 py-2 text-caption leading-6 text-fg"
           >
             {dataWarnings.map((w, i) => (
               <p key={i}>{warningLabel(w)}</p>
             ))}
           </div>
         )}
-        <p className="mt-3 text-xs leading-6 text-slate-500">
-          验证样本 {finite(validation.samples) ?? "—"} · 测试样本{" "}
-          {finite(test.samples) ?? "—"} · 误差单位与预测目标一致
+        <p className="mt-3 text-caption leading-6 text-fg-3">
+          验证样本 {finite(validation.samples) ?? UNAVAILABLE} · 测试样本{" "}
+          {finite(test.samples) ?? UNAVAILABLE} · 误差单位与预测目标一致
         </p>
       </Panel>
       {equity.length > 1 && (
@@ -251,26 +254,28 @@ export default function LabResult({ run }: { run: LabRun }) {
               >
                 <CartesianGrid
                   vertical={false}
-                  stroke="#253447"
+                  stroke={tokens.border}
                   strokeDasharray="3 4"
                 />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: "#94a3b8", fontSize: 10 }}
+                  tick={{ fill: tokens["text-3"], fontSize: 10 }}
+                  stroke={tokens.border}
                   minTickGap={35}
                   tickFormatter={(v) => String(v).slice(5, 10)}
                 />
                 <YAxis
                   domain={["auto", "auto"]}
-                  tick={{ fill: "#94a3b8", fontSize: 10 }}
+                  tick={{ fill: tokens["text-3"], fontSize: 10 }}
+                  stroke={tokens.border}
                   tickFormatter={(v) => Number(v).toFixed(2)}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: "#0f172a",
-                    border: "1px solid #334155",
-                    borderRadius: 12,
-                    color: "#e2e8f0",
+                    background: tokens.surface,
+                    border: `1px solid ${tokens.border}`,
+                    borderRadius: 6,
+                    color: tokens.text,
                   }}
                   formatter={(v: unknown) => number(v)}
                 />
@@ -279,7 +284,7 @@ export default function LabResult({ run }: { run: LabRun }) {
                   type="linear"
                   dataKey="strategy"
                   name="策略（含成本）"
-                  stroke="#67e8f9"
+                  stroke={tokens.accent}
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -288,7 +293,7 @@ export default function LabResult({ run }: { run: LabRun }) {
                   type="linear"
                   dataKey="benchmark"
                   name="基准"
-                  stroke="#94a3b8"
+                  stroke={tokens["text-3"]}
                   strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}
@@ -300,22 +305,22 @@ export default function LabResult({ run }: { run: LabRun }) {
       )}
       <Panel
         title="理解这次研究"
-        action={<BookOpen size={18} className="text-cyan-300" />}
+        action={<BookOpen size={18} className="text-fg-3" aria-hidden />}
       >
-        <div className="space-y-3 text-sm leading-7 text-slate-300">
+        <div className="space-y-3 text-body leading-7 text-fg-2">
           {typeof reviewText === "string" && (
             <p className="whitespace-pre-wrap break-words">{reviewText}</p>
           )}
           {evidence.map((entry, i) => (
-            <div key={i} className="border-l-2 border-cyan-400/30 pl-3">
+            <div key={i} className="border-l-2 border-accent/30 pl-3">
               <p className="break-words">{String(entry.observation || "")}</p>
-              <p className="break-all font-mono text-[11px] text-slate-500">
+              <p className="break-all tabular-nums text-caption text-fg-3">
                 证据实验：{String(entry.experiment_id || "")}
               </p>
             </div>
           ))}
           {limitations.map((text, i) => (
-            <p key={`limit-${i}`} className="text-xs text-amber-200">
+            <p key={`limit-${i}`} className="text-caption text-warn">
               {text}
             </p>
           ))}
@@ -328,27 +333,27 @@ export default function LabResult({ run }: { run: LabRun }) {
               衡量预测与真实值之间的平均绝对差距。请把模型与简单基线放在同一数据和时间区间内比较，并关注测试集上改善是否仍然成立。
             </p>
           )}
-          <p className="text-xs text-slate-500">
+          <p className="text-caption text-fg-3">
             预测准确度与交易收益是两个问题。换手、费用、持仓约束和行情质量都会改变实际效果。
           </p>
         </div>
       </Panel>
       {assumptions.length > 0 && (
-        <details className="rounded-2xl border border-slate-700/70 bg-slate-900/80 p-4 sm:p-5">
-          <summary className="cursor-pointer text-sm font-medium text-slate-200">
+        <details className="rounded-lg border border-line bg-surface p-4 sm:p-5">
+          <summary className="cursor-pointer text-body font-medium text-fg">
             方法假设与限制 · {assumptions.length} 项
-            <span className="mt-2 block text-xs font-normal leading-6 text-slate-500">
+            <span className="mt-2 block text-caption font-normal leading-6 text-fg-3">
               查看成交假设、标签依赖和样本偏差，理解模拟结果的适用范围。
             </span>
           </summary>
-          <div className="mt-4 space-y-4 border-t border-slate-700 pt-4">
+          <div className="mt-4 space-y-4 border-t border-line pt-4">
             {assumptions.map((warning, index) => (
               <div key={index}>
-                <p className="text-xs leading-6 text-slate-300">
+                <p className="text-caption leading-6 text-fg-2">
                   {warningLabel(warning)}
                 </p>
                 {warningLabel(warning) !== warning && (
-                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                  <p className="mt-1 text-caption leading-5 text-fg-3">
                     {warning}
                   </p>
                 )}
@@ -363,8 +368,8 @@ export default function LabResult({ run }: { run: LabRun }) {
           detail="自动研究通过验证集反馈改进方案，测试结果不会反馈到本轮调参。"
         >
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="text-xs text-slate-400">
+            <table className="w-full whitespace-nowrap text-left text-table">
+              <thead className="text-caption text-fg-3">
                 <tr>
                   <th className="pb-3 pr-4">实验</th>
                   <th className="pb-3 pr-4">模板 / 回看 / 预测期</th>
@@ -379,27 +384,27 @@ export default function LabResult({ run }: { run: LabRun }) {
                   return (
                     <tr
                       key={String(e.id || i)}
-                      className="border-t border-slate-700"
+                      className="border-t border-line"
                     >
                       <td className="py-3 pr-4">
                         {i + 1}
                         {e.id === result.selected_experiment && (
-                          <span className="ml-2 text-xs text-cyan-300">
+                          <span className="ml-2 text-caption text-accent">
                             已选定
                           </span>
                         )}
                       </td>
                       <td className="pr-4">
-                        {String(spec.template_id || spec.template || "—")} /{" "}
-                        {String(spec.lookback ?? "—")} /{" "}
-                        {String(spec.horizon ?? "—")}
+                        {String(spec.template_id || spec.template || UNAVAILABLE)} /{" "}
+                        {String(spec.lookback ?? UNAVAILABLE)} /{" "}
+                        {String(spec.horizon ?? UNAVAILABLE)}
                       </td>
-                      <td className="font-mono pr-4">
+                      <td className="tabular-nums pr-4">
                         {number(val.model_mae)}
                       </td>
                       <td
                         title={String(e.error || "")}
-                        className="text-xs text-slate-400"
+                        className="text-caption text-fg-3"
                       >
                         {e.status === "completed"
                           ? "完成"
@@ -417,26 +422,26 @@ export default function LabResult({ run }: { run: LabRun }) {
         title="数据与方法"
         detail="保留本次输入和方法记录，便于复查与复现。"
       >
-        <dl className="grid gap-3 text-xs sm:grid-cols-2">
+        <dl className="grid gap-3 text-caption sm:grid-cols-2">
           <div>
-            <dt className="text-slate-500">数据来源</dt>
-            <dd className="mt-1 break-words text-slate-300">
+            <dt className="text-fg-3">数据来源</dt>
+            <dd className="mt-1 break-words text-fg-2">
               {String(
-                manifest.data_source || record(result.dataset).source || "—",
+                manifest.data_source || record(result.dataset).source || UNAVAILABLE,
               )}
             </dd>
           </div>
           <div>
-            <dt className="text-slate-500">算法版本</dt>
-            <dd className="mt-1 break-words font-mono">
-              {String(manifest.algorithm_version || "—")}
+            <dt className="text-fg-3">算法版本</dt>
+            <dd className="mt-1 break-words tabular-nums">
+              {String(manifest.algorithm_version || UNAVAILABLE)}
             </dd>
           </div>
           <div className="sm:col-span-2">
-            <dt className="text-slate-500">数据指纹</dt>
-            <dd className="mt-1 break-all font-mono text-slate-400">
+            <dt className="text-fg-3">数据指纹</dt>
+            <dd className="mt-1 break-all tabular-nums text-fg-3">
               {String(
-                manifest.input_hash || record(result.dataset).hash || "—",
+                manifest.input_hash || record(result.dataset).hash || UNAVAILABLE,
               )}
             </dd>
           </div>
@@ -449,7 +454,7 @@ export default function LabResult({ run }: { run: LabRun }) {
           {showMethod ? "收起" : "查看"}方法配置
         </button>
         {showMethod && (
-          <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-slate-950 p-3 text-xs leading-6 text-slate-400">
+          <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-bg p-3 text-caption leading-6 text-fg-3">
             {JSON.stringify(manifest.config || run.request.params, null, 2)}
           </pre>
         )}

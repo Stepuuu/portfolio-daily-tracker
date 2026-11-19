@@ -28,7 +28,7 @@ function JsonParameter({
       help={schema.description || "使用 JSON 编辑这个参数。"}
     >
       <textarea
-        className={`${inputClass} font-mono`}
+        className={`${inputClass} tabular-nums`}
         rows={4}
         required={schema.required !== false}
         value={raw}

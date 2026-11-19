@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Cable, Loader2, Plus, Save } from "lucide-react";
 import { labService, type LabConnection } from "@/services/lab";
 import { getApiErrorMessage } from "@/services/api";
+import { useAppMode } from "@/components/shell/useAppMode";
 import {
   buttonClass,
   Failure,
@@ -24,6 +25,8 @@ const emptyProfile = (): LabConnection => ({
 });
 export default function LabConnections() {
   const client = useQueryClient();
+  // Saving a connection is a write: not in the demo, and not while the backend's mode is unknown.
+  const { readOnlyReason } = useAppMode();
   const profiles = useQuery({
     queryKey: ["lab-connections"],
     queryFn: labService.connections,
@@ -41,6 +44,22 @@ export default function LabConnections() {
   );
   const cli =
     draft?.provider.endsWith("_cli") || providerInfo?.auth_mode === "cli";
+  async function saveDraft(profile: LabConnection) {
+    if (readOnlyReason) return;
+    setBusy("save");
+    setError("");
+    setNotice("");
+    try {
+      await labService.saveConnection(profile);
+      await client.invalidateQueries({ queryKey: ["lab-connections"] });
+      setDraft(null);
+      setNotice("连接配置已保存。可以检查接入条件，再返回工作台开始研究。");
+    } catch (e) {
+      setError(getApiErrorMessage(e));
+    } finally {
+      setBusy("");
+    }
+  }
   async function check(id: string) {
     setBusy(id);
     setError("");
@@ -85,7 +104,7 @@ export default function LabConnections() {
         {notice && (
           <p
             role="status"
-            className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-100"
+            className="rounded-md bg-fg/[.05] px-3 py-2 text-body text-fg"
           >
             {notice}
           </p>
@@ -101,15 +120,15 @@ export default function LabConnections() {
           {profiles.data?.map((profile) => (
             <article
               key={profile.id}
-              className="rounded-xl border border-slate-700 bg-slate-950/70 p-4"
+              className="rounded-lg border border-line bg-bg p-4"
             >
               <div className="flex items-start gap-3">
-                <Cable className="mt-1 text-cyan-300" size={18} />
+                <Cable className="mt-1 text-fg-3" size={18} aria-hidden />
                 <div className="min-w-0 flex-1">
-                  <h3 className="break-words text-sm font-medium">
+                  <h3 className="break-words text-body font-medium">
                     {profile.name}
                   </h3>
-                  <p className="mt-1 break-all text-xs text-slate-400">
+                  <p className="mt-1 break-all text-caption text-fg-3">
                     {profile.provider} · {profile.model || "客户端默认模型"}
                   </p>
                 </div>
@@ -141,7 +160,7 @@ export default function LabConnections() {
           ))}
         </div>
         {profiles.isSuccess && !profiles.data.length && !draft && (
-          <p className="rounded-xl border border-dashed border-slate-700 p-5 text-sm leading-6 text-slate-400">
+          <p className="rounded-lg border border-dashed border-line p-5 text-body leading-6 text-fg-3">
             还没有研究模型连接。可以先运行手动实验，或添加一个连接开始自动研究。
           </p>
         )}
@@ -157,7 +176,7 @@ export default function LabConnections() {
               <span
                 key={p.id}
                 title={p.reason}
-                className={`rounded-lg border px-2 py-1 text-xs ${p.available ? "border-emerald-500/25 text-emerald-300" : "border-slate-700 text-slate-500"}`}
+                className={`rounded-lg border px-2 py-1 text-caption ${p.available ? "border-line-input/60 text-fg" : "border-line text-fg-3"}`}
               >
                 {p.label} · {p.available ? "可配置" : p.reason || "未就绪"}
               </span>
@@ -166,30 +185,14 @@ export default function LabConnections() {
         )}
         {draft && (
           <form
-            className="space-y-4 border-t border-slate-700 pt-5"
+            className="space-y-4 border-t border-line pt-5"
             onSubmit={(e) => {
               e.preventDefault();
-              setBusy("save");
-              setError("");
-              setNotice("");
-              const profile = {
+              void saveDraft({
                 ...draft,
                 base_url: cli ? null : draft.base_url || null,
                 api_key_env: cli ? null : draft.api_key_env || null,
-              };
-              void labService
-                .saveConnection(profile)
-                .then(async () => {
-                  await client.invalidateQueries({
-                    queryKey: ["lab-connections"],
-                  });
-                  setDraft(null);
-                  setNotice(
-                    "连接配置已保存。可以检查接入条件，再返回工作台开始研究。",
-                  );
-                })
-                .catch((e) => setError(getApiErrorMessage(e)))
-                .finally(() => setBusy(""));
+              });
             }}
           >
             <div className="grid gap-4 sm:grid-cols-2">
@@ -296,12 +299,21 @@ export default function LabConnections() {
               )}
             </div>
             {cli && (
-              <p className="text-xs leading-6 text-slate-400">
+              <p className="text-caption leading-6 text-fg-3">
                 使用后端所在环境中客户端已有的登录状态。连接检查确认客户端可找到；授权或网络问题会在任务事件中显示。
               </p>
             )}
+            {readOnlyReason && (
+              <p role="status" className="text-caption text-fg-3">
+                {readOnlyReason}：现在不能保存连接。
+              </p>
+            )}
             <div className="flex gap-3">
-              <button className={primaryClass} disabled={!!busy}>
+              <button
+                className={primaryClass}
+                disabled={!!busy || !!readOnlyReason}
+                title={readOnlyReason}
+              >
                 {busy === "save" ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (

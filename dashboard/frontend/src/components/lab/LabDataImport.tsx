@@ -54,7 +54,7 @@ export default function DataImport({
         </Field>
         {source === "csv" ? (
           <div className="space-y-3">
-            <p className="text-xs leading-6 text-slate-400">
+            <p className="text-caption leading-6 text-fg-3">
               UTF-8 CSV，列名：date, symbol, open, high, low, close,
               volume。volume 单位为股数；A 股以“手”提供的 CSV 需先乘以
               100。日期使用 YYYY-MM-DD。最多 8 MB。
@@ -62,7 +62,7 @@ export default function DataImport({
             <a
               href="/api/lab/datasets/template.csv"
               download
-              className="inline-flex text-xs text-cyan-300 underline underline-offset-4"
+              className="inline-flex text-caption text-accent underline underline-offset-4"
             >
               下载 CSV 格式示例
             </a>
@@ -168,7 +168,7 @@ export default function DataImport({
           </form>
         )}
         {busy && (
-          <p role="status" className="text-xs leading-6 text-cyan-200">
+          <p role="status" className="text-caption leading-6 text-fg-2">
             正在准备数据，请稍候。完成后会自动选中新的数据集。
           </p>
         )}

@@ -5,14 +5,15 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, Loader2, RefreshCw } from "lucide-react";
+import { buttonClass as kitButton, cx } from "@/components/ui";
 
+// The research pages' controls, drawn like the kit (src/components/ui): a native field with the kit's
+// outline and focus, and the kit's secondary and primary button looks.
 export const inputClass =
-  "w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:opacity-50";
-export const buttonClass =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40";
-export const primaryClass =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40";
+  "w-full min-w-0 rounded-md border border-line-input bg-surface px-3 py-1.5 text-body text-fg outline-none transition-colors duration-[120ms] [color-scheme:var(--scheme)] placeholder:text-fg-3 hover:border-fg-3 focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:border-line disabled:bg-surface-2 disabled:text-fg-3";
+export const buttonClass = kitButton({ variant: "secondary" });
+export const primaryClass = kitButton({ variant: "primary" });
 export function Panel({
   title,
   detail,
@@ -28,14 +29,14 @@ export function Panel({
 }) {
   return (
     <section
-      className={`min-w-0 rounded-2xl border border-slate-700/70 bg-slate-900/80 p-4 sm:p-5 ${className}`}
+      className={cx("min-w-0 rounded-lg border border-line bg-surface p-4 text-fg sm:p-5", className)}
     >
       {title && (
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-slate-100">{title}</h2>
+            <h2 className="text-title text-fg">{title}</h2>
             {detail && (
-              <p className="mt-1 max-w-2xl text-xs leading-6 text-slate-400">
+              <p className="mt-1 max-w-2xl text-table text-fg-3">
                 {detail}
               </p>
             )}
@@ -65,14 +66,14 @@ export function Field({
     : children;
   return (
     <div className="block min-w-0 space-y-2">
-      <label htmlFor={id} className="block text-xs font-medium text-slate-300">
+      <label htmlFor={id} className="block text-table font-medium text-fg-2">
         {label}
       </label>
       {control}
       {help && (
         <span
           id={`${id}-help`}
-          className="block text-xs leading-5 text-slate-500"
+          className="block text-table text-fg-3"
         >
           {help}
         </span>
@@ -90,9 +91,9 @@ export function Failure({
   return (
     <div
       role="alert"
-      className="flex flex-wrap items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm leading-6 text-amber-200"
+      className="flex flex-wrap items-start gap-3 rounded-md bg-warn/10 px-3 py-2 text-body text-fg"
     >
-      <AlertCircle size={18} className="mt-1 shrink-0" />
+      <AlertCircle size={16} className="mt-[3px] shrink-0 text-warn" aria-hidden />
       <span className="min-w-0 flex-1 break-words">{message}</span>
       {retry && (
         <button type="button" onClick={retry} className={buttonClass}>
@@ -107,7 +108,7 @@ export function Loading({ text = "正在读取…" }: { text?: string }) {
   return (
     <p
       role="status"
-      className="flex items-center gap-2 p-4 text-sm text-slate-400"
+      className="flex items-center gap-2 p-4 text-body text-fg-3"
     >
       <Loader2 className="animate-spin" size={16} />
       {text}
@@ -123,19 +124,22 @@ export function Status({ value }: { value: string }) {
     cancelled: "已取消",
     cancelling: "取消中",
   };
+  // A run's state is not a gain or a loss: neutral (the done mark tells completed apart), accent while it
+  // runs, amber when it failed. Red and green mean up and down in this app.
   const tone =
     value === "completed"
-      ? "border-emerald-500/30 text-emerald-300 bg-emerald-500/10"
+      ? "border-line-input/60 text-fg bg-fg/[.06]"
       : value === "failed"
-        ? "border-amber-500/30 text-amber-300 bg-amber-500/10"
+        ? "border-warn/40 text-warn bg-warn/10"
         : value === "running"
-          ? "border-cyan-500/30 text-cyan-300 bg-cyan-500/10"
-          : "border-slate-700 text-slate-400 bg-slate-800";
+          ? "border-accent/40 text-accent bg-accent/10"
+          : "border-line text-fg-3 bg-surface-2";
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${tone}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-caption ${tone}`}
     >
       {value === "running" && <Loader2 className="animate-spin" size={12} />}
+      {value === "completed" && <Check aria-hidden size={12} />}
       {labels[value] || value}
     </span>
   );

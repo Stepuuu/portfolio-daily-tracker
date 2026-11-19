@@ -26,6 +26,7 @@ import {
   type LabRun,
 } from "@/services/lab";
 import { getApiErrorMessage } from "@/services/api";
+import { cx } from "@/components/ui";
 import LabConnections from "@/components/lab/LabConnections";
 import LabParameters from "@/components/lab/LabParameters";
 import DataImport from "@/components/lab/LabDataImport";
@@ -268,17 +269,14 @@ export default function ResearchLab() {
     (draft.mode === "manual" ||
       !!connections.data?.find((c) => c.id === draft.connection_id));
   return (
-    <div className="mx-auto max-w-[1560px] space-y-5 text-slate-100">
-      <header className="flex flex-wrap items-end justify-between gap-5 border-b border-slate-700/80 pb-6 pt-2">
+    <div className="mx-auto max-w-[1560px] space-y-5 text-fg">
+      <header className="flex flex-wrap items-end justify-between gap-5 border-b border-line pb-6 pt-2">
         <div>
-          <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.2em] text-cyan-300">
-            Research / Learn / Iterate
-          </p>
-          <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-            <Beaker size={27} className="text-cyan-300" />
+          <h1 className="flex items-center gap-2 text-page text-fg">
+            <Beaker size={20} className="text-fg-3" aria-hidden />
             股票研究工作台
           </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">
+          <p className="mt-1 max-w-2xl text-body text-fg-2">
             把一个问题变成可检查的实验。手动探索，或让 Agent
             完成规划、验证与复盘。
           </p>
@@ -299,7 +297,7 @@ export default function ResearchLab() {
         ).map((t) => (
           <button
             key={t.id}
-            className={`${buttonClass} ${view === t.id ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-200" : ""}`}
+            className={cx(buttonClass, view === t.id && "border-accent/50 bg-accent/10 text-accent hover:bg-accent/15")}
             aria-current={view === t.id ? "page" : undefined}
             onClick={() => setView(t.id)}
           >
@@ -312,7 +310,7 @@ export default function ResearchLab() {
       {notice && (
         <p
           role="status"
-          className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-sm leading-6 text-cyan-100"
+          className="rounded-md bg-fg/[.05] px-3 py-2 text-body text-fg"
         >
           {notice}
         </p>
@@ -345,12 +343,12 @@ export default function ResearchLab() {
                       key={mode}
                       aria-pressed={draft.mode === mode}
                       onClick={() => setDraft((d) => ({ ...d, mode }))}
-                      className={`rounded-xl border p-3 text-left ${draft.mode === mode ? "border-cyan-400/50 bg-cyan-400/10" : "border-slate-700 bg-slate-950"}`}
+                      className={`rounded-lg border p-3 text-left ${draft.mode === mode ? "border-accent/50 bg-accent/10" : "border-line bg-bg"}`}
                     >
-                      <span className="block text-sm font-medium">
+                      <span className="block text-body font-medium">
                         {mode === "manual" ? "手动实验" : "Agent 自动研究"}
                       </span>
-                      <span className="mt-1 block text-[11px] leading-5 text-slate-500">
+                      <span className="mt-1 block text-caption leading-5 text-fg-3">
                         {mode === "manual"
                           ? "自己设定，运行并解释"
                           : "自主规划，有限迭代"}
@@ -406,7 +404,7 @@ export default function ResearchLab() {
                   <Failure message="草稿中的数据集已不可用，请重新选择。" />
                 )}
                 {data && (
-                  <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-xs leading-6 text-slate-400">
+                  <div className="rounded-lg border border-line bg-bg p-3 text-caption leading-6 text-fg-3">
                     <p className="break-words">{data.symbols.join(" · ")}</p>
                     <p>
                       {data.start} → {data.end}
@@ -414,7 +412,7 @@ export default function ResearchLab() {
                     <p>
                       {data.rows.toLocaleString()} 行 · {data.source}
                       {data.synthetic && (
-                        <span className="ml-2 text-amber-300">
+                        <span className="ml-2 text-warn">
                           合成演示，仅供学习
                         </span>
                       )}
@@ -478,7 +476,7 @@ export default function ResearchLab() {
                   />
                 )}
                 {template && (
-                  <p className="text-xs leading-6 text-slate-400">
+                  <p className="text-caption leading-6 text-fg-3">
                     {template.description}
                   </p>
                 )}
@@ -521,7 +519,7 @@ export default function ResearchLab() {
                   />
                 )}
                 {draft.mode === "agent" && (
-                  <div className="space-y-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
+                  <div className="space-y-3 rounded-lg border border-line p-3">
                     <Field label="Agent 模型连接">
                       <select
                         className={inputClass}
@@ -544,7 +542,7 @@ export default function ResearchLab() {
                     </Field>
                     <button
                       type="button"
-                      className="text-xs text-cyan-300 underline underline-offset-4"
+                      className="text-caption text-accent underline underline-offset-4"
                       onClick={() => setView("connections")}
                     >
                       配置 API / 官方客户端接入
@@ -583,7 +581,7 @@ export default function ResearchLab() {
                         />
                       </Field>
                     </div>
-                    <p className="text-xs leading-6 text-slate-400">
+                    <p className="text-caption leading-6 text-fg-3">
                       启动后自主规划与迭代。候选方案只依据验证集调整，冻结后再查看测试集；随时可以取消。
                     </p>
                   </div>
@@ -591,7 +589,7 @@ export default function ResearchLab() {
                 {builtin && (
                   <button
                     type="button"
-                    className="flex items-center gap-2 text-xs text-slate-400"
+                    className="flex items-center gap-2 text-caption text-fg-3"
                     aria-expanded={advanced}
                     onClick={() => setAdvanced(!advanced)}
                   >
@@ -667,14 +665,14 @@ export default function ResearchLab() {
                         <option value="none">不复权</option>
                       </select>
                     </Field>
-                    <p className="col-span-2 text-xs leading-6 text-slate-500">
+                    <p className="col-span-2 text-caption leading-6 text-fg-3">
                       1 个基点 = 0.01%。测试集至少保留
                       10%；时间划分后还会隔离跨区间标签。
                     </p>
                   </div>
                 )}
                 <button
-                  className={`${primaryClass} w-full py-3`}
+                  className={cx(primaryClass, "h-10 w-full")}
                   disabled={busy || !canRun}
                 >
                   {busy ? (
@@ -684,7 +682,7 @@ export default function ResearchLab() {
                   )}
                   {draft.mode === "agent" ? "启动自动研究" : "运行手动实验"}
                 </button>
-                <p className="text-center text-[11px] text-slate-500">
+                <p className="text-center text-caption text-fg-3">
                   仅运行研究实验，结果用于学习与复盘。
                 </p>
               </form>
@@ -728,12 +726,12 @@ export default function ResearchLab() {
                     ],
                   ].map(([n, title, text]) => (
                     <div key={n} className="flex gap-4">
-                      <span className="font-mono text-2xl text-slate-600">
+                      <span className="tabular-nums text-page text-fg-3">
                         {n}
                       </span>
                       <div>
-                        <h3 className="text-sm font-medium">{title}</h3>
-                        <p className="mt-2 text-sm leading-7 text-slate-400">
+                        <h3 className="text-body font-medium">{title}</h3>
+                        <p className="mt-2 text-body leading-7 text-fg-3">
                           {text}
                         </p>
                       </div>
@@ -767,10 +765,10 @@ export default function ResearchLab() {
                 action={<Status value={run.status} />}
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-sm text-slate-300">
+                  <div className="text-body text-fg-2">
                     {stages[run.stage] || run.stage}
                     {run.progress && (
-                      <p className="mt-2 text-xs text-slate-500">
+                      <p className="mt-2 text-caption text-fg-3">
                         已完成 {run.progress.experiments_completed} 个实验 ·{" "}
                         {run.request.mode === "manual"
                           ? "无需模型调用"
@@ -827,18 +825,18 @@ export default function ResearchLab() {
                 <ol
                   aria-label="研究进度事件"
                   aria-live="polite"
-                  className="mt-5 max-h-72 space-y-3 overflow-y-auto border-t border-slate-700 pt-4"
+                  className="mt-5 max-h-72 space-y-3 overflow-y-auto border-t border-line pt-4"
                 >
                   {run.events?.map((event) => (
                     <li
                       key={event.seq}
-                      className="flex gap-3 text-xs leading-6"
+                      className="flex gap-3 text-caption leading-6"
                     >
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300/70" />
-                      <span className="shrink-0 font-mono text-slate-500">
+                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-fg-3" />
+                      <span className="shrink-0 tabular-nums text-fg-3">
                         {dateTime(event.created_at)}
                       </span>
-                      <span className="min-w-0 break-words text-slate-300">
+                      <span className="min-w-0 break-words text-fg-2">
                         {event.message}
                       </span>
                     </li>
@@ -853,8 +851,8 @@ export default function ResearchLab() {
               >
                 <div className="space-y-3">
                   {hypotheses.map((text, index) => (
-                    <p key={index} className="text-sm leading-7 text-slate-300">
-                      <span className="mr-3 font-mono text-cyan-300">
+                    <p key={index} className="text-body leading-7 text-fg-2">
+                      <span className="mr-3 tabular-nums text-accent">
                         {index + 1}.
                       </span>
                       {text}
@@ -890,7 +888,7 @@ export default function ResearchLab() {
               />
             )}
             {runs.isSuccess && !runs.data.length && (
-              <p className="py-8 text-sm text-slate-400">
+              <p className="py-8 text-body text-fg-3">
                 还没有实验。运行第一项研究后，结果会保存在这里。
               </p>
             )}
@@ -898,16 +896,16 @@ export default function ResearchLab() {
               {runs.data?.map((r) => (
                 <article
                   key={r.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 p-4"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-4"
                 >
                   <button
                     className="min-w-0 flex-1 text-left"
                     onClick={() => selectRun(r.id)}
                   >
-                    <h3 className="break-words text-sm font-medium">
+                    <h3 className="break-words text-body font-medium">
                       {r.request.objective}
                     </h3>
-                    <p className="mt-2 text-xs text-slate-500">
+                    <p className="mt-2 text-caption text-fg-3">
                       {dateTime(r.created_at)} ·{" "}
                       {r.request.mode === "agent" ? "Agent" : "手动"} ·{" "}
                       {r.request.template_id}
@@ -958,12 +956,12 @@ export default function ResearchLab() {
             title="研究不是寻找最好看的收益曲线"
             detail="把本轮学习目标拆成几个能检查的问题。"
           >
-            <div className="space-y-5 text-sm leading-7 text-slate-300">
+            <div className="space-y-5 text-body leading-7 text-fg-2">
               <p>
-                <strong className="text-cyan-200">训练集</strong>用来拟合模型；
-                <strong className="text-cyan-200">验证集</strong>
+                <strong className="font-medium text-fg">训练集</strong>用来拟合模型；
+                <strong className="font-medium text-fg">验证集</strong>
                 比较参数与方案；
-                <strong className="text-cyan-200">测试集</strong>
+                <strong className="font-medium text-fg">测试集</strong>
                 在冻结方案后提供最终评价。
               </p>
               <p>
@@ -980,7 +978,7 @@ export default function ResearchLab() {
           <div className="space-y-4">
             {templates.data?.map((t) => (
               <Panel key={t.id} title={t.name} detail={t.description}>
-                <p className="text-sm leading-7 text-slate-300">
+                <p className="text-body leading-7 text-fg-2">
                   {t.lesson ||
                     (t.target === "forward_volatility"
                       ? "研究未来波动的大小；这类目标不直接预测价格涨跌方向。"
