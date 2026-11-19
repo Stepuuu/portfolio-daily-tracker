@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
+# The API group used when a configuration does not name one. It must exist in
+# the shipped defaults below and in config.example.json.
+DEFAULT_API_GROUP = "openai_official"
+
 
 class Config:
     """全局配置"""
@@ -21,25 +25,34 @@ class Config:
         self._load()
 
     def _load(self):
-        """加载配置"""
+        """加载配置
+
+        Without a file the shipped defaults are used and nothing is written: a
+        read (``GET /api/settings/config``, the chat service starting) never
+        creates the file. The first change (``set``, a switch) saves it.
+        """
         if self.config_file.exists():
             with open(self.config_file, "r", encoding="utf-8") as f:
                 self._data = json.load(f)
         else:
-            # 使用默认配置
             self._data = self._default_config()
-            self._save()
 
     def _save(self):
-        """保存配置"""
+        """保存配置
+
+        A file that does not exist yet is created private (mode 0600) before
+        anything is written into it, since a key may be saved there.
+        """
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self.config_file.exists():
+            os.close(os.open(self.config_file, os.O_CREAT | os.O_WRONLY, 0o600))
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(self._data, f, ensure_ascii=False, indent=2)
 
     def _default_config(self) -> dict:
         """默认配置"""
         return {
-            "current_api_group": "openai_official",  # 当前使用的 API 组
+            "current_api_group": DEFAULT_API_GROUP,  # 当前使用的 API 组
             "api_groups": {
                 "openai_compatible": {
                     "name": "OpenAI-Compatible API",
@@ -258,7 +271,7 @@ class Config:
 
     def get_current_api_group(self) -> dict:
         """获取当前使用的 API 组"""
-        group_name = self._data.get("current_api_group", "xhub")
+        group_name = self._data.get("current_api_group", DEFAULT_API_GROUP)
         group = copy.deepcopy(self._data.get("api_groups", {}).get(group_name, {}))
         # Read secrets at use time so saving unrelated settings never persists them.
         hostname = urlparse(group.get("base_url", "")).hostname
@@ -272,6 +285,7 @@ class Config:
                     headers["Authorization"] = f"Bearer {api_key}"
                 else:
                     headers["x-api-key"] = api_key
+        _fill_credential_headers(group)
         return group
 
     def get_all_api_groups(self) -> dict:
@@ -309,6 +323,30 @@ class Config:
         """获取当前 API 组可用的模型列表"""
         current_group = self.get_current_api_group()
         return current_group.get("models", [])
+
+
+def _fill_credential_headers(group: dict) -> None:
+    """A blank credential header of the group's ``headers`` template (``"Authorization": "Bearer "`` of the
+    shipped 兼容接口 group, ``"x-api-key": ""``) carries the group's key, or is left out when there is none:
+    an empty credential is never sent (the HTTP client refuses ``Bearer `` outright, so a local server
+    without a key could not be reached). Headers left with nothing in them are dropped (None), so the
+    provider builds its own."""
+    headers = group.get("headers")
+    if not isinstance(headers, dict) or not headers:
+        return
+    key = str(group.get("api_key") or "").strip()
+    kept = {}
+    for name, value in headers.items():
+        lowered, text = str(name).lower(), str(value or "").strip()
+        if lowered == "authorization" and text.lower() in ("", "bearer"):
+            if key:
+                kept[name] = f"Bearer {key}"
+        elif lowered == "x-api-key" and not text:
+            if key:
+                kept[name] = key
+        else:
+            kept[name] = value
+    group["headers"] = kept or None
 
 
 # 全局配置实例

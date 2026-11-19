@@ -1,13 +1,27 @@
 """
 配置和设置 API
+
+``POST /cash`` is the v3.2 manual portfolio's cash figure. Once a ledger is
+active it answers 409 with the reason (cash is booked in the ledger as 入金 /
+出金); no page calls it any more and it is removed in the next release.
+
+``GET /calendar`` says which years each market's holiday table covers (the
+session clock's table, ``core/market/holidays.json``): outside those years a
+trading day is decided by weekday alone.
 """
-from fastapi import APIRouter, Depends
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any
 from pydantic import BaseModel
 
-from config import get_config
+from config import DEFAULT_API_GROUP, get_config
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+LEDGER_ACTIVE_CASH = "账本已启用：现金请在交易账本中记录（入金、出金、换汇），这里的旧版现金设置已停用。"
+CALENDAR_MARKETS = {"CN": "A 股", "HK": "港股", "US": "美股"}
 
 
 # 延迟导入避免循环依赖
@@ -64,7 +78,7 @@ async def get_config_info():
         )
     
     # 获取当前配置
-    current_api_group = config.get("current_api_group", "xhub")
+    current_api_group = config.get("current_api_group", DEFAULT_API_GROUP)
     current_model = config.get_current_model()
     available_models = [
         ModelInfo(
@@ -125,7 +139,25 @@ class UpdateCashRequest(BaseModel):
 
 
 @router.post("/cash")
-async def update_cash(request: UpdateCashRequest, service = Depends(get_agent_service)):
-    """更新现金"""
+async def update_cash(request: UpdateCashRequest):
+    """更新现金 (the legacy manual portfolio only; refused once the ledger is active)"""
+    from core.ledger import active_ledger
+    if active_ledger():
+        raise HTTPException(409, LEDGER_ACTIVE_CASH)
+    service = get_agent_service()
     service.portfolio_provider.set_cash(request.cash)
     return {"success": True, "cash": request.cash}
+
+
+@router.get("/calendar")
+def calendar_coverage():
+    """Per market: its name and the years of the holiday table (ascending); today in Asia/Shanghai."""
+    try:
+        from core.market.runtime import get_market_runtime
+        clock = get_market_runtime().clock
+        return {"today": clock.local_date("CN").isoformat(),
+                "markets": {market: {"label": label, "years": clock.table_years(market)}
+                            for market, label in CALENDAR_MARKETS.items()}}
+    except Exception as exc:
+        logger.warning("the trading calendar is unavailable: %s", type(exc).__name__)
+        raise HTTPException(503, "暂时读不到交易日历，请稍后重试。") from None
