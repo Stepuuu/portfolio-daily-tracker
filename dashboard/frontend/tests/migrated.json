@@ -1,0 +1,6 @@
+{
+  "description": "Files that use only the design tokens and the UI kit (checked by kit.test.mjs). Since UI-6b this is all of src/: every new file is held to the conventions from its first line.",
+  "paths": [
+    "src/"
+  ]
+}

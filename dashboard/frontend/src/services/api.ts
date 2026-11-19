@@ -29,6 +29,8 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    // A request cancelled on purpose (a newer search, a page left) is not an error.
+    if (axios.isCancel(error)) return Promise.reject(error);
     const detail =
       error.response?.data?.detail ||
       error.response?.data?.message ||
@@ -37,6 +39,11 @@ api.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+/** The HTTP status of a failed request; undefined when there was no response (timeout, network). */
+export function httpStatus(error: unknown): number | undefined {
+  return (error as AxiosError | undefined)?.response?.status;
+}
 
 export function getApiErrorMessage(error: unknown): string {
   const axiosError = error as AxiosError<{

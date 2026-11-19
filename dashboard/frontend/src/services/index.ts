@@ -1,5 +1,0 @@
-export { chatService } from './chat'
-export { portfolioService } from './portfolio'
-export { marketService } from './market'
-export { memoryService } from './memory'
-export { suggestionsService } from './suggestions'

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { X, Calendar, MessageSquare, Clock, ChevronRight, PlayCircle, Image as ImageIcon } from 'lucide-react'
-import { chatService } from '@/services'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { chatService } from '@/services/chat'
+import SafeMarkdown from './SafeMarkdown'
 import { useAppStore } from '@/store'
+import { busyHint } from '@/lib/conversationOps'
+import { buttonClass, cx, focusRing, numeric } from '@/components/ui'
+import { useAppMode } from '@/components/shell/useAppMode'
 import type { ChatMessage } from '@/types'
 
 interface ConversationFile {
@@ -34,8 +36,14 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const setMessages = useAppStore(state => state.setMessages)
-  const setSuggestions = useAppStore(state => state.setSuggestions)
-  const setRisks = useAppStore(state => state.setRisks)
+  // A reply, a resume or a new-conversation reset is already running (shared state, so it
+  // also holds after this modal was closed). Resuming now would replace the message list under it.
+  const conversationOp = useAppStore(state => state.conversationOp)
+  const chatBusy = conversationOp.active !== null
+  const beginConversationOp = useAppStore(state => state.beginConversationOp)
+  const finishConversationOp = useAppStore(state => state.finishConversationOp)
+  // Resuming loads the conversation into the model's context: not in the demo or an unknown mode.
+  const { readOnlyReason } = useAppMode()
 
   useEffect(() => {
     if (isOpen) {
@@ -66,13 +74,18 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
   }
 
   const handleResumeConversation = async () => {
+    if (readOnlyReason) return
     if (!selectedDate) return
+    const token = beginConversationOp('resume')
+    if (token === null) return
     setIsLoading(true)
     try {
       // 告诉后端加载这个会话为当前上下文
       const result = await chatService.loadConversation(selectedDate)
-      const { turns, suggestions: savedSuggestions, risks: savedRisks } = result
-      
+      // Superseded while waiting: the answer no longer belongs to the current conversation.
+      if (!finishConversationOp(token)) return
+      const { turns } = result
+
       // 更新前端状态
       const newMessages: ChatMessage[] = []
       turns.forEach((turn: any) => {
@@ -95,18 +108,10 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
       
       setMessages(newMessages)
 
-      // 恢复建议与风险
-      if (savedSuggestions && savedSuggestions.length > 0) {
-        setSuggestions(savedSuggestions)
-      }
-      if (savedRisks && savedRisks.length > 0) {
-        setRisks(savedRisks)
-      }
-
       onClose()
     } catch (error) {
       console.error('Failed to resume conversation:', error)
-      alert("加载历史对话失败")
+      if (finishConversationOp(token)) alert("加载历史对话失败")
     } finally {
       setIsLoading(false)
     }
@@ -139,29 +144,31 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 rounded-lg w-full max-w-6xl h-[80vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--backdrop)] p-4">
+      <div role="dialog" aria-modal="true" aria-label="对话历史" className="flex h-[80vh] w-full max-w-6xl flex-col rounded-lg border border-line bg-surface text-fg shadow-overlay">
         {/* 头部 */}
-        <div className="flex items-center justify-between p-4 border-b border-slate-700">
-          <h2 className="text-xl font-semibold flex items-center">
-            <MessageSquare className="h-6 w-6 mr-2 text-primary-500" />
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h2 className="flex items-center text-title">
+            <MessageSquare className="mr-2 h-5 w-5 text-fg-3" aria-hidden />
             对话历史
           </h2>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+            aria-label="关闭"
+            className={cx(buttonClass({ variant: 'ghost' }), 'w-8 px-0')}
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5" aria-hidden />
           </button>
         </div>
 
         {/* 内容区域 */}
         <div className="flex-1 flex overflow-hidden">
           {/* 左侧：对话列表 */}
-          <div className="w-80 border-r border-slate-700 overflow-y-auto">
+          <div className="w-80 overflow-y-auto border-r border-line">
             {conversations.length === 0 ? (
-              <div className="p-8 text-center text-slate-400">
-                <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <div className="p-8 text-center text-body text-fg-3">
+                <MessageSquare className="mx-auto mb-3 h-10 w-10 opacity-50" aria-hidden />
                 <p>暂无历史对话</p>
               </div>
             ) : (
@@ -170,23 +177,25 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
                   <button
                     key={conv.date}
                     onClick={() => loadConversationDetail(conv.date)}
-                    className={`w-full p-3 rounded-lg text-left transition-colors ${
-                      selectedDate === conv.date
-                        ? 'bg-primary-600'
-                        : 'hover:bg-slate-700'
-                    }`}
+                    type="button"
+                    aria-current={selectedDate === conv.date ? 'true' : undefined}
+                    className={cx(
+                      'w-full rounded-md p-3 text-left transition-colors',
+                      selectedDate === conv.date ? 'bg-accent/15 text-fg' : 'text-fg-2 hover:bg-surface-2 hover:text-fg',
+                      focusRing,
+                    )}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <div className="flex items-center text-sm mb-1">
-                          <Calendar className="h-4 w-4 mr-1.5" />
+                        <div className="mb-1 flex items-center text-body">
+                          <Calendar className="mr-1.5 h-4 w-4" aria-hidden />
                           {formatDate(conv.date)}
                         </div>
-                        <div className="text-xs text-slate-400">
+                        <div className={cx('text-caption text-fg-3', numeric)}>
                           {formatSize(conv.size)}
                         </div>
                       </div>
-                      <ChevronRight className="h-5 w-5 text-slate-500" />
+                      <ChevronRight className="h-5 w-5 text-fg-3" aria-hidden />
                     </div>
                   </button>
                 ))}
@@ -199,22 +208,24 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
             {isLoading ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
-                  <p className="text-slate-400">加载中...</p>
+                  <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-b-2 border-accent motion-reduce:animate-none" aria-hidden></div>
+                  <p className="text-body text-fg-3">加载中...</p>
                 </div>
               </div>
             ) : selectedConversation ? (
               <div className="p-6 space-y-6">
-                <div className="flex items-center justify-between mb-4 border-b border-slate-700 pb-4">
-                  <h3 className="text-lg font-medium text-slate-300">
+                <div className="mb-4 flex items-center justify-between gap-3 border-b border-line pb-4">
+                  <h3 className="text-title text-fg-2">
                     {formatDate(selectedDate!)}
                   </h3>
                   <button
+                    type="button"
                     onClick={handleResumeConversation}
-                    className="flex items-center px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg transition-colors text-sm font-medium"
-                    title="将此对话加载到当前面板继续交流"
+                    disabled={chatBusy || !!readOnlyReason}
+                    className={buttonClass({ variant: 'primary' })}
+                    title={readOnlyReason ?? busyHint(conversationOp) ?? '将此对话加载到当前面板继续交流'}
                   >
-                    <PlayCircle className="h-4 w-4 mr-2" />
+                    <PlayCircle className="h-4 w-4" aria-hidden />
                     继续此对话
                   </button>
                 </div>
@@ -223,11 +234,11 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
                     {/* 用户消息 */}
                     <div className="flex justify-end">
                       <div className="max-w-[70%]">
-                        <div className="flex items-center justify-end mb-1 text-xs text-slate-400">
-                          <Clock className="h-3 w-3 mr-1" />
+                        <div className={cx('mb-1 flex items-center justify-end text-caption text-fg-3', numeric)}>
+                          <Clock className="mr-1 h-3 w-3" aria-hidden />
                           {formatTime(turn.timestamp)}
                         </div>
-                        <div className="bg-primary-600 rounded-lg p-3">
+                        <div className="rounded-lg bg-accent p-3 text-body text-accent-fg">
                           <div className="whitespace-pre-wrap">{turn.user}</div>
                           {/* 显示保存的图片缩略图 */}
                           {turn.image_paths && turn.image_paths.length > 0 ? (
@@ -243,8 +254,8 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
                               ))}
                             </div>
                           ) : turn.images_count && turn.images_count > 0 ? (
-                            <div className="mt-2 text-xs text-primary-200 flex items-center">
-                              <ImageIcon className="h-3 w-3 mr-1" />
+                            <div className="mt-2 flex items-center text-caption">
+                              <ImageIcon className="mr-1 h-3 w-3" aria-hidden />
                               {turn.images_count} 张图片（早期对话未保存缩略图）
                             </div>
                           ) : null}
@@ -255,13 +266,13 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
                     {/* AI 回复 */}
                     <div className="flex justify-start">
                       <div className="max-w-[70%]">
-                        <div className="flex items-center mb-1 text-xs text-slate-400">
-                          <Clock className="h-3 w-3 mr-1" />
+                        <div className={cx('mb-1 flex items-center text-caption text-fg-3', numeric)}>
+                          <Clock className="mr-1 h-3 w-3" aria-hidden />
                           {formatTime(turn.timestamp)}
                         </div>
-                        <div className="bg-slate-700 rounded-lg p-3">
-                          <div className="prose prose-invert prose-sm max-w-none prose-td:border prose-td:border-slate-600 prose-th:border prose-th:border-slate-600 prose-th:bg-slate-800 prose-table:w-auto overflow-x-auto">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.assistant}</ReactMarkdown>
+                        <div className="rounded-lg bg-surface-2 p-3 text-body text-fg">
+                          <div className="min-w-0 max-w-none overflow-x-auto break-words">
+                            <SafeMarkdown>{turn.assistant}</SafeMarkdown>
                           </div>
                         </div>
                       </div>
@@ -271,8 +282,8 @@ export default function ConversationHistory({ isOpen, onClose }: ConversationHis
               </div>
             ) : (
               <div className="flex items-center justify-center h-full">
-                <div className="text-center text-slate-400">
-                  <MessageSquare className="h-16 w-16 mx-auto mb-4 opacity-30" />
+                <div className="text-center text-body text-fg-3">
+                  <MessageSquare className="mx-auto mb-4 h-12 w-12 opacity-30" aria-hidden />
                   <p>选择一个对话查看详情</p>
                 </div>
               </div>

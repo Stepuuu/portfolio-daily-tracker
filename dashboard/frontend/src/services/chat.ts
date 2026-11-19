@@ -1,5 +1,6 @@
 import api, { getApiErrorMessage } from './api'
 import type { ChatResponse } from '@/types'
+import { readChatStream, ChatStreamCancelledError, ChatStreamTimeoutError } from './chatStream'
 
 const CHAT_REQUEST_TIMEOUT_MS = 120000
 
@@ -17,66 +18,21 @@ export const chatService = {
   },
 
   // 流式发送消息
+  // `options.signal` cancels the reply (rejects with ChatStreamCancelledError); a reply that goes
+  // silent for `options.inactivityTimeoutMs` rejects with ChatStreamTimeoutError instead of
+  // waiting forever. Text passed to onChunk before either stays with the caller.
   async streamMessage(
     message: string,
     onChunk: (chunk: string) => void,
-    onDone: () => void
+    onDone: () => void,
+    options: { signal?: AbortSignal; inactivityTimeoutMs?: number } = {}
   ): Promise<void> {
-    const response = await fetch('/api/chat/message', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message,
-        stream: true,
-        extract_data: false,
-      }),
-    })
-
-    if (!response.ok) {
-      const rawText = await response.text()
-      let detail = rawText
-      try {
-        const data = JSON.parse(rawText)
-        detail = data.detail || data.message || rawText
-      } catch {
-        // keep raw text
-      }
-      throw new Error(detail || `Stream request failed (${response.status})`)
-    }
-
-    const reader = response.body?.getReader()
-    if (!reader) return
-
-    const decoder = new TextDecoder()
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      const text = decoder.decode(value)
-      const lines = text.split('\n')
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') {
-            onDone()
-            return
-          }
-          // 后端以 JSON 编码发送 chunk，需要解析
-          try {
-            const parsed = JSON.parse(data)
-            onChunk(parsed)
-          } catch {
-            // 兼容未编码的原始文本
-            onChunk(data)
-          }
-        }
-      }
-    }
-
+    await readChatStream(
+      '/api/chat/message',
+      { message, stream: true, extract_data: false },
+      onChunk,
+      options
+    )
     onDone()
   },
 
@@ -144,4 +100,4 @@ export const chatService = {
   },
 }
 
-export { getApiErrorMessage }
+export { getApiErrorMessage, ChatStreamCancelledError, ChatStreamTimeoutError }

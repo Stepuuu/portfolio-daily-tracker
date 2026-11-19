@@ -1,102 +1,50 @@
+// The assistant's memory (`/api/memory`, backend/api/memory.py), as 设置 › 交易偏好 reads and edits it. Every
+// write is refused (409, with the reason) in the demo and while the memory file cannot be read; without the
+// assistant service (the demo, research-only mode) every request is a 503.
 import api from './api'
-import type { UserMemory, UserProfile } from '@/types'
+import type { MemoryLesson, MemoryState } from '@/features/settings/memory'
 
-export const memoryService = {
-  // 获取完整记忆
-  async getMemory(): Promise<UserMemory> {
-    const response = await api.get<UserMemory>('/memory')
-    return response.data
-  },
+export const MEMORY_KEY = ['memory'] as const
 
-  // 获取用户画像
-  async getProfile(): Promise<UserProfile> {
-    const response = await api.get<UserProfile>('/memory/profile')
-    return response.data
-  },
+export async function fetchMemory(): Promise<MemoryState> {
+  return (await api.get<MemoryState>('/memory')).data
+}
 
-  // 更新用户画像
-  async updateProfile(profile: Partial<UserProfile>) {
-    const response = await api.put('/memory/profile', profile)
-    return response.data
-  },
+export async function updateProfile(fields: Partial<Record<'experience_level' | 'trading_style' | 'risk_tolerance' | 'notes', string>>): Promise<void> {
+  await api.put('/memory/profile', fields)
+}
 
-  // 获取偏好
-  async getPreferences() {
-    const response = await api.get('/memory/preferences')
-    return response.data
-  },
+export async function addSector(sector: string): Promise<void> {
+  await api.post('/memory/preferences/sector', { sector })
+}
 
-  // 添加偏好板块
-  async addPreferredSector(sector: string) {
-    const response = await api.post('/memory/preferences/sector', { sector })
-    return response.data
-  },
+export async function removeSector(sector: string): Promise<void> {
+  await api.delete('/memory/preferences/sector', { data: { sector } })
+}
 
-  // 删除偏好板块
-  async removePreferredSector(sector: string) {
-    const response = await api.delete('/memory/preferences/sector', { data: { sector } })
-    return response.data
-  },
+export async function addTrigger(trigger: string): Promise<void> {
+  await api.post('/memory/preferences/trigger', { trigger })
+}
 
-  // 添加情绪触发器
-  async addEmotionalTrigger(trigger: string) {
-    const response = await api.post('/memory/preferences/trigger', { trigger })
-    return response.data
-  },
+export async function removeTrigger(trigger: string): Promise<void> {
+  await api.delete('/memory/preferences/trigger', { data: { trigger } })
+}
 
-  // 删除情绪触发器
-  async removeEmotionalTrigger(trigger: string) {
-    const response = await api.delete('/memory/preferences/trigger', { data: { trigger } })
-    return response.data
-  },
+/** A lesson written by hand (type 交易心得). */
+export async function addLesson(text: string): Promise<void> {
+  await api.post('/memory/history/lesson', { description: text, lesson_type: 'insight', lesson: text })
+}
 
-  // 获取交易历史
-  async getHistory() {
-    const response = await api.get('/memory/history')
-    return response.data
-  },
+/**
+ * The lesson at `index` in the list as last read, named by `lesson` itself: the backend deletes it only if
+ * that place still holds it, and answers 409 (a fixed text, nothing deleted) when the list has changed
+ * meanwhile. The caller reads the list again right after.
+ */
+export async function removeLesson(index: number, lesson: MemoryLesson): Promise<void> {
+  await api.delete(`/memory/history/lesson/${index}`, { data: { expect: lesson } })
+}
 
-  // 添加交易教训
-  async addLesson(data: {
-    description: string
-    lesson_type: string
-    lesson?: string
-    symbol?: string
-  }) {
-    const response = await api.post('/memory/history/lesson', data)
-    return response.data
-  },
-
-  // 删除交易教训
-  async removeLesson(index: number) {
-    const response = await api.delete(`/memory/history/lesson/${index}`)
-    return response.data
-  },
-
-  // 获取目标
-  async getGoals() {
-    const response = await api.get('/memory/goals')
-    return response.data
-  },
-
-  // 添加目标
-  async addGoal(goalType: 'short_term' | 'long_term', goal: string) {
-    const response = await api.post('/memory/goals', {
-      goal_type: goalType,
-      goal,
-    })
-    return response.data
-  },
-
-  // 获取记忆上下文
-  async getContext(): Promise<string> {
-    const response = await api.get<{ context: string }>('/memory/context')
-    return response.data.context
-  },
-
-  // 重置记忆
-  async reset() {
-    const response = await api.delete('/memory/reset')
-    return response.data
-  },
+/** Everything the assistant remembers about the person: profile, sectors, triggers, lessons. */
+export async function resetMemory(): Promise<void> {
+  await api.delete('/memory/reset')
 }
