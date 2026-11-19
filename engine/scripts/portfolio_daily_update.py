@@ -24,8 +24,9 @@ Usage:
     python3 portfolio_daily_update.py --action clone
 """
 
-import json, os, sys, argparse, glob, copy, subprocess, re
-from portfolio_write_lock import portfolio_write_locked
+import json, os, sys, argparse, glob, copy, subprocess, re, shutil
+from fractions import Fraction
+from portfolio_write_lock import portfolio_write_locked, run_child
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -58,8 +59,10 @@ def get_latest_holdings_file(before_date=None):
 
 def clone_holdings(date_str):
     """Copy previous day's holdings as today's baseline.
-    
+
     Returns (path, is_new) — path to today's holdings, whether it was newly created.
+    Only a file dated before ``date_str`` is copied: holdings of a later day
+    are never the day's (``(None, False)`` and the ``NO_HOLDINGS`` message).
     """
     from ledger_bridge import guard_legacy_write
     guard_legacy_write(PORTFOLIO_DIR)
@@ -71,13 +74,9 @@ def clone_holdings(date_str):
     
     prev_file = get_latest_holdings_file(before_date=date_str)
     if not prev_file:
-        # No previous file, check if any file exists at all
-        any_file = get_latest_holdings_file()
-        if any_file:
-            prev_file = any_file
-        else:
-            print("  ❌ 没有找到任何历史持仓文件", file=sys.stderr)
-            return None, False
+        # Only later holdings, or none: copying a later day's cash and positions back would invent the day.
+        print(f"  ❌ {NO_HOLDINGS}：没有 {date_str} 当日或之前的持仓文件（不会用之后日期的持仓代替）", file=sys.stderr)
+        return None, False
     
     with open(prev_file) as f:
         data = json.load(f)
@@ -117,128 +116,167 @@ def save_holdings(holdings, date_str):
 
 def parse_and_apply_changes(holdings, text):
     """Parse natural language text and apply changes to holdings.
-    
-    Supported patterns:
+
+    Supported clauses (separate several with , ; 、 or new lines):
     - "持仓未变化" / "不变" / "no change" → no changes
-    - "现金变为5000" / "进攻现金-50万" → update cash
-    - "基金变为16万" / "进攻基金155900" → update fund
-    - "卖了500股药明康德" / "药明康德减500" → reduce shares
-    - "买了1000股xxx" / "xxx加1000" → add shares
-    - "新增 xxx ticker:SHE:002050 数量:1000 成本:50" → add new position
-    - "删除 xxx" / "清仓 xxx" → remove position
-    - "成本调整为58.5万" / "进攻成本585000" → update cost_basis
-    
-    Returns list of changes applied (for logging).
+    - "现金变为5000" / "进攻现金-50万" → set cash; "现金增加2万" / "稳健现金减少5000" → change cash
+    - "基金变为16万" / "进攻基金155900" → set fund; "基金减少1万" → change fund
+    - "卖了500股药明康德" / "药明康德减500" / "卖出药明康德500股" → reduce shares
+    - "买了1000股xxx" / "xxx加1000" → add shares; "成本:25" or "均价25" in the clause
+      updates the average cost
+    - "买了500股xxx 代码是SHA:688275" → new position when xxx is not held
+    - "新增 xxx ticker:SHE:002050 数量:1000 成本:50 组:进攻" → add new position
+    - "xxx 800股" / "xxx数量800" → set quantity
+    - "删除 xxx" / "清仓 xxx" / "xxx清了" → remove position
+    - "成本调整为58.5万" / "进攻成本585000" / "成本增加4万" → account cost_basis
+
+    A stock is matched by its exact name or ticker, or by the only held name that
+    contains the text. An account is matched the same way; when none is named the
+    first account is used. Anything unmatched or ambiguous becomes an "unknown"
+    change, and then nothing at all is applied to ``holdings``.
+
+    Returns list of changes (for logging).
     """
+    working = copy.deepcopy(holdings)
     changes = []
-    text = text.strip()
-    
-    # Split text by common delimiters
-    parts = re.split(r'[;；\n,，、]', text)
-    
-    # Per-part no-change keywords (e.g. "其他不变" should be silently skipped)
-    no_change_patterns = ["未变化", "不变", "没变", "no change", "unchanged", "一样"]
-    
-    for part in parts:
-        part = part.strip()
-        if not part:
+    for part in _split_clauses(text):
+        if _is_no_change(working, part):
             continue
-        
-        # Skip parts that are purely no-change declarations
-        if any(p in part.lower() for p in no_change_patterns) and not any(
-            kw in part for kw in ["现金", "基金", "成本", "持仓", "股"]
-        ):
-            continue
-        
-        change = _parse_single_change(holdings, part)
-        if change:
-            changes.append(change)
-            _apply_single_change(holdings, change)
-    
+        change = _parse_single_change(working, part)
+        changes.append(change)
+        if change["action"] != "unknown":
+            _apply_single_change(working, change)
+
+    if not any(change["action"] == "unknown" for change in changes):
+        holdings.clear()
+        holdings.update(working)
     return changes
 
 
-def _find_group_and_position(holdings, name_hint):
-    """Find a position by name across all groups."""
-    name_hint = name_hint.strip()
-    for gname, gdata in holdings.get("groups", {}).items():
-        for i, pos in enumerate(gdata.get("positions", [])):
-            if name_hint in pos["name"] or pos["name"] in name_hint:
-                return gname, i, pos
-            # Also match by ticker
-            if name_hint.upper() in pos["ticker"]:
-                return gname, i, pos
-    return None, None, None
+_FILLER = r'(?:今天|今日|昨天|刚才|刚刚|刚|我|又|再|已经|已|还|用现金)*'
+# A verb never stops short of its own 了: "买了123股" is not a stock called "了".
+_SELL = r'(?:卖出了?|卖掉了?|卖了|卖|减持了?|减仓了?|减少了?|减了|减)(?!了)'
+_BUY = r'(?:买入了?|买进了?|买了|买|加仓了?|增持了?|加了|加)(?!了)'
+# A whole number: never part of a longer run of digits, at most six decimals.
+_QTY = r'(?<![\d.])\d+(?:\.\d{1,6})?(?![\d.])'
+# SHA:688275, NASDAQ:AAPL, NYSE:BRK-B. The word "ticker" before a colon is a label, not an exchange.
+_TICKER = r'(?<![A-Za-z0-9])(?!(?i:ticker)[：:])[A-Za-z]{2,10}:[A-Za-z0-9]+(?:[.\-][A-Za-z0-9]+)*'
+_SET_OP = r'(?:变为|变成|改为|改成|调整为|调整到|设为|为|是|到|→|=|:|：)'
+_CUR = r'(?:人民币元?|美元|美金|港币|港元|(?<![A-Za-z])(?:CNY|RMB|USD|HKD)(?![A-Za-z]))'
+_CURRENCY_WORDS = re.compile(_CUR, re.IGNORECASE)
+_PRICE = re.compile(r'(?:成本价?|均价|买入价|单价|cost)\s*(?:是|为)?\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*元?', re.IGNORECASE)
+_PRICE_ONLY = re.compile(r'(?:成本价|均价|买入价|单价)\s*(?:是|为)?\s*[:：=]?\s*\d+(?:\.\d+)?\s*元?')
+_NO_CHANGE = re.compile(
+    r'^(?P<subject>.*?)\s*(?:都|也|均|还是|仍然|仍|保持|暂时|目前|暂)*\s*'
+    r'(?:没有变化|未变化|没变化|无变化|不变|没变|未变|一样|no\s*changes?|unchanged)(?:了|的)?$', re.IGNORECASE)
+_GENERIC_SUBJECT = re.compile(r'今天|今日|目前|持仓|仓位|其他|其它|其余|别的|剩下|全部|一切|所有|现金|基金|成本|账户|股票|数量|昨天|昨日|上次|之前|的|同|\s')
+_NOT_A_NAME = re.compile(r'\s|清仓|删除|新增|卖|买|加|减|现金|基金|成本')
+_NOT_A_NEW_NAME = re.compile(r'清仓|删除|新增|卖出|卖了|买入|买了|现金|同时|并且|然后|以及')
+_MONEY = re.compile(
+    rf'^(?P<prefix>.*?)\s*(?P<cur1>{_CUR})?\s*(?P<kw>现金|基金|成本)(?!价)(?:余额|金额|基础|总额)?\s*'
+    r'(?P<op>变为|变成|改为|改成|调整为|调整到|设为|增加了?|减少了?|为|是|到|→|=|:|：)?\s*'
+    rf'(?P<cur2>{_CUR})?\s*(?P<amount>[-+]?\d+(?:\.\d+)?(?:万\d?|千|亿)?)\s*(?P<cur3>{_CUR})?\s*(?:元|块钱|块)?$',
+    re.IGNORECASE)
 
 
-def _find_group_by_hint(holdings, text):
-    """Determine which group the text refers to."""
-    for gname in holdings.get("groups", {}):
-        if gname in text:
-            return gname
-    # Default to first group if not specified
-    groups = list(holdings.get("groups", {}).keys())
-    return groups[0] if groups else None
+def _split_clauses(text):
+    """Split an update into clauses, keeping thousands separators and a trailing price together."""
+    text = re.sub(r'(?<=\d),(?=\d{3}(?!\d))', '', text.strip())
+    clauses = []
+    for part in re.split(r'[;；\n,，、]', text):
+        part = part.strip()
+        if not part:
+            continue
+        if clauses and _PRICE_ONLY.fullmatch(part) and re.search(_BUY, clauses[-1]):
+            clauses[-1] = f"{clauses[-1]} {part}"
+        else:
+            clauses.append(part)
+    return clauses
 
 
-def _parse_number(text):
-    """Parse a number from text, handling 万 suffix."""
-    text = text.strip().replace(",", "").replace("，", "")
-    if "万" in text:
-        num_str = text.replace("万", "").strip()
-        try:
-            val = float(num_str) * 10000
-            # Round to nearest integer to avoid float precision issues (e.g. -44.41万 → -444100)
-            return round(val)
-        except ValueError:
-            return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
+def _is_no_change(holdings, part):
+    """True for clauses such as "其他不变" that only state that nothing changed.
 
-
-def _parse_money_number(text):
-    """Parse money amounts with a portfolio-oriented shorthand heuristic.
-
-    Examples users commonly send:
-    -44.273  -> -44.273万
-     15.635  -> 15.635万
-
-    Rules:
-    - explicit "万" always wins
-    - plain decimals with abs(value) < 1000 are treated as 万
-    - otherwise treat as raw yuan
+    The clause must end with the statement, and whatever it is about must be
+    generic ("持仓", "其他"), an account, or a held position. Anything else is
+    left for the parser so that it is reported instead of being dropped.
     """
-    cleaned = text.strip().replace(",", "").replace("，", "")
-    if "万" in cleaned:
-        return _parse_number(cleaned)
-    try:
-        val = float(cleaned)
-    except ValueError:
-        return None
-    if ("." in cleaned or "-" in cleaned) and abs(val) < 1000:
-        return round(val * 10000)
-    return val
+    match = _NO_CHANGE.match(part.strip())
+    if not match:
+        return False
+    for subject in re.split(r'[和与跟及]', match.group("subject")):
+        subject = _GENERIC_SUBJECT.sub('', subject)
+        if subject and not _resolve_group(holdings, subject) and not _match_positions(holdings, subject)[1]:
+            return False
+    return True
 
 
-def _parse_share_cost(text):
-    """Parse per-share cost price as a raw numeric value."""
-    cleaned = text.strip().replace(",", "").replace("，", "").replace("万", "")
-    try:
-        return float(cleaned)
-    except ValueError:
+def _unknown(text, reason="未识别"):
+    return {"action": "unknown", "raw_text": text, "description": f"{reason}: {text}"}
+
+
+def _number(value):
+    """Keep whole numbers as int so holdings files do not turn 500 into 500.0."""
+    if isinstance(value, int):
+        return value
+    value = round(value, 6)
+    return int(value) if value.is_integer() else value
+
+
+def _quantity(text):
+    """A share quantity exactly as written, or None when a float cannot hold it."""
+    exact = Fraction(text)
+    if exact.denominator == 1:
+        return int(exact)
+    value = float(exact)
+    return value if Fraction(str(value)) == exact else None
+
+
+def _exact_sum(left, right):
+    """left + right without float drift; None when the result cannot be stored exactly."""
+    total = Fraction(str(left)) + Fraction(str(right))
+    if total.denominator == 1:
+        return int(total)
+    value = float(total)
+    return value if Fraction(str(value)) == total else None
+
+
+def _parse_amount(text, shorthand=False):
+    """Parse a money amount.
+
+    "5万" → 50000, "3万5" → 35000, "5千" → 5000, "1.2亿" → 120000000.
+    With ``shorthand`` (CNY account amounts), a bare decimal or negative number
+    below 1000 is read as 万: "-44.273" → -442730, "15.635" → 156350.
+    Returns None when the text is not a single well-formed amount.
+    """
+    match = re.fullmatch(r'([-+]?)(\d+(?:\.\d+)?)(?:(万)(\d)?|(千)|(亿))?', text.strip())
+    if not match:
         return None
+    sign = -1 if match.group(1) == "-" else 1
+    number = float(match.group(2))
+    if match.group(3):
+        if match.group(4) and "." in match.group(2):
+            return None
+        value = round(number * 10000 + int(match.group(4) or 0) * 1000)
+    elif match.group(5):
+        value = round(number * 1000)
+    elif match.group(6):
+        value = round(number * 100000000)
+    elif shorthand and ("." in match.group(2) or sign < 0) and number < 1000:
+        value = round(number * 10000)
+    else:
+        value = number
+    return sign * value
 
 
 def _extract_ticker(text):
     """Extract ticker like SHA:688275 or NASDAQ:AAPL from free-form text."""
     patterns = [
-        r'(?:ticker|代码(?:是|为)?)[：:\s]*([A-Z]{2,10}:[A-Za-z0-9]+)',
-        r'\b([A-Z]{2,10}:[A-Za-z0-9]+)\b',
+        rf'(?:ticker|代码(?:是|为)?)[：:\s]*({_TICKER})',
+        rf'({_TICKER})',
     ]
     for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
+        match = re.search(pattern, text)
         if match:
             return match.group(1).upper()
     return ""
@@ -246,181 +284,432 @@ def _extract_ticker(text):
 
 def _strip_ticker_phrase(text):
     """Remove ticker phrases from a natural-language stock name hint."""
-    text = re.sub(r'(?:代码(?:是|为)?|ticker)[：:\s]*[A-Z]{2,10}:[A-Za-z0-9]+', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\b[A-Z]{2,10}:[A-Za-z0-9]+\b', '', text)
+    text = re.sub(rf'(?:代码(?:是|为)?|(?i:ticker))[：:\s]*{_TICKER}', '', text)
+    text = re.sub(_TICKER, '', text)
     text = re.sub(r'\s+', ' ', text).strip(" ：:，,。.;；")
     return text
 
 
+def _default_group(holdings):
+    groups = list(holdings.get("groups", {}))
+    return groups[0] if groups else None
+
+
+def _resolve_group(holdings, hint):
+    """Return the account a hint names: its exact name, or the only account whose name contains it."""
+    groups = list(holdings.get("groups", {}))
+    hint = hint.strip()
+    without_particle = re.sub(r'的$', '', hint).strip()
+    candidates = [hint, without_particle, re.sub(r'(?:账户|组)$', '', without_particle).strip()]
+    for candidate in candidates:
+        if candidate in groups:
+            return candidate
+    for candidate in candidates:
+        if not candidate:
+            continue
+        matches = [group for group in groups if candidate in group]
+        if matches:
+            return matches[0] if len(matches) == 1 else None
+    return None
+
+
+def _leading_group(holdings, prefix):
+    """Text before a keyword or verb must be empty, filler words, or an account.
+
+    Returns (ok, account); account is None when no account was named.
+    """
+    prefix = prefix.strip()
+    if not prefix:
+        return True, None
+    group = _resolve_group(holdings, prefix)
+    if group:
+        return True, group
+    prefix = re.sub(rf'^{_FILLER}', '', prefix).strip()
+    if not prefix:
+        return True, None
+    group = _resolve_group(holdings, prefix)
+    return bool(group), group
+
+
+def _match_positions(holdings, hint, group=None):
+    """Return (tier, matches): tier 0 is an exact name or ticker, tier 1 a partial name.
+
+    A partial match is a hint contained in a held name ("茅台" for "贵州茅台"), or a
+    held name with only filler words around it ("今天药明康德"). A bare number is
+    never a partial name.
+    """
+    hint = hint.strip(" 的")
+    if not hint:
+        return 1, []
+    upper = hint.upper()
+    numeric = re.fullmatch(r'[\d.\s]+', hint) is not None
+    exact, partial = [], []
+    for gname, gdata in holdings.get("groups", {}).items():
+        if group and gname != group:
+            continue
+        for index, pos in enumerate(gdata.get("positions", [])):
+            name = str(pos.get("name", ""))
+            ticker = str(pos.get("ticker", "")).upper()
+            code = ticker.rsplit(":", 1)[-1]
+            if hint == name or upper == ticker or (code and upper == code):
+                exact.append((gname, index, pos))
+            elif name and not numeric and (hint in name or (
+                    name in hint and re.fullmatch(_FILLER, hint.replace(name, "", 1).strip(" 的")))):
+                partial.append((gname, index, pos))
+    return (0, exact) if exact else (1, partial)
+
+
+def _parse_money_clause(holdings, text):
+    """Account-level cash, fund and cost_basis clauses."""
+    match = _MONEY.match(text.strip())
+    if not match:
+        return None
+    keyword, op, raw = match.group("kw"), match.group("op") or "", match.group("amount")
+
+    # The account is resolved before any currency word is removed, so an account
+    # called "美元" is not mistaken for a currency.
+    prefix = match.group("prefix")
+    currency_words = [match.group(name) for name in ("cur1", "cur2", "cur3") if match.group(name)]
+    named, group = _leading_group(holdings, prefix)
+    if not named:
+        in_prefix = _CURRENCY_WORDS.findall(prefix)
+        if not in_prefix:
+            return None
+        currency_words += in_prefix
+        named, group = _leading_group(holdings, _CURRENCY_WORDS.sub('', prefix))
+        if not named:
+            return None
+    if group is None and any(_resolve_group(holdings, word) for word in currency_words):
+        return _unknown(text, "有歧义（币种和账户名相同，请写「xx账户」）")
+    if match.group("cur1") and (
+            (prefix + match.group("cur1")).strip() in holdings.get("groups", {})
+            or _resolve_group(holdings, (prefix + match.group("cur1")).strip()) not in (None, group)):
+        return _unknown(text, "有歧义（账户名里带币种，请写「xx账户」）")
+    group = group or _default_group(holdings)
+    if not group:
+        return None
+    currency = currency_from_text(" ".join(currency_words))
+    if keyword != "现金" and currency != "CNY":
+        return None
+
+    if keyword != "成本" and raw[0] == "+":
+        return None  # "现金+5万" could mean "set to" or "add"; "-" is a negative balance
+    delta_sign = 0
+    if op.startswith("增加") or op.startswith("减少"):
+        if raw[0] in "+-":
+            return None
+        delta_sign = 1 if op.startswith("增加") else -1
+    elif keyword == "成本" and not op and raw[0] in "+-":
+        delta_sign = 1 if raw[0] == "+" else -1
+        raw = raw[1:]
+
+    if keyword == "成本":
+        if delta_sign:
+            delta = _parse_amount(raw)
+            if delta is None:
+                return None
+            return {"action": "delta_cost_basis", "group": group, "value": delta_sign * delta,
+                    "description": f"{group}成本{'增加' if delta_sign > 0 else '减少'}{delta}"}
+        amount = _parse_amount(raw, shorthand=True)
+        if amount is None:
+            return None
+        return {"action": "set_cost_basis", "group": group, "value": amount, "description": f"{group}成本→{amount}"}
+
+    amount = _parse_amount(raw, shorthand=currency == "CNY")
+    if amount is None:
+        return None
+    label = "现金" if keyword == "现金" else "基金"
+    data = holdings["groups"][group]
+    if delta_sign:
+        current = cash_balances(data).get(currency, 0) if keyword == "现金" else data.get("fund", 0)
+        new_value = _number(current + delta_sign * amount)
+        description = f"{group}{label}{'增加' if delta_sign > 0 else '减少'}{amount}→{new_value}"
+    else:
+        new_value, description = amount, f"{group}{label}→{amount}"
+    if keyword == "基金":
+        return {"action": "set_fund", "group": group, "value": new_value, "description": description}
+    return {"action": "set_cash", "group": group, "value": new_value,
+            **({"currency": currency} if currency != "CNY" else {}), "description": description}
+
+
+def _parse_new_position(holdings, text):
+    """ "新增 xxx ticker:SHE:002050 数量:1000 成本:50 组:进攻" """
+    new_match = re.search(r'^(?P<prefix>.*?)新增\s+(?P<name>\S+)', text)
+    if not new_match:
+        return None
+    named, prefix_group = _leading_group(holdings, new_match.group("prefix"))
+    if not named:
+        return None
+    name = new_match.group("name")
+    ticker_m = re.search(r'(?:ticker|代码(?:是|为)?)[：:]\s*(\S+)', text, flags=re.IGNORECASE)
+    qty_m = re.search(rf'(?:数量|qty)[：:]\s*({_QTY})', text, flags=re.IGNORECASE)
+    cost_m = re.search(r'(?:成本价?|cost)[：:]\s*(\d+(?:\.\d+)?)', text, flags=re.IGNORECASE)
+    group_m = re.search(r'(?:组|group)[：:]\s*(\S+)', text, flags=re.IGNORECASE)
+
+    field_group = _resolve_group(holdings, group_m.group(1)) if group_m else None
+    if (group_m and not field_group) or (field_group and prefix_group and field_group != prefix_group):
+        return None
+    ticker = ticker_m.group(1).upper() if ticker_m else ""
+    qty = _quantity(qty_m.group(1)) if qty_m else 0
+    cost = float(cost_m.group(1)) if cost_m else 0.0
+    group = field_group or prefix_group or _default_group(holdings)
+    if not (ticker and qty and group):
+        return None
+    # Every part of the clause must have been understood.
+    spans = sorted(m.span() for m in (new_match, ticker_m, qty_m, cost_m, group_m) if m)
+    rest, end = "", 0
+    for start, stop in spans:
+        rest, end = rest + text[end:max(end, start)], max(end, stop)
+    if (rest + text[end:]).strip(" ：:，,。.;；"):
+        return None
+    return {
+        "action": "add_position", "group": group,
+        "position": {"name": name, "ticker": ticker, "quantity": qty, "cost_price": cost},
+        "description": f"新增{name} {ticker} {qty}股@{cost}"
+    }
+
+
+def _position_readings(holdings, body, ticker):
+    """List every way a clause can be read.
+
+    Each reading is (kind, quantity, name hint, account, account_is_explicit, starts_with_account).
+    The caller keeps the readings whose name matches a holding best and rejects
+    the clause when they disagree. A clause that gives only a ticker uses it as
+    the name.
+    """
+    readings = []
+
+    def add(kind, quantity, hint, group=None):
+        hint = hint.strip() or ticker
+        if not hint:
+            return
+        if group is not None:
+            readings.append((kind, quantity, hint, group, True, False))
+            return
+        extra = []
+        if ticker and hint != ticker:
+            # "稳健账户 SHA:510300 减100": the words are the account, the ticker the stock.
+            named, account = _leading_group(holdings, hint)
+            if named and account:
+                extra.append((kind, quantity, ticker, account, True, False))
+        # "稳健账户药明康德减500": the name may start with an account.
+        for gname in holdings.get("groups", {}):
+            for prefix, explicit in ((f"{gname}账户", True), (f"{gname}组", True), (gname, False)):
+                if hint.startswith(prefix) and len(hint) > len(prefix):
+                    extra.append((kind, quantity, hint[len(prefix):], gname, explicit, False))
+        led = re.match(r'^(.+?)(?:账户|组)的?\s*(.+)$', hint)
+        if led and _resolve_group(holdings, led.group(1)):
+            extra.append((kind, quantity, led.group(2), _resolve_group(holdings, led.group(1)), True, False))
+        readings.append((kind, quantity, hint, None, False, any(reading[4] for reading in extra)))
+        readings.extend(extra)
+
+    def add_before_number(kind, match, group=None):
+        """ "沪深3005股" may be 沪深 + 3005 or 沪深300 + 5: offer every split."""
+        name, digits = match.group("name"), match.group("qty")
+        variants = [(name, digits)]
+        if name.strip() and match.end("name") == match.start("qty"):
+            whole = digits.split(".")[0]
+            variants += [(name + whole[:cut], digits[cut:]) for cut in range(1, len(whole))]
+        for index, (hint, number) in enumerate(variants):
+            quantity = _quantity(number)
+            if quantity is not None and (quantity > 0 or (kind == "set" and index == 0)):
+                add(kind, quantity, hint, group)
+
+    for kind, verb in (("sell", _SELL), ("buy", _BUY)):
+        verb_first = [
+            rf'^(?P<prefix>.*?){verb}\s*(?P<qty>{_QTY})\s*股\s*的?\s*(?P<name>.*)$',
+            rf'^(?P<prefix>.*?){verb}\s*(?P<qty>{_QTY})\s*(?P<name>[^\d.\s股].*)$',
+        ]
+        for pattern in verb_first:
+            match = re.match(pattern, body)
+            if not match:
+                continue
+            ok, group = _leading_group(holdings, match.group("prefix"))
+            quantity = _quantity(match.group("qty"))
+            if ok and quantity:
+                add(kind, quantity, match.group("name"), group)
+        match = re.match(rf'^(?P<prefix>.*?){verb}\s*(?P<name>.+?)\s*(?P<qty>{_QTY})\s*股$', body)
+        if match:
+            ok, group = _leading_group(holdings, match.group("prefix"))
+            if ok:
+                add_before_number(kind, match, group)
+        match = re.match(rf'^(?P<name>.*?)\s*{verb}\s*(?P<qty>{_QTY})\s*股?$', body)
+        if match and _quantity(match.group("qty")):
+            add(kind, _quantity(match.group("qty")), match.group("name"))
+
+    match = re.match(r'^(?P<prefix>.*?)(?:清仓|删除|清掉|卖光|卖完)了?\s*(?P<name>.*)$', body)
+    if match:
+        ok, group = _leading_group(holdings, match.group("prefix"))
+        if ok:
+            add("remove", 0, match.group("name"), group)
+    match = re.match(r'^(?P<name>.+?)\s*(?:清了|清仓了?|清空了?|卖完了?|卖光了?|全卖了|全部卖出|删除)$', body)
+    if match:
+        add("remove", 0, match.group("name"))
+
+    for pattern in (
+        rf'^(?P<name>.*?)\s*的?\s*(?:数量|股数|持仓)?\s*{_SET_OP}?\s*(?P<qty>{_QTY})\s*股$',
+        rf'^(?P<name>.*?)\s*的?\s*(?:数量|股数)\s*{_SET_OP}?\s*(?P<qty>{_QTY})\s*股?$',
+    ):
+        match = re.match(pattern, body)
+        if match:
+            add_before_number("set", match)
+    return readings
+
+
+def _parse_position_clause(holdings, text):
+    """Buy, sell, remove and set-quantity clauses for one position."""
+    if len({found.upper() for found in re.findall(_TICKER, text)}) > 1:
+        return _unknown(text, "有歧义（一条里只能有一个代码）")
+    ticker = _extract_ticker(text)
+    body = _strip_ticker_phrase(text)
+    named_group = None
+    group_match = re.search(r'(?:组|group)[：:]\s*(\S+)', body, flags=re.IGNORECASE)
+    if group_match:
+        named_group = _resolve_group(holdings, group_match.group(1))
+        if not named_group:
+            return None
+        body = body[:group_match.start()] + body[group_match.end():]
+    body = re.sub(r'\s+', ' ', body).strip(" ：:，,。.;；")
+    # A price is the last thing in a clause. The same words can also end a stock
+    # name, so the clause is read both ways and the readings must agree.
+    bodies = [(body, None)]
+    price_match = _PRICE.search(body)
+    if price_match and price_match.end() == len(body):
+        bodies.append((body[:price_match.start()].strip(" ：:，,。.;；"), float(price_match.group(1))))
+
+    resolved, conflict, purchases = [], False, []
+    for body, price in bodies:
+        readings = [
+            (kind, quantity, hint, group or named_group, explicit or bool(named_group), account_led)
+            for kind, quantity, hint, group, explicit, account_led in _position_readings(holdings, body, ticker)
+            if not (group and named_group and group != named_group)
+        ]
+        if price is not None or len(bodies) == 1:
+            purchases = (readings, price)
+        for kind, quantity, hint, group, _explicit, account_led in readings:
+            ticker_tier, by_ticker = _match_positions(holdings, ticker, group) if ticker else (1, [])
+            if ticker_tier != 0:
+                by_ticker = []
+            if ticker and hint.upper() == ticker:
+                tier, matches = 0, by_ticker
+            else:
+                tier, matches = _match_positions(holdings, hint, group)
+                if by_ticker:
+                    # The ticker identifies the holding; the name must not point elsewhere.
+                    common = [m for m in matches if any(m[:2] == t[:2] for t in by_ticker)]
+                    if matches and not common:
+                        conflict = True
+                        continue
+                    if common:
+                        matches = common
+                    elif account_led:
+                        continue  # the account-qualified readings decide
+                    elif _NOT_A_NAME.search(hint):
+                        conflict = True  # more than a slightly different name for that security
+                        continue
+                    else:
+                        tier, matches = 0, by_ticker
+                elif ticker and matches:
+                    conflict = True  # a held name, but the ticker is a different security
+                    continue
+            if matches:
+                resolved.append((tier, kind, quantity, price, matches))
+
+    if not resolved:
+        if conflict:
+            return _unknown(text, "名称和代码对不上")
+        readings, price = purchases
+        return _new_position_from_purchase(holdings, text, readings, ticker, price)
+
+    # Exact names beat partial ones; readings that still disagree are ambiguous.
+    best = min(tier for tier, *_ in resolved)
+    outcomes = {}
+    for tier, kind, quantity, price, matches in resolved:
+        if tier != best:
+            continue
+        if len(matches) != 1:
+            return _unknown(text, "有歧义（匹配到多个持仓，请写明账户或完整名称）")
+        gname, index, pos = matches[0]
+        outcomes[(kind, gname, index, quantity, price)] = pos
+    if len(outcomes) != 1:
+        return _unknown(text, "有歧义（可以有多种理解）")
+
+    (kind, gname, index, quantity, price), pos = next(iter(outcomes.items()))
+    held = pos["quantity"]
+    target = {"group": gname, "position_index": index, "name": pos["name"]}
+
+    if price is not None and kind in ("set", "remove"):
+        return _unknown(text, "价格只能写在买入里")
+    if kind == "remove" or (kind == "set" and quantity == 0):
+        return {"action": "remove_position", **target, "value": 0, "description": f"清仓{pos['name']}"}
+    if kind == "set":
+        return {"action": "set_quantity", **target, "value": quantity,
+                "description": f"{pos['name']}数量→{quantity}股"}
+    if kind == "sell":
+        if quantity > held:
+            raise ValueError(f"Cannot sell {quantity} shares; only {held} held")
+        new_qty = _exact_sum(held, -quantity)
+        if new_qty is None:
+            return _unknown(text, "数量精度超出可记录范围")
+        note = "（卖出价未记录）" if price is not None else ""
+        return {"action": "set_quantity" if new_qty > 0 else "remove_position", **target,
+                "value": new_qty, "description": f"{pos['name']}减{quantity}股→{new_qty}股{note}"}
+
+    new_qty = _exact_sum(held, quantity)
+    if new_qty is None:
+        return _unknown(text, "数量精度超出可记录范围")
+    change = {"action": "set_quantity", **target, "value": new_qty,
+              "description": f"{pos['name']}加{quantity}股→{new_qty}股"}
+    old_cost = pos.get("cost_price")
+    if price is not None:
+        if isinstance(old_cost, (int, float)) and not isinstance(old_cost, bool):
+            change["cost_price"] = round((held * old_cost + quantity * price) / new_qty, 4)
+            change["description"] += f"，成本价→{change['cost_price']}"
+        else:
+            change["description"] += "（原持仓没有成本价，成本价未更新）"
+    return change
+
+
+def _new_position_from_purchase(holdings, text, readings, ticker, price):
+    """Buying something that is not held creates a position when a ticker is given."""
+    purchases = {
+        (hint.strip(" 的"), group, quantity, explicit)
+        for kind, quantity, hint, group, explicit, _account_led in readings
+        if kind == "buy" and hint.strip(" 的").upper() != ticker and re.search(r'[^\d\s.]', hint)
+        and not _NOT_A_NEW_NAME.search(hint)
+    }
+    if not ticker or not purchases:
+        return None
+    explicit = {(name, group, quantity) for name, group, quantity, is_explicit in purchases if is_explicit}
+    if explicit:
+        candidates = explicit
+    elif any(group for _name, group, _quantity_, _explicit in purchases):
+        # "稳健特斯拉加100": the name may or may not start with an account.
+        return _unknown(text, "有歧义（请用「账户」或「组:」写明账户）")
+    else:
+        candidates = {(name, group, quantity) for name, group, quantity, _explicit in purchases}
+    if len(candidates) != 1:
+        return _unknown(text, "有歧义（可以有多种理解）")
+    name, group, quantity = next(iter(candidates))
+    group = group or _default_group(holdings)
+    if not group:
+        return None
+    cost = float(price or 0)
+    return {
+        "action": "add_position", "group": group,
+        "position": {"name": name, "ticker": ticker, "quantity": quantity, "cost_price": cost},
+        "description": f"新增{name} {ticker} {quantity}股@{cost}"
+    }
+
+
 def _parse_single_change(holdings, text):
     """Parse a single change directive."""
-    text_lower = text.lower().strip()
-    
-    # Pattern: cash changes — "现金变为5000" / "进攻现金-484110" / "稳健账户现金3300"
-    cash_match = re.search(r'(?:(.+?)(?:账户|组))?.*?现金.*?(?:变为|改为|=|:)?[：:]?\s*([-\d.万]+)', text)
-    if cash_match:
-        group_hint = cash_match.group(1) or ""
-        group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        amount = _parse_money_number(cash_match.group(2))
-        if amount is not None and group:
-            return {"action": "set_cash", "group": group, "value": amount, **({"currency": currency_from_text(text)} if currency_from_text(text) != "CNY" else {}), "description": f"{group}现金→{amount}"}
-    
-    # Pattern: fund changes — "基金变为16万" / "进攻基金155900"
-    fund_match = re.search(r'(?:(.+?)(?:账户|组))?.*?基金.*?(?:变为|改为|=|:)?[：:]?\s*([-\d.万]+)', text)
-    if fund_match:
-        group_hint = fund_match.group(1) or ""
-        group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        amount = _parse_money_number(fund_match.group(2))
-        if amount is not None and group:
-            return {"action": "set_fund", "group": group, "value": amount, "description": f"{group}基金→{amount}"}
-    
-    # Pattern: cost_basis delta — "成本增加4万" / "进攻账户成本减少2万"
-    cost_delta_match = re.search(r'(?:(.+?)(?:账户|组))?.*?成本(增加|减少|\+|\-)\s*([\d.万]+)', text)
-    if cost_delta_match:
-        group_hint = cost_delta_match.group(1) or ""
-        group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        sign = 1 if cost_delta_match.group(2) in ("增加", "+") else -1
-        delta = _parse_number(cost_delta_match.group(3))
-        if delta is not None and group:
-            return {"action": "delta_cost_basis", "group": group, "value": sign * delta,
-                    "description": f"{group}成本{'增加' if sign > 0 else '减少'}{delta}"}
-    
-    # Pattern: cost_basis set — "进攻成本585000" / "成本调整为58.5万"
-    # Skip this generic rule when the text is clearly describing a new position,
-    # e.g. "买了500股万润新能代码是SHA:688275 成本110.2".
-    cost_match = re.search(r'(?:(.+?)(?:账户|组))?.*?成本.*?(?:变为|调整为|改为|=|:)?[：:]?\s*([-\d.万]+)', text)
-    if cost_match and not (("新增" in text or "买" in text) and _extract_ticker(text)):
-        group_hint = cost_match.group(1) or ""
-        group = _find_group_by_hint(holdings, group_hint + text) if group_hint else _find_group_by_hint(holdings, text)
-        amount = _parse_money_number(cost_match.group(2))
-        if amount is not None and group:
-            return {"action": "set_cost_basis", "group": group, "value": amount, "description": f"{group}成本→{amount}"}
-    
-    # Pattern: sell/reduce — "卖了500股药明康德" / "药明康德减500" / "卖出药明康德500股"
-    # Try both patterns: "verb qty name" and "name verb qty"
-    _sell_result = None
-    for sell_match, swapped in [
-        (re.search(r'(?:卖[了出]?|减[少持]?|清仓)\s*(\d+)\s*股?\s*(.+?)$', text), False),
-        (re.search(r'(.+?)\s*(?:卖[了出]?|减[少持]?)\s*(\d+)\s*股?', text), True),
-    ]:
-        if not sell_match:
-            continue
-        if swapped:
-            _qty, _name = int(sell_match.group(2)), sell_match.group(1).strip()
-        else:
-            _qty, _name = int(sell_match.group(1)), sell_match.group(2).strip()
-        gname, idx, pos = _find_group_and_position(holdings, _name)
-        if pos:
-            if _qty > pos["quantity"]:
-                raise ValueError(f"Cannot sell {_qty} shares; only {pos['quantity']} held")
-            new_qty = pos["quantity"] - _qty
-            _sell_result = {
-                "action": "set_quantity" if new_qty > 0 else "remove_position",
-                "group": gname, "position_index": idx, "name": pos["name"],
-                "value": new_qty, "description": f"{pos['name']}减{_qty}股→{new_qty}股"
-            }
-            break
-    if _sell_result:
-        return _sell_result
-    
-    # Pattern: buy/add — "买了1000股药明康德" / "药明加1000"
-    _buy_result = None
-    for buy_match, swapped in [
-        (re.search(r'(?:买[了入]?|加[仓]?)\s*(\d+)\s*股?\s*(.+?)$', text), False),
-        (re.search(r'(.+?)\s*(?:买[了入]?|加[仓]?)\s*(\d+)\s*股?', text), True),
-    ]:
-        if not buy_match:
-            continue
-        if swapped:
-            _qty, _name = int(buy_match.group(2)), buy_match.group(1).strip()
-        else:
-            _qty, _name = int(buy_match.group(1)), buy_match.group(2).strip()
-        ticker = _extract_ticker(text)
-        clean_name = _strip_ticker_phrase(_name)
-        gname, idx, pos = _find_group_and_position(holdings, clean_name)
-        if pos:
-            new_qty = pos["quantity"] + _qty
-            _buy_result = {
-                "action": "set_quantity", "group": gname, "position_index": idx,
-                "name": pos["name"], "value": new_qty,
-                "description": f"{pos['name']}加{_qty}股→{new_qty}股"
-            }
-            break
-        group = _find_group_by_hint(holdings, text)
-        if ticker and clean_name and group:
-            cost_m = re.search(r'(?:成本|cost)[：:]\s*([-\d.万]+)', text, flags=re.IGNORECASE)
-            cost = _parse_share_cost(cost_m.group(1)) if cost_m else 0
-            _buy_result = {
-                "action": "add_position",
-                "group": group,
-                "position": {
-                    "name": clean_name,
-                    "ticker": ticker,
-                    "quantity": _qty,
-                    "cost_price": float(cost or 0),
-                },
-                "description": f"新增{clean_name} {ticker} {_qty}股@{float(cost or 0)}"
-            }
-            break
-    if _buy_result:
-        return _buy_result
-    
-    # Pattern: clear/remove — "清仓药明康德"
-    clear_match = re.search(r'清仓\s*(.+)', text)
-    if clear_match:
-        name = clear_match.group(1).strip()
-        gname, idx, pos = _find_group_and_position(holdings, name)
-        if pos:
-            return {
-                "action": "remove_position", "group": gname, "position_index": idx,
-                "name": pos["name"], "value": 0, "description": f"清仓{pos['name']}"
-            }
-    clear_match_2 = re.search(r'(.+?)\s*(?:清了|清仓了|卖完了|全卖了|清空了)$', text)
-    if clear_match_2:
-        name = clear_match_2.group(1).strip()
-        gname, idx, pos = _find_group_and_position(holdings, name)
-        if pos:
-            return {
-                "action": "remove_position", "group": gname, "position_index": idx,
-                "name": pos["name"], "value": 0, "description": f"清仓{pos['name']}"
-            }
-    
-    # Pattern: set quantity — "药明康德4000股" / "药明康德数量4000"
-    qty_match = re.search(r'(.+?)\s*(?:数量|股数)?[\s:：]*(\d+)\s*股', text)
-    if qty_match:
-        name = qty_match.group(1).strip()
-        qty = int(qty_match.group(2))
-        gname, idx, pos = _find_group_and_position(holdings, name)
-        if pos:
-            return {
-                "action": "set_quantity", "group": gname, "position_index": idx,
-                "name": pos["name"], "value": qty,
-                "description": f"{pos['name']}数量→{qty}股"
-            }
-    
-    # Pattern: new position — "新增 xxx ticker:SHE:002050 数量:1000 成本:50 组:进攻"
-    new_match = re.search(r'新增\s+(\S+)', text)
-    if new_match:
-        name = new_match.group(1)
-        ticker_m = re.search(r'(?:ticker|代码(?:是|为)?)[：:]\s*(\S+)', text, flags=re.IGNORECASE)
-        qty_m = re.search(r'(?:数量|qty)[：:]\s*(\d+)', text)
-        cost_m = re.search(r'(?:成本|cost)[：:]\s*([-\d.万]+)', text, flags=re.IGNORECASE)
-        group_m = re.search(r'(?:组|group)[：:]\s*(\S+)', text)
-        
-        ticker = ticker_m.group(1).upper() if ticker_m else ""
-        qty = int(qty_m.group(1)) if qty_m else 0
-        cost = _parse_share_cost(cost_m.group(1)) if cost_m else 0
-        group = group_m.group(1) if group_m else _find_group_by_hint(holdings, text)
-        
-        if ticker and qty > 0 and group:
-            return {
-                "action": "add_position", "group": group,
-                "position": {"name": name, "ticker": ticker, "quantity": qty, "cost_price": float(cost)},
-                "description": f"新增{name} {ticker} {qty}股@{cost}"
-            }
-    
-    # If no pattern matched, return as raw text for logging
-    return {"action": "unknown", "raw_text": text, "description": f"未识别: {text}"}
+    text = text.strip()
+    for parser in (_parse_money_clause, _parse_new_position, _parse_position_clause):
+        change = parser(holdings, text)
+        if change:
+            return change
+    return _unknown(text)
 
 
 def _apply_single_change(holdings, change):
@@ -447,6 +736,8 @@ def _apply_single_change(holdings, change):
     elif action == "set_quantity":
         pos = holdings["groups"][change["group"]]["positions"][change["position_index"]]
         pos["quantity"] = change["value"]
+        if "cost_price" in change:
+            pos["cost_price"] = change["cost_price"]
     
     elif action == "remove_position":
         holdings["groups"][change["group"]]["positions"].pop(change["position_index"])
@@ -456,13 +747,14 @@ def _apply_single_change(holdings, change):
 
 
 def _infer_missing_cost_prices(holdings_before, changes):
-    """Infer per-share cost for newly added positions when omitted by the user.
+    """Infer per-share cost for a newly added position when omitted by the user.
 
-    Heuristic:
-    - only apply to add_position changes with cost_price <= 0
-    - if the same update sets group cash, use |cash_delta| / quantity
-    - fallback to |fund_delta| / quantity when cash is unchanged but fund changes
+    Only when the cash (or fund) spent can be attributed to that one purchase:
+    - the position is the only quantity change in its account in this update
+    - it is priced in CNY (SHA/SHE ticker), like the account cash it is compared with
+    - the same update sets the account cash, or else fund, to a lower value
     """
+    quantity_actions = {"add_position", "set_quantity", "remove_position"}
     for change in changes:
         if change.get("action") != "add_position":
             continue
@@ -472,6 +764,10 @@ def _infer_missing_cost_prices(holdings_before, changes):
         group = change.get("group")
         if qty <= 0 or cost_price > 0 or not group:
             continue
+        if str(pos.get("ticker", "")).upper().split(":")[0] not in {"SHA", "SHE"}:
+            continue
+        if sum(1 for c in changes if c.get("group") == group and c.get("action") in quantity_actions) != 1:
+            continue
 
         before_group = holdings_before.get("groups", {}).get(group, {})
         if "cash_balances" in before_group:
@@ -479,14 +775,18 @@ def _infer_missing_cost_prices(holdings_before, changes):
         old_cash = before_group.get("cash")
         old_fund = before_group.get("fund")
 
-        new_cash = next((c["value"] for c in changes if c.get("action") == "set_cash" and c.get("group") == group), None)
-        new_fund = next((c["value"] for c in changes if c.get("action") == "set_fund" and c.get("group") == group), None)
+        # Use the balances the update ends with, not the first of several changes.
+        cash_values = [c["value"] for c in changes if c.get("action") == "set_cash"
+                       and c.get("group") == group and "currency" not in c]
+        fund_values = [c["value"] for c in changes if c.get("action") == "set_fund" and c.get("group") == group]
+        new_cash = cash_values[-1] if cash_values else None
+        new_fund = fund_values[-1] if fund_values else None
 
         inferred = None
-        if old_cash is not None and new_cash is not None and old_cash != new_cash:
-            inferred = abs(new_cash - old_cash) / qty
-        elif old_fund is not None and new_fund is not None and old_fund != new_fund:
-            inferred = abs(new_fund - old_fund) / qty
+        if old_cash is not None and new_cash is not None and new_cash < old_cash:
+            inferred = (old_cash - new_cash) / qty
+        elif old_fund is not None and new_fund is not None and new_fund < old_fund and (new_cash is None or new_cash == old_cash):
+            inferred = (old_fund - new_fund) / qty
 
         if inferred and inferred > 0:
             pos["cost_price"] = round(inferred, 4)
@@ -578,17 +878,48 @@ def _escape_shell(text):
     return text.replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
 
 
+def python_command():
+    """Command prefix that starts a Python engine script.
+
+    The default is the interpreter running this process, so the engine works
+    without conda. Set ``CONDA_ENV`` to run the scripts with
+    ``conda run -n $CONDA_ENV python3`` instead; ``CONDA_EXE`` selects the conda
+    executable. The scheduler and the cron shell scripts follow the same rule.
+    """
+    conda_env = os.environ.get("CONDA_ENV", "").strip()
+    if conda_env:
+        conda = os.environ.get("CONDA_EXE") or shutil.which("conda") or "conda"
+        return [conda, "run", "-n", conda_env, "python3"]
+    return [sys.executable]
+
+
+# Seconds a pipeline child may run. On a timeout the child and everything it
+# started (such as the Python under ``conda run``) are stopped before the stage
+# fails, so nothing writes after the caller releases the portfolio lock.
+SNAPSHOT_TIMEOUT = 120  # includes the quote and exchange-rate requests
+REPORT_TIMEOUT = 30
+
+
 def run_snapshot(date_str):
-    """Run the snapshot engine."""
+    """Run the snapshot engine.
+
+    Callers normally hold the portfolio write lock (the CLI entrypoint, the
+    agent tools and the Feishu adapter's pipeline child do). Only then is the
+    child told that it may work under that lock; otherwise it takes the lock
+    itself.
+    """
     script = BASE_DIR / "portfolio_snapshot.py"
-    conda = os.environ.get("CONDA_EXE", "conda")
-    
-    result = subprocess.run(
-        [conda, "run", "-n", "quant", "python3", str(script), "--date", date_str],
-        capture_output=True, text=True, timeout=120,
-        cwd=str(BASE_DIR)
-    )
-    
+    command = [*python_command(), str(script), "--date", date_str]
+
+    try:
+        result = run_child(command, timeout=SNAPSHOT_TIMEOUT, portfolio_dir=PORTFOLIO_DIR, cwd=str(BASE_DIR))
+    except OSError as e:
+        print(f"  ❌ 快照生成失败: 无法启动 {command[0]} ({e})")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"  ❌ 快照生成失败: 超过 {SNAPSHOT_TIMEOUT} 秒未完成，已终止")
+        return False
+
     if result.returncode == 0:
         print(f"  ✅ 快照生成成功")
         if result.stdout:
@@ -598,24 +929,28 @@ def run_snapshot(date_str):
                 print(f"    {line}")
         return True
     else:
-        print(f"  ❌ 快照生成失败: {result.stderr[:300]}")
+        # The reason is the last thing the snapshot prints (after any per-ticker warnings).
+        print(f"  ❌ 快照生成失败: {result.stderr.strip()[-300:]}")
         return False
 
 
 def run_report(date_str):
     """Generate markdown report."""
     script = BASE_DIR / "portfolio_report.py"
-    conda = os.environ.get("CONDA_EXE", "conda")
-    
+
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
-    
-    result = subprocess.run(
-        [conda, "run", "-n", "quant", "python3", str(script), "--date", date_str, "-o", str(report_file)],
-        capture_output=True, text=True, timeout=30,
-        cwd=str(BASE_DIR)
-    )
-    
+    command = [*python_command(), str(script), "--date", date_str, "-o", str(report_file)]
+
+    try:
+        result = run_child(command, timeout=REPORT_TIMEOUT, cwd=str(BASE_DIR))
+    except OSError as e:
+        print(f"  ⚠️ 报告生成失败: 无法启动 {command[0]} ({e})")
+        return None
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ 报告生成失败: 超过 {REPORT_TIMEOUT} 秒未完成，已终止")
+        return None
+
     if result.returncode == 0 and report_file.exists():
         print(f"  ✅ 报告已生成: {report_file.name}")
         return report_file
@@ -624,14 +959,83 @@ def run_report(date_str):
         return None
 
 
-def run_pipeline(date_str, send_report=True, *, resume=False):
-    """Checkpoint snapshot/report stages and never resend an uncertain push."""
+def holdings_digest(date_str):
+    """Content hash of the holdings the snapshot for ``date_str`` values, or None.
+
+    That is the confirmed ledger when it has a state for the date (the hash
+    covers its revision), as in ``portfolio_snapshot.load_holdings``; otherwise
+    the bytes of the legacy holdings file, which the Feishu adapter also hashes.
+    """
     import hashlib
-    config = load_config()
+    from ledger_bridge import ledger_holdings
+    confirmed = ledger_holdings(PORTFOLIO_DIR, date_str)
+    if confirmed is not None:
+        text = json.dumps(confirmed, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(text.encode()).hexdigest()
     holdings_file = HOLDINGS_DIR / f"{date_str}.json"
     if not holdings_file.is_file():
+        return None
+    return hashlib.sha256(holdings_file.read_bytes()).hexdigest()
+
+
+def file_sha(path):
+    """SHA-256 of a file's bytes, or None when it cannot be read."""
+    import hashlib
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+# The checkpoint ``pipeline-state/<date>.json`` records, besides the stage flags,
+# which snapshot each stage was made from, so that no stage counts as done just
+# because its file exists:
+#   snapshot_before   SHA-256 of the day's snapshot JSON before the snapshot stage
+#                     started (None: there was none); tells, after an interruption,
+#                     whether the JSON on disk was saved by that stage
+#   snapshot_sha      SHA-256 of the snapshot JSON the later stages are made from
+#   history_snapshot  the snapshot the day's history.csv row was written from
+#   report_snapshot   the snapshot the report was made from
+#   report_sha        SHA-256 of the report file as it was made; a report changed or
+#                     replaced since is not the day's report and is made again
+#
+# A snapshot JSON counts only for the day it names inside (``date``): one of
+# another day saved under this day's file name is refused, never written into
+# this day's history row or report.
+
+
+def snapshot_day_problem(path, date_str):
+    """Why the snapshot JSON at ``path`` cannot be ``date_str``'s, or None."""
+    try:
+        snapshot = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as error:
+        print(f"  ⚠️ 当日快照文件无法读取（{type(error).__name__}）", file=sys.stderr)
+        return "当日快照文件无法读取（不是有效的 JSON 或无法打开）"
+    day = snapshot.get("date") if isinstance(snapshot, dict) else None
+    if day != date_str:
+        return (f"{WRONG_DAY}：文件名是 {date_str}，内容的日期是 {str(day)[:10]}；未写入历史记录和日报。"
+                "请检查快照文件，或删除它后重新生成")
+    return None
+
+
+def report_is_current(state, report_file, snapshot_sha):
+    """Whether the day's report is the one this checkpoint made from the snapshot now on disk, unchanged since."""
+    return bool(state.get('report') and report_file.is_file() and state.get('report_snapshot') == snapshot_sha
+                and state.get('report_sha') is not None and state.get('report_sha') == file_sha(report_file))
+
+
+def run_pipeline(date_str, send_report=True, *, resume=False):
+    """Checkpoint snapshot/report stages and never resend an uncertain push.
+
+    The report counts as done only when it was made from the snapshot now on
+    disk (``report_snapshot``); otherwise it is made again, never reused.
+    """
+    config = load_config()
+    digest = holdings_digest(date_str)
+    if digest is None:
+        print(f"  ❌ 没有 {date_str} 的持仓（{NO_HOLDINGS}）：账本没有该日或之前的确认记录，也没有该日的持仓文件",
+              file=sys.stderr)
         return False
-    digest = hashlib.sha256(holdings_file.read_bytes()).hexdigest()
     checkpoint_path = PORTFOLIO_DIR / "pipeline-state" / f"{date_str}.json"
     state = {}
     if checkpoint_path.exists():
@@ -646,18 +1050,29 @@ def run_pipeline(date_str, send_report=True, *, resume=False):
     def save():
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_json_dump(state, checkpoint_path)
+    snap_file = SNAPSHOTS_DIR / f"{date_str}.json"
+    if not state.get('snapshot'):
+        state['snapshot_before'] = file_sha(snap_file)
     save()
     if not state.get('snapshot'):
         if not run_snapshot(date_str):
             return False
-        state['snapshot'] = True
+        # The snapshot writes its JSON and then the day's history row; it exits 0 only after both.
+        made = file_sha(snap_file)
+        state.update(snapshot=True, history=True, snapshot_sha=made, history_snapshot=made)
         save()
+    # The snapshot stage saves the day's own JSON; one found there from an earlier run may be another day's.
+    problem = snapshot_day_problem(snap_file, date_str) if snap_file.exists() else None
+    if problem:
+        print(f"  ❌ {problem}", file=sys.stderr)
+        return False
+    current = file_sha(snap_file)
     report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
-    if not state.get('report') or not report_file.is_file():
-        report_file = run_report(date_str)
-        if not report_file or not report_file.is_file():
+    if not report_is_current(state, report_file, current):
+        report_file = make_report(date_str)
+        if report_file is None:
             return False
-        state['report'] = True
+        state.update(report=True, report_snapshot=current, report_sha=file_sha(report_file))
         save()
     if send_report and state.get('push') != 'complete':
         if state.get('push') == 'uncertain':
@@ -731,16 +1146,225 @@ def action_update(date_str, text):
     return run_pipeline(date_str)
 
 
+# Printed when a stage of an interrupted day is completed; the backend's close
+# snapshot routine reads these to say what was repaired.
+HISTORY_REPAIRED = "已补写当日历史记录"
+REPORT_REPAIRED = "已补生成日报"
+
+
+# Printed when the auto pipeline finds a day whose snapshot was made for other holdings.
+HOLDINGS_CHANGED = "当日快照之后持仓有变化"
+# Printed when the day has no holdings in force (no ledger state on or before it, no holdings file
+# dated on or before it); the backend's close snapshot routine reports the day as unavailable.
+NO_HOLDINGS = "没有该日有效的持仓"
+# Printed when the snapshot JSON under the day's name is another day's.
+WRONG_DAY = "当日快照文件的日期与请求的日期不符"
+
+
+def make_report(date_str):
+    """Generate the day's report from the snapshot on disk; returns the file or None.
+
+    The previous report is removed first, so a failure can never leave an
+    older report looking like this one.
+    """
+    report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
+    try:
+        report_file.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        print(f"  ⚠️ 无法替换旧日报（{type(error).__name__}）", file=sys.stderr)
+        return None
+    made = run_report(date_str)
+    return made if made and made.is_file() else None
+
+
+def history_line(date_str):
+    """The day's ``history.csv`` row without its line end, or None."""
+    try:
+        lines = (PORTFOLIO_DIR / "history.csv").read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    rows = [line for line in lines[1:] if line.startswith(f"{date_str},")]
+    return rows[-1] if rows else None
+
+
+def history_has_row(date_str):
+    """Whether ``history.csv`` has a row for ``date_str``."""
+    return history_line(date_str) is not None
+
+
+def history_matches(snapshot, date_str):
+    """Whether the day's row is the one ``snapshot`` gives; None when the snapshot gives none to compare."""
+    import portfolio_snapshot
+    try:
+        expected = portfolio_snapshot.history_row(snapshot, date_str).rstrip("\n")
+    except (KeyError, TypeError, AttributeError):
+        return None
+    return history_line(date_str) == expected
+
+
+def snapshot_matches_ledger(snapshot, date_str):
+    """For a ledger portfolio: whether ``snapshot`` was made from the ledger's current revision.
+
+    None when that cannot be told (legacy holdings, or a snapshot without the revision).
+    """
+    from ledger_bridge import ledger_holdings
+    confirmed = ledger_holdings(PORTFOLIO_DIR, date_str)
+    if confirmed is None or not isinstance(snapshot, dict) or snapshot.get("ledger_revision") is None:
+        return None
+    return snapshot.get("ledger_revision") == confirmed.get("ledger_revision")
+
+
+def repair_history(date_str):
+    """Write the day's ``history.csv`` row from the saved snapshot; no price is fetched."""
+    import portfolio_snapshot
+    try:
+        snapshot = json.loads((SNAPSHOTS_DIR / f"{date_str}.json").read_text())
+        portfolio_snapshot.upsert_history(snapshot, date_str, PORTFOLIO_DIR)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"  ❌ 无法根据已保存的快照补写 history.csv（{type(error).__name__}）；"
+              "请检查快照文件，或删除它后重新生成", file=sys.stderr)
+        return False
+    print(f"  🔧 {HISTORY_REPAIRED}（history.csv，按已保存的快照，未重新获取行情）")
+    return True
+
+
+def resume_pipeline(date_str, send_report):
+    """Complete a day whose snapshot JSON exists, from its checkpoint, without fetching prices.
+
+    No stage counts as done because its file exists:
+
+    * the snapshot: when the checkpoint says its stage started and did not
+      finish, the JSON on disk is that stage's only if it differs from the
+      one there before (``snapshot_before``); otherwise it is an earlier one
+      and the whole pipeline runs (``run_pipeline``), as without a snapshot.
+      A checkpoint of the previous release has no ``snapshot_before``; a
+      ledger snapshot is then judged by its ledger revision, a legacy one is
+      taken as saved. A snapshot made for holdings that have changed since is
+      kept (the auto pipeline makes a day once), with a notice;
+    * the day's ``history.csv`` row must be the one the snapshot gives, or it
+      is written again from the snapshot;
+    * the report must have been made from this snapshot (``report_snapshot``)
+      and after the history row was last written, and be unchanged since
+      (``report_sha``), or it is made again;
+    * the push: ``complete`` stays done, ``uncertain`` is never resent, one
+      never started is sent.
+
+    Without a checkpoint (the snapshot was made by another route, which never
+    pushes) the snapshot is taken as saved and the rest is checked the same way.
+    Before anything is written, the snapshot must be the day's own (its
+    ``date``): another day's JSON under this name is refused.
+    """
+    checkpoint_path = PORTFOLIO_DIR / "pipeline-state" / f"{date_str}.json"
+    snap_file = SNAPSHOTS_DIR / f"{date_str}.json"
+    had_checkpoint = checkpoint_path.exists()
+    state = {}
+    if had_checkpoint:
+        try:
+            state = json.loads(checkpoint_path.read_text())
+        except (OSError, ValueError):
+            print("  ❌ 流水线检查点无法读取，未继续", file=sys.stderr)
+            return False
+        if not isinstance(state, dict):
+            print("  ❌ 流水线检查点格式不对，未继续", file=sys.stderr)
+            return False
+    try:
+        snapshot = json.loads(snap_file.read_text())
+    except (OSError, ValueError) as error:
+        print(f"  ❌ 当日快照文件无法读取（{type(error).__name__}）；请检查快照文件，或删除它后重新生成",
+              file=sys.stderr)
+        return False
+    current = file_sha(snap_file)
+    digest = holdings_digest(date_str)
+
+    if state and not state.get('snapshot'):
+        # The snapshot stage started and did not finish: was the JSON on disk saved by it?
+        if 'snapshot_before' in state:
+            unfinished = state['snapshot_before'] == current
+        else:
+            unfinished = snapshot_matches_ledger(snapshot, date_str) is False
+        if unfinished:
+            print("  ⚠️ 当日快照的生成曾中断，磁盘上的快照是之前生成的；重新生成当日快照")
+            return run_pipeline(date_str, send_report)
+    problem = snapshot_day_problem(snap_file, date_str)
+    if problem:
+        print(f"  ❌ {problem}", file=sys.stderr)
+        return False
+    if not state:
+        state = {'holdings_hash': digest, 'report': False, 'push': 'not_started'}
+    elif state.get('holdings_hash') != digest:
+        print(f"  ⚠️ {HOLDINGS_CHANGED}：自动流水线保留按当时持仓生成的快照；"
+              "如需按当前持仓重做，请运行 --action pipeline")
+
+    def save():
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_json_dump(state, checkpoint_path)
+
+    state.update(snapshot=True, snapshot_sha=current)
+    matches = history_matches(snapshot, date_str)
+    vouched = state.get('history') and state.get('history_snapshot') == current and history_has_row(date_str)
+    rewritten = False
+    if matches is False or (matches is None and not vouched):
+        if not repair_history(date_str):
+            state['history'] = False
+            save()
+            return False
+        rewritten = True
+    state.update(history=True, history_snapshot=current)
+    report_file = REPORTS_DIR / f"portfolio-{date_str.replace('-', '')}.md"
+    if rewritten or not report_is_current(state, report_file, current):
+        report_file = make_report(date_str)
+        if report_file is None:
+            state['report'] = False
+            save()
+            return False
+        print(f"  🔧 {REPORT_REPAIRED}：{report_file.name}")
+        state['report_sha'] = file_sha(report_file)
+    state.update(report=True, report_snapshot=current)
+    save()
+    if send_report and state.get('push') != 'complete':
+        if state.get('push') == 'uncertain':
+            # A process can die after Feishu accepts the message: never send a second copy.
+            print("  ⚠️ 飞书推送结果未确认，不会自动重发")
+        else:
+            state['push'] = 'uncertain'
+            save()
+            if not send_feishu_report(date_str, report_file.read_text(), load_config()):
+                return False
+            state['push'] = 'complete'
+    state['complete'] = not send_report or state.get('push') == 'complete'
+    save()
+    return True
+
+
 def action_auto_pipeline(date_str):
-    """Auto pipeline: run only if today's snapshot doesn't exist yet."""
+    """Auto pipeline: make the day's snapshot, history row, report and push, each once.
+
+    Without the day's snapshot JSON the whole pipeline runs. With it, the day
+    is completed from its checkpoint (``resume_pipeline``): a run killed after
+    the snapshot JSON was saved, or whose report failed, is finished without
+    fetching prices again, and exits non-zero while a stage still fails.
+
+    With an active ledger the snapshot values the confirmed ledger, so no
+    legacy holdings file is cloned (the ledger refuses that write). The report
+    is pushed only when ``feishu_chat_id`` is configured, the setting that
+    ``send_feishu_report`` needs; without it a saved snapshot and report are
+    a success rather than a failed push.
+    """
+    send_report = bool(load_config().get("feishu_chat_id"))
     snap_file = SNAPSHOTS_DIR / f"{date_str}.json"
     if snap_file.exists():
-        print(f"  ℹ️  今日快照已存在 ({snap_file.name})，跳过")
-        return True
-    
+        print(f"  ℹ️  今日快照已存在 ({snap_file.name})，检查历史记录、日报和推送是否完成")
+        return resume_pipeline(date_str, send_report)
+
     print(f"  ⏰ 今日快照不存在，自动生成...")
-    clone_holdings(date_str)
-    return run_pipeline(date_str)
+    from ledger_bridge import active_ledger
+    if active_ledger(PORTFOLIO_DIR) is None and clone_holdings(date_str)[0] is None:
+        return False
+    if not send_report:
+        print("  ℹ️  未配置 feishu_chat_id，日报只保存不推送")
+    return run_pipeline(date_str, send_report=send_report)
 
 
 @portfolio_write_locked(lambda: PORTFOLIO_DIR)

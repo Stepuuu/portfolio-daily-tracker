@@ -2,6 +2,11 @@
 
 > This is the **core data engine** of [Portfolio Daily Tracker](../README.md).  
 > For the full system (Dashboard + OpenClaw integration), see the root README.
+>
+> Since 4.0.0 the web app keeps holdings only in the confirmed ledger (`ledger.sqlite3`), and its
+> backend runs this engine's daily pipeline by itself at 15:40 on A-share trading days. Once a ledger
+> exists, the holdings-writing commands below are refused; the dated holdings JSON described here is
+> the stand-alone, engine-only workflow and a migration source for the setup wizard (`/setup`).
 
 A self-hosted daily portfolio tracking system using local JSON files + Python. Supports **A-shares, Hong Kong, and US stocks** with automatic FX conversion, quantitative risk metrics, and AI Agent interactive daily workflow.
 
@@ -74,6 +79,10 @@ Edit `config.json`:
 
 - Set group names and cost bases to match your accounts
 - Set `proxy` if Yahoo Finance is blocked in your region (e.g. `http://127.0.0.1:7890`)
+- Exchange rates come from the source the dashboard's Today page uses: Yahoo first, and Eastmoney's
+  offshore rate when Yahoo's is stale or has no time, asked only for the currencies the snapshot
+  converts (reached directly, or through the environment's proxy with `TRACKER_EASTMONEY_PROXY=1`;
+  `eastmoney_url` replaces its endpoint); `TRACKER_QUOTE_SOURCE=yahoo` or `eastmoney` uses that one alone
 
 ### 3. Create initial holdings
 
@@ -123,6 +132,13 @@ Output: `snapshots/YYYY-MM-DD.json` with:
 # Run daily at 16:30 (after market close, adjust for your timezone)
 30 16 * * 1-5 cd /path/to/project && bash scripts/portfolio-daily.sh
 ```
+
+The daily scripts (`portfolio-daily.sh`, `portfolio-cron.sh`, `portfolio_scheduler.py`
+and the snapshot/report steps started by `portfolio_daily_update.py`) use plain
+`python3` / the interpreter that started them. Conda is optional: set
+`CONDA_ENV=<name>` to run them with `conda run -n <name> python3` instead
+(`CONDA_EXE` selects the conda executable; the shell scripts also accept `PYTHON`
+to name a different interpreter).
 
 ## Snapshot Output Example
 

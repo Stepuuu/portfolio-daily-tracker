@@ -8,8 +8,12 @@ Usage:
 import json, os, sys, argparse, glob
 from datetime import datetime
 
+from portfolio_accounting import percent_text
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORTFOLIO_DIR = os.environ.get("PORTFOLIO_DIR", os.path.join(os.path.dirname(BASE_DIR), "portfolio"))
+# The day change of a snapshot without an earlier day (portfolio_snapshot.NO_EARLIER_DAY).
+NO_EARLIER_DAY = "不可用（没有上一日的记录可比）"
 
 
 def load_snapshot(date_str):
@@ -62,29 +66,60 @@ def format_money(val, unit="万"):
     return f"¥{val:.2f}"
 
 
+def csv_number(row, key):
+    """A history.csv field as a float; None when it is missing, empty or not a number."""
+    try:
+        return float(row.get(key, ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def rate_text(rate):
+    """An exchange rate with four decimals; a dash when the snapshot has none."""
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return "—"
+    return f"{rate:.4f}"
+
+
 def generate_report(snapshot, history=None):
     """Generate markdown report from snapshot."""
     s = snapshot["summary"]
     date_str = snapshot["date"]
-    fx = snapshot.get("fx_rates", {})
+    fx = snapshot.get("fx_rates") or {}
 
     lines = []
     lines.append(f"# 📊 投资组合日报")
     lines.append(f"")
-    lines.append(f"**{date_str}**  |  汇率 USD/CNY={fx.get('USD', '?'):.4f}  HKD/CNY={fx.get('HKD', '?'):.4f}")
+    lines.append(f"**{date_str}**  |  汇率 USD/CNY={rate_text(fx.get('USD'))}  HKD/CNY={rate_text(fx.get('HKD'))}")
     lines.append(f"")
+    # Figures that rest on an estimated input (portfolio_snapshot.calculate_snapshot), as Today marks them 估算.
+    if s.get("estimated"):
+        lines.append(f"> ⚠️ 本日快照含估算：{'；'.join(str(reason) for reason in s.get('estimated_reasons') or [])}")
+        lines.append(f"")
 
     # ── 总览 ──
-    arrow = "📈" if s["daily_change"] >= 0 else "📉"
+    # 日变动 is the flow-adjusted market change. A deposit or withdrawal (inferred
+    # from the change in contributed capital) gets its own row and is never a gain.
+    # Snapshots written before these fields existed only have the raw change.
+    market_change = s.get("market_daily_change", s["daily_change"])
+    market_change_pct = s.get("market_daily_change_pct", s["daily_change_pct"])
+    capital_change = s.get("capital_change") or 0
+    # No earlier day to compare with (the first snapshot): the change is unavailable, not 0.
+    arrow = "📊" if market_change is None else "📈" if market_change >= 0 else "📉"
     lines.append(f"## {arrow} 总览")
     lines.append(f"")
     lines.append(f"| 指标 | 数值 |")
     lines.append(f"|:---|---:|")
     lines.append(f"| 总资产 | {format_money(s['total_value'])} |")
     lines.append(f"| 总成本 | {format_money(s['total_cost'])} |")
-    lines.append(f"| 累计盈亏 | {format_money(s['total_profit'])} ({s['total_return_pct']:+.2f}%) |")
-    lines.append(f"| 日变动 | {format_money(s['daily_change'])} ({s['daily_change_pct']:+.2f}%) |")
-    lines.append(f"| 本月收益 | {s['month_return_pct']:+.2f}% |")
+    lines.append(f"| 累计盈亏 | {format_money(s['total_profit'])} ({percent_text(s.get('total_return_pct'))}) |")
+    if market_change is None:
+        lines.append(f"| 日变动 | {NO_EARLIER_DAY} |")
+    else:
+        lines.append(f"| 日变动 | {format_money(market_change)} ({percent_text(market_change_pct)}) |")
+    if capital_change:
+        lines.append(f"| {'当日入金' if capital_change > 0 else '当日出金'} | {format_money(abs(capital_change))} |")
+    lines.append(f"| 本月收益 | {percent_text(s.get('month_return_pct'))} |")
     if 'max_value' in s:
         lines.append(f"| 历史最高 | {format_money(s['max_value'])} |")
     lines.append(f"| 最大回撤 | {s['max_drawdown_pct']:.2f}% |")
@@ -92,8 +127,10 @@ def generate_report(snapshot, history=None):
 
     # ── 各组详情 ──
     for gname, gdata in snapshot["groups"].items():
-        g_arrow = "🟢" if gdata["return_pct"] >= 0 else "🔴"
-        lines.append(f"## {g_arrow} {gname}  ({format_money(gdata['total_value'])}  {gdata['return_pct']:+.2f}%)")
+        # Return is None when contributed capital is not positive; the sign then comes from the profit.
+        group_return = gdata.get("return_pct")
+        g_arrow = "🟢" if (group_return if group_return is not None else gdata["profit"]) >= 0 else "🔴"
+        lines.append(f"## {g_arrow} {gname}  ({format_money(gdata['total_value'])}  {percent_text(group_return)})")
         lines.append(f"")
         lines.append(f"| 名称 | 代码 | 数量 | 现价 | 市值(元) | 占比 | 盈亏% |")
         lines.append(f"|:---|:---|---:|---:|---:|---:|---:|")
@@ -105,7 +142,7 @@ def generate_report(snapshot, history=None):
                 f"{curr_sym}{pos['current_price']:.2f} | "
                 f"¥{pos['market_value_cny']:,.0f} | "
                 f"{pos['weight_in_group']:.1f}% | "
-                f"{pos['profit_pct']:+.1f}% |"
+                f"{percent_text(pos.get('profit_pct'), 1)} |"
             )
 
         # Fund & cash
@@ -122,8 +159,13 @@ def generate_report(snapshot, history=None):
     if history and len(history) >= 2:
         lines.append(f"## 📈 资产趋势")
         lines.append(f"")
+        def market_pct(row):
+            # Flow-adjusted when the row has it (11-column history), raw change otherwise.
+            value = csv_number(row, "market_daily_change_pct")
+            return value if value is not None else csv_number(row, "daily_change_pct")
+
         values = [float(r.get("total_value", 0)) for r in history[-30:]]
-        changes = [float(r.get("daily_change_pct", 0)) for r in history[-30:]]
+        changes = [market_pct(r) or 0 for r in history[-30:]]
         lines.append(f"近{len(values)}日资产: {sparkline(values)}")
         lines.append(f"近{len(changes)}日涨跌: {sparkline(changes)}")
         lines.append(f"")
@@ -135,8 +177,8 @@ def generate_report(snapshot, history=None):
         for r in recent:
             lines.append(
                 f"| {r['date']} | {format_money(float(r['total_value']))} | "
-                f"{float(r.get('daily_change_pct', 0)):+.2f}% | "
-                f"{float(r.get('return_pct', 0)):+.2f}% | "
+                f"{percent_text(market_pct(r))} | "
+                f"{percent_text(csv_number(r, 'return_pct'))} | "
                 f"{float(r.get('max_drawdown_pct', 0)):.2f}% |"
             )
         lines.append(f"")

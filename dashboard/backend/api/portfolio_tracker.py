@@ -37,6 +37,25 @@ def _dated_files(directory):
                   if _valid_date(Path(path).stem))
 
 
+def _unavailable_return(row: dict) -> dict:
+    """The engine leaves a percentage empty when its base is not positive, and a change empty without an earlier day.
+
+    return_pct needs positive contributed capital; the daily changes need a
+    positive previous total value. The first snapshot has nothing to compare
+    with, so its daily, capital and market changes are unavailable too.
+    """
+    for key in ("return_pct", "daily_change_pct", "market_daily_change_pct",
+                "daily_change", "capital_change", "market_daily_change"):
+        if row.get(key) == "":
+            row[key] = None
+    return row
+
+
+def _change_pct(change, base):
+    """A change as a percentage of its starting value; None unless that value is positive."""
+    return round(change / base * 100, 2) if base > 0 else None
+
+
 def _read_json(path: str):
     """Read and parse a JSON file."""
     if not os.path.exists(path):
@@ -89,7 +108,7 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
                         row[h] = float(v) if h != "date" else v
                     except ValueError:
                         row[h] = v
-                rows.append(row)
+                rows.append(_unavailable_return(row))
 
     rows = sorted({r["date"]: r for r in rows if _valid_date(str(r.get("date", "")))}.values(), key=lambda r: r["date"])
 
@@ -109,10 +128,9 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
         cap_change = target_row["total_cost"] - prev_cost
         mkt_change = target_row["daily_change"] - cap_change
         prev_val = rows[target_idx - 1]["total_value"] if target_idx > 0 else target_row["total_value"]
-        mkt_pct = (mkt_change / prev_val * 100) if prev_val else 0
         target_row["capital_change"] = round(cap_change, 2)
         target_row["market_daily_change"] = round(mkt_change, 2)
-        target_row["market_daily_change_pct"] = round(mkt_pct, 2)
+        target_row["market_daily_change_pct"] = _change_pct(mkt_change, prev_val)
 
     # Compute month metrics from CSV rows
     month_prefix = target_date[:7]  # "YYYY-MM"
@@ -125,7 +143,7 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
         month_change = target_row["total_value"] - month_start_value
         month_capital = target_row["total_cost"] - month_start_cost
         month_market_change = month_change - month_capital
-        month_return_pct = (month_market_change / month_start_value * 100) if month_start_value else 0
+        month_return_pct = _change_pct(month_market_change, month_start_value)
     else:
         month_start_value = target_row["total_value"]
         month_change = 0
@@ -133,7 +151,7 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
         month_return_pct = 0
 
     prev_date = rows[target_idx - 1]["date"] if target_idx > 0 else None
-    prev_value = rows[target_idx - 1]["total_value"] if target_idx > 0 else target_row["total_value"]
+    prev_value = rows[target_idx - 1]["total_value"] if target_idx > 0 else None
 
     summary = {
         "total_value": target_row["total_value"],
@@ -151,7 +169,7 @@ def _build_synthetic_snapshot(target_date: str) -> Optional[dict]:
         "month_start_value": month_start_value,
         "month_change": month_change,
         "month_market_change": month_market_change,
-        "month_return_pct": round(month_return_pct, 2),
+        "month_return_pct": month_return_pct,
         "sharpe_ratio": 0,
         "volatility_annual": 0,
         "win_rate": 0,
@@ -259,6 +277,7 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
                     "capital_change": s.get("capital_change", 0),
                     "market_daily_change": s.get("market_daily_change", s.get("daily_change", 0)),
                     "market_daily_change_pct": s.get("market_daily_change_pct", s.get("daily_change_pct", 0)),
+                    **_estimate_marks(s),
                 })
         return {"history": history, "count": len(history)}
 
@@ -275,7 +294,7 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
                         row[h] = float(v) if h != "date" else v
                     except ValueError:
                         row[h] = v
-                history.append(row)
+                history.append(_unavailable_return(row))
 
     history = sorted({r["date"]: r for r in history if _valid_date(str(r.get("date", "")))}.values(), key=lambda r: r["date"])
 
@@ -291,10 +310,9 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
         cap_change = row["total_cost"] - prev_cost
         mkt_change = row["daily_change"] - cap_change
         prev_value = history[i - 1]["total_value"] if i > 0 else row["total_value"]
-        mkt_change_pct = (mkt_change / prev_value * 100) if prev_value != 0 else 0
         row["capital_change"] = round(cap_change, 2)
         row["market_daily_change"] = round(mkt_change, 2)
-        row["market_daily_change_pct"] = round(mkt_change_pct, 2)
+        row["market_daily_change_pct"] = _change_pct(mkt_change, prev_value)
 
     # Override with snapshot data where available (higher fidelity for cash-flow capital detection)
     snap_dir = os.path.join(PORTFOLIO_DIR, "snapshots")
@@ -302,16 +320,29 @@ async def get_history(limit: int = Query(365, ge=1, le=1000)):
         s = _read_json(f)
         if s and "summary" in s:
             sm = s["summary"]
-            if "market_daily_change" in sm:
-                snap_date = s.get("date", "")
-                for row in history:
-                    if row["date"] == snap_date:
+            snap_date = s.get("date", "")
+            for row in history:
+                if row["date"] == snap_date:
+                    if "market_daily_change" in sm:
                         row["market_daily_change"] = sm["market_daily_change"]
                         row["market_daily_change_pct"] = sm.get("market_daily_change_pct", 0)
                         row["capital_change"] = sm.get("capital_change", 0)
-                        break
+                    row.update(_estimate_marks(sm))
+                    break
 
     return {"history": history[-limit:], "count": len(history)}
+
+
+def _estimate_marks(summary: dict) -> dict:
+    """``estimated`` and ``estimated_reasons`` of a snapshot that rests on an estimated input, else nothing.
+
+    The engine records them (``portfolio_snapshot.calculate_snapshot``); a history row gets them only from
+    its day's snapshot file, so a row without one carries no mark.
+    """
+    if summary.get("estimated") is not True:
+        return {}
+    reasons = summary.get("estimated_reasons")
+    return {"estimated": True, "estimated_reasons": [str(r) for r in reasons] if isinstance(reasons, list) else []}
 
 
 @router.get("/config")

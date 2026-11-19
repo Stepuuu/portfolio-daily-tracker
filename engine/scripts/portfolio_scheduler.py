@@ -8,8 +8,15 @@ Usage:
     # Start scheduler (background)
     nohup python3 portfolio_scheduler.py &
 
-    # Or with specific times
+    # Or with specific times (the machine's local time, like the dates it uses)
     python3 portfolio_scheduler.py --notify-time 18:00 --pipeline-time 19:00
+
+    # Optional: run the daily scripts inside a conda environment
+    CONDA_ENV=myenv python3 portfolio_scheduler.py
+
+The daily scripts run with the interpreter that started the scheduler unless
+CONDA_ENV is set (then ``conda run -n $CONDA_ENV python3``; CONDA_EXE selects
+the conda executable).
 """
 
 import os, sys, time, signal, argparse, json
@@ -21,8 +28,7 @@ import threading
 BASE_DIR = Path(__file__).parent
 PID_FILE = BASE_DIR.parent / "logs" / "scheduler.pid"
 LOG_DIR = BASE_DIR.parent / "logs"
-import shutil as _shutil
-CONDA = os.environ.get("CONDA_EXE") or _shutil.which("conda") or "conda"
+from portfolio_daily_update import python_command
 
 # Track what we've done today to avoid re-running
 daily_state = {
@@ -45,19 +51,29 @@ def log(msg):
         pass
 
 
-def is_trading_day():
-    """Check if today is a trading day (weekday, not Chinese holiday)."""
-    now = datetime.now()
+# Weekday closures of the Shanghai Stock Exchange in 2026, from its
+# notice of 2025-12-22 (上证公告〔2025〕45号): 元旦 1/1-1/3, 春节 2/15-2/23,
+# 清明 4/4-4/6, 劳动节 5/1-5/5, 端午 6/19-6/21, 中秋 9/25-9/27, 国庆 10/1-10/7.
+# Update annually from the exchange notice, together with the same list in
+# portfolio-cron.sh and portfolio-daily.sh. Dates outside this table are treated
+# as trading days when they fall on a weekday.
+HOLIDAYS = {
+    "2026-01-01", "2026-01-02",
+    "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-23",
+    "2026-04-06",
+    "2026-05-01", "2026-05-04", "2026-05-05",
+    "2026-06-19",
+    "2026-09-25",
+    "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07",
+}
+
+
+def is_trading_day(now=None):
+    """Check if a day (default: today, local time) is a weekday and not an exchange holiday."""
+    now = now or datetime.now()
     if now.weekday() >= 5:  # Saturday=5, Sunday=6
         return False
-    
-    # Chinese holidays 2026 (update annually)
-    holidays = {
-        "2026-01-01", "2026-01-26", "2026-01-27", "2026-01-28", "2026-01-29", "2026-01-30",
-        "2026-02-16", "2026-02-17", "2026-05-01", "2026-05-02", "2026-05-05",
-        "2026-06-19", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"
-    }
-    return now.strftime("%Y-%m-%d") not in holidays
+    return now.strftime("%Y-%m-%d") not in HOLIDAYS
 
 
 def run_action(action, date_str=None):
@@ -66,8 +82,8 @@ def run_action(action, date_str=None):
         date_str = datetime.now().strftime("%Y-%m-%d")
     
     script = str(BASE_DIR / "portfolio_daily_update.py")
-    conda_env = os.environ.get("CONDA_ENV", "base")
-    cmd = [CONDA, "run", "-n", conda_env, "python3", script, "--action", action, "--date", date_str]
+    # Current interpreter by default; ``conda run -n $CONDA_ENV`` when CONDA_ENV is set.
+    cmd = [*python_command(), script, "--action", action, "--date", date_str]
     
     log(f"执行: {action} (日期: {date_str})")
     try:
@@ -98,14 +114,15 @@ def check_and_run(notify_hour, notify_min, pipeline_hour, pipeline_min):
     notify_time = notify_hour * 60 + notify_min
     pipeline_time = pipeline_hour * 60 + pipeline_min
     
-    # Window: run within 5 minutes of target time
+    # Window: from 2 minutes before to 2 minutes after the target time, inclusive
+    # (each task still runs at most once per day).
     if abs(current_time - notify_time) <= 2 and daily_state["notified_date"] != today:
-        log(f"⏰ 触发通知任务 (18:00)")
+        log(f"⏰ 触发通知任务 ({notify_hour:02d}:{notify_min:02d})")
         daily_state["notified_date"] = today
         run_action("notify", today)
     
     if abs(current_time - pipeline_time) <= 2 and daily_state["pipeline_date"] != today:
-        log(f"⏰ 触发自动管道 (19:00)")
+        log(f"⏰ 触发自动管道 ({pipeline_hour:02d}:{pipeline_min:02d})")
         daily_state["pipeline_date"] = today
         run_action("auto-pipeline", today)
 
@@ -118,8 +135,10 @@ def signal_handler(sig, frame):
 
 def main():
     parser = argparse.ArgumentParser(description="Portfolio daily scheduler")
-    parser.add_argument("--notify-time", default="18:00", help="Notify time (HH:MM, Beijing time)")
-    parser.add_argument("--pipeline-time", default="19:00", help="Auto-pipeline time (HH:MM, Beijing time)")
+    parser.add_argument("--notify-time", default="18:00",
+                        help="Notify time (HH:MM, local time of this machine)")
+    parser.add_argument("--pipeline-time", default="19:00",
+                        help="Auto-pipeline time (HH:MM, local time of this machine)")
     parser.add_argument("--check-interval", type=int, default=60, help="Check interval in seconds")
     args = parser.parse_args()
     
