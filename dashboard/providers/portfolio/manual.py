@@ -138,7 +138,7 @@ class ManualPortfolioProvider(PortfolioProvider):
                         print(f"刷新 {position.stock.symbol} 价格失败: {e}")
                         quote = None
 
-                if quote:
+                if quote and quote.price is not None:     # a missing price keeps the last known one
                     position.current_price = quote.price
 
         await asyncio.gather(

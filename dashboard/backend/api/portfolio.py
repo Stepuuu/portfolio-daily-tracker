@@ -117,8 +117,15 @@ async def get_portfolio_summary():
 
     # 计算摘要统计
     positions = portfolio.get("positions", [])
-    total_profit = portfolio.get("total_profit", 0)
-    total_assets = portfolio.get("total_assets", 0)
+    # A portfolio in more than one currency has no single total: these are None then
+    # (mixed_currency is true) and the per-currency figures are in totals_by_currency.
+    total_profit = portfolio.get("total_profit")
+    total_assets = portfolio.get("total_assets")
+    if total_profit is None or total_assets is None:
+        profit_pct = None
+    else:
+        cost_basis = total_assets - total_profit
+        profit_pct = (total_profit / cost_basis * 100) if cost_basis > 0 else 0
 
     # 按盈亏排序
     winners = [p for p in positions if p.get("profit", 0) > 0]
@@ -128,9 +135,12 @@ async def get_portfolio_summary():
         "total_positions": len(positions),
         "total_assets": total_assets,
         "cash": portfolio.get("cash", 0),
-        "market_value": portfolio.get("total_market_value", 0),
+        "market_value": portfolio.get("total_market_value"),
         "total_profit": total_profit,
-        "profit_pct": (total_profit / (total_assets - total_profit) * 100) if (total_assets - total_profit) > 0 else 0,
+        "profit_pct": profit_pct,
+        "currency": portfolio.get("currency"),
+        "mixed_currency": portfolio.get("mixed_currency", False),
+        "totals_by_currency": portfolio.get("totals_by_currency", {}),
         "winners_count": len(winners),
         "losers_count": len(losers),
         "top_winner": max(positions, key=lambda x: x.get("profit_pct", 0)) if positions else None,

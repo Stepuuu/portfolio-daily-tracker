@@ -104,6 +104,126 @@ def test_backdated_event_replays_and_historical_state_excludes_later_reversal(le
         ledger.propose([{'kind': 'reverse', 'date': '2026-08-01', 'target_id': ledger.history()[0]['id']}])
 
 
+def test_historical_state_after_buy_reversal_and_backdated_buy(tmp_path, monkeypatch, ledger):
+    # A buy entered on the wrong day is reversed and re-entered on the earlier, correct day.
+    book(ledger, [event('opening', date='2026-08-01', cash_balances={'CNY': '1000'}, contributed_cny='1000')])
+    buy = {'ticker': 'SHA:600000', 'currency': 'CNY', 'quantity': '100', 'price': '8'}
+    book(ledger, [event('buy', date='2026-08-05', **buy)])
+    mistaken = ledger.history()[-1]['id']
+    book(ledger, [{'kind': 'reverse', 'date': '2026-08-10', 'target_id': mistaken}])
+    book(ledger, [event('buy', date='2026-08-04', **buy)])
+
+    def position(day=None):
+        account = ledger.state(day)['accounts']['Example']
+        held = account['positions'].get('SHA:600000')
+        return amount(account['cash_balances']['CNY']), amount(held['quantity']) if held else 0
+
+    assert position() == (200, 100)
+    assert position('2026-08-03') == (1000, 0)
+    assert position('2026-08-04') == (200, 100)
+    # Between the mistaken buy and its reversal the two buys cannot both be paid for.
+    # These dates used to raise "Insufficient native cash"; they show the corrected ledger.
+    for day in ('2026-08-05', '2026-08-07', '2026-08-09'):
+        assert position(day) == (200, 100)
+    assert position('2026-08-10') == (200, 100)
+    assert ledger.state('2026-08-05')['revision'] == 4
+
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(root / 'engine/scripts' if (root / 'engine').exists() else root / 'scripts'))
+    from ledger_bridge import ledger_holdings
+    # The snapshot engine reads holdings for a date through this bridge.
+    group = ledger_holdings(tmp_path, '2026-08-05')['groups']['Example']
+    assert group['cash'] == 200
+    assert [(p['ticker'], p['quantity'], p['cost_price']) for p in group['positions']] == [('SHA:600000', 100, 8)]
+
+
+# ── A past date when only some accounts have an impossible dated history ──
+
+BUY = {'ticker': 'SHA:600000', 'currency': 'CNY', 'quantity': '100', 'price': '8'}
+
+
+def open_account(ledger, account, cash='1000'):
+    book(ledger, [event('opening', account=account, date='2026-08-01', cash_balances={'CNY': cash},
+                        contributed_cny=cash)])
+
+
+def corrected_buy(ledger, account, reversal):
+    """A buy entered on Aug 5 by mistake, reversed on ``reversal`` and re-entered on Aug 4."""
+    open_account(ledger, account)
+    book(ledger, [event('buy', account=account, date='2026-08-05', **BUY)])
+    book(ledger, [{'kind': 'reverse', 'date': reversal, 'target_id': ledger.history()[-1]['id']}])
+    book(ledger, [event('buy', account=account, date='2026-08-04', **BUY)])
+
+
+def reversed_deposit(ledger, account):
+    """A deposit on Aug 5 reversed on Aug 10: the account holds it from Aug 5 to Aug 9."""
+    open_account(ledger, account)
+    book(ledger, [event('deposit', account=account, date='2026-08-05', currency='CNY', amount='20')])
+    book(ledger, [{'kind': 'reverse', 'date': '2026-08-10', 'target_id': ledger.history()[-1]['id']}])
+
+
+def cash(state, account):
+    return amount(state['accounts'][account]['cash_balances']['CNY'])
+
+
+def test_one_accounts_correction_leaves_another_account_as_dated(ledger):
+    reversed_deposit(ledger, 'B')
+    corrected_buy(ledger, 'A', reversal='2026-08-06')
+    state = ledger.state('2026-08-05')
+    # B's own dated replay is possible, so its Aug 10 reversal is not applied yet.
+    assert cash(state, 'B') == 1020
+    # A cannot pay for both buys on Aug 5; A alone shows the corrected ledger.
+    assert cash(state, 'A') == 200
+    assert amount(state['accounts']['A']['positions']['SHA:600000']['quantity']) == 100
+    assert state['as_of_corrected_accounts'] == ['A']
+    assert list(state['accounts']) == ['B', 'A']
+    assert cash(ledger.state('2026-08-06'), 'B') == 1020
+    assert 'as_of_corrected_accounts' not in ledger.state('2026-08-06')
+
+
+def test_single_account_correction_is_reported_only_on_the_dates_it_is_used(ledger):
+    corrected_buy(ledger, 'Example', reversal='2026-08-10')
+    for day in ('2026-08-05', '2026-08-07', '2026-08-09'):
+        state = ledger.state(day)
+        assert (cash(state, 'Example'), state['as_of_corrected_accounts']) == (200, ['Example'])
+    for day in ('2026-08-03', '2026-08-04', '2026-08-10', None):
+        assert 'as_of_corrected_accounts' not in ledger.state(day)
+
+
+def test_unaffected_account_history_does_not_depend_on_other_accounts(tmp_path):
+    alone = Ledger(tmp_path / 'alone.sqlite3')
+    reversed_deposit(alone, 'B')
+    shared = Ledger(tmp_path / 'shared.sqlite3')
+    reversed_deposit(shared, 'B')
+    corrected_buy(shared, 'A', reversal='2026-08-07')
+    corrected_buy(shared, 'C', reversal='2026-08-10')
+    seen = []
+    for day in ('2026-08-05', '2026-08-08', '2026-08-10'):
+        state = shared.state(day)
+        assert state['accounts']['B'] == alone.state(day)['accounts']['B'], day
+        assert 'B' not in state.get('as_of_corrected_accounts', []), day
+        seen.append((cash(state, 'B'), state.get('as_of_corrected_accounts')))
+    assert seen == [(1020, ['A', 'C']), (1020, ['C']), (1000, None)]
+
+
+def test_transfer_ties_accounts_only_when_a_later_reversal_removes_it(ledger):
+    corrected_buy(ledger, 'A', reversal='2026-08-10')
+    open_account(ledger, 'Kept', cash='100')
+    book(ledger, [event('transfer', account='Kept', date='2026-08-02', to_account='A', currency='CNY', amount='50')])
+    open_account(ledger, 'Undone', cash='100')
+    book(ledger, [event('transfer', account='Undone', date='2026-08-03', to_account='A', currency='CNY', amount='30')])
+    book(ledger, [{'kind': 'reverse', 'date': '2026-08-10', 'target_id': ledger.history()[-1]['id']}])
+    state = ledger.state('2026-08-05')
+    # The kept transfer is in both views, so "Kept" stays as dated. The undone
+    # transfer leaves both of its accounts in the corrected view, never only one.
+    assert (cash(state, 'A'), cash(state, 'Kept'), cash(state, 'Undone')) == (250, 50, 100)
+    assert state['as_of_corrected_accounts'] == ['A', 'Undone']
+    assert sum(cash(state, name) for name in state['accounts']) == 1200 - 800
+    plain = ledger.state('2026-08-03')
+    assert (cash(plain, 'A'), cash(plain, 'Kept'), cash(plain, 'Undone')) == (1080, 50, 70)
+
+
 def test_stale_preview_rejected(ledger):
     opening(ledger)
     p = ledger.propose([event('deposit', currency='CNY', amount='10')])
@@ -272,6 +392,24 @@ def test_fund_flows_and_valuation_do_not_change_contributions(ledger):
         ledger.propose([event('fund_sell', amount='601')])
     with pytest.raises(LedgerError):
         ledger.propose([event('fund_value', amount='-1')])
+
+
+def test_interest_credits_cash_without_changing_contributions(ledger):
+    opening(ledger)
+    row = event('interest', currency='CNY', amount='12.34', source='broker:Example', external_id='h:repo:1')
+    p = ledger.propose([row])
+    assert p['events'][0]['amount'] == '12.34'
+    ledger.confirm(p['id'])
+    account = ledger.state()['accounts']['Example']
+    assert amount(account['cash_balances']['CNY']) == amount('10012.34')
+    assert account['contributed_cny'] == '17000'
+    assert ledger.propose([row])['duplicates'] == 1
+    for bad in ({'amount': '0'}, {'amount': '-1'}, {'currency': 'EUR'}, {'amount': None}):
+        with pytest.raises(LedgerError):
+            ledger.propose([event('interest', currency='CNY', amount='1') | bad])
+    interest_id = ledger.history()[-1]['id']
+    book(ledger, [{'kind': 'reverse', 'date': DAY, 'target_id': interest_id}])
+    assert amount(ledger.state()['accounts']['Example']['cash_balances']['CNY']) == 10000
 
 
 def test_pathological_precision_and_normalized_duplicate(ledger):

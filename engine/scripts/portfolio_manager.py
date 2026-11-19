@@ -125,11 +125,15 @@ def cmd_update(args):
         sys.exit(1)
 
     if args.cost_price is not None:
-        # 更新成本价(加权平均)
         if args.quantity > 0:
+            # 加仓: 更新成本价(加权平均)
             total_cost = old_qty * pos["cost_price"] + args.quantity * args.cost_price
             pos["cost_price"] = round(total_cost / new_qty, 4) if new_qty > 0 else 0
+        elif args.quantity < 0:
+            # 减仓: 卖出价不是剩余持仓的成本, 均价保持不变
+            print(f"ℹ️ 减仓不改变持仓均价: 成本价保持 {pos['cost_price']} (忽略 --cost-price {args.cost_price})")
         else:
+            # 数量不变: 直接修正成本价
             pos["cost_price"] = args.cost_price
 
     if new_qty == 0:
@@ -244,7 +248,8 @@ def main():
     p_up.add_argument("--ticker", help="股票代码(如 SHA:603259)")
     p_up.add_argument("--name", help="股票名称(如 药明康德)")
     p_up.add_argument("--quantity", type=int, required=True, help="数量变动(正=加仓,负=减仓)")
-    p_up.add_argument("--cost-price", type=float, dest="cost_price", help="本次交易成本价")
+    p_up.add_argument("--cost-price", type=float, dest="cost_price",
+                      help="加仓时的买入价(用于加权平均成本); 减仓时忽略, 持仓均价不变")
 
     # add
     p_add = sub.add_parser("add", help="添加新持仓")

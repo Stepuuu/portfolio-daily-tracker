@@ -1,6 +1,7 @@
 """Offline model/tool -> exact preview -> confirmation -> FX valuation journey."""
 import asyncio
 import importlib.util
+from decimal import Decimal
 import json
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
@@ -11,10 +12,12 @@ from fastapi.testclient import TestClient
 from agents.trader.agent import TraderAgent
 from core.tools import ToolExecutor, propose_ledger_tool, get_portfolio_tool
 from core.ledger import Ledger
+from core.market.runtime import set_market_runtime
 from backend.api import ledger as api
 import portfolio_snapshot as snapshot
 from ledger_bridge import ledger_holdings
 from tests.test_trader_multiround import ScriptedProvider, answer
+from tests.fakes import FakeClock, ScriptedSource, fake_runtime
 
 DAY = '2026-09-01'
 
@@ -49,7 +52,11 @@ def test_model_tool_confirmation_reload_and_fx_valuation(setup, stream):
     result = json.loads(model.calls[1][-1]['content'][0]['content'])
     assert result['status'] == 'awaiting_user_confirmation'
     identifier = parse_qs(urlsplit(result['review_url']).query)['proposal'][0]
-    assert identifier == result['id']
+    # Changed in review round 3: the tool returns the proposal id, the review link and typed rows of the
+    # affected account (core.tools._ledger_proposal_view), no longer the whole preview keyed by account names.
+    assert identifier == result['proposal_id']
+    assert {'account': {'untrusted_text': 'Example'}, 'field': 'cash', 'currency': 'USD', 'before': '1000',
+            'after': '798'} in result['changes'] and 'Other' not in json.dumps(result, ensure_ascii=False)
     assert ledger.state()['accounts']['Example']['cash_balances']['USD'] == '1000'
     preview = client.get('/api/ledger/proposals/'+identifier).json()
     assert preview['receipt'] is None
@@ -68,8 +75,24 @@ def test_model_tool_confirmation_reload_and_fx_valuation(setup, stream):
     assert accounts['Other']['cash_balances'] == {'CNY':'300'}
     assert accounts['Example']['positions']['NASDAQ:EXAMPLE']['quantity'] == '2'
     # A subsequent AI read uses the confirmed ledger, not a cached flat portfolio.
-    current = asyncio.run(get_portfolio_tool(None).function())
-    assert current['accounts'] == accounts
+    # It is the Today payload (the ledger at live quotes); no quotes are scripted
+    # here, so prices are unavailable but every balance must be the ledger's.
+    set_market_runtime(fake_runtime(FakeClock('2026-09-01 10:00'), ScriptedSource()))
+    try:
+        current = asyncio.run(get_portfolio_tool(None).function())
+    finally:
+        set_market_runtime(None)
+    assert current['source'] == 'confirmed_ledger+live_quotes'
+    assert current['ledger_revision'] == restored.state()['revision']
+    # Account names reach the model fenced as untrusted_text (core/agent_tools/_envelope.fence).
+    assert {account['name']['untrusted_text']: ({row['ticker']: (Decimal(row['quantity']), Decimal(row['cost_price']), row['currency'])
+                               for row in account['positions']},
+                              {currency: Decimal(amount) for currency, amount in account['cash'].items()})
+            for account in current['accounts']} == \
+        {name: ({ticker: (Decimal(row['quantity']), Decimal(row['cost_price']), row['currency'])
+                 for ticker, row in account['positions'].items()},
+                {currency: Decimal(amount) for currency, amount in account['cash_balances'].items()})
+         for name, account in accounts.items()}
     holdings = ledger_holdings(directory, DAY)
     def value(day, usd, hkd, previous=None):
         return snapshot.calculate_snapshot({**holdings,'date':day},{'NASDAQ:EXAMPLE':100}, {'NASDAQ:EXAMPLE':'USD'},

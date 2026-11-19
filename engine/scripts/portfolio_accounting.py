@@ -98,6 +98,25 @@ def value_cash(group, rates):
     return sum(values.values()), balances, values
 
 
+def return_pct(profit, capital):
+    """Profit as a percentage of capital, or None when capital is not positive.
+
+    Net contributed capital reaches zero or turns negative once more has been
+    withdrawn than was paid in (and a diluted position cost can do the same).
+    The ratio is then undefined or has a flipped sign, so it is reported as
+    unavailable instead of as a number. The same holds for a daily or monthly
+    change measured from a starting value that is a net liability or zero.
+    """
+    return round(profit / capital * 100, 2) if capital > 0 else None
+
+
+def percent_text(value, digits=2):
+    """Signed percentage for people; an unavailable value prints as a dash."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return "—"
+    return f"{value:+.{digits}f}%"
+
+
 def ordered_history(history, snapshots, before_date):
     """CSV takes precedence; snapshots fill gaps. Ignore today's/future rows."""
     rows = {}
