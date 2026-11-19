@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12']
+        python: ['3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,8 +28,10 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/frontend/package-lock.json
       - run: node --test openclaw/feishu-workbench-bridge.test.mjs
+      # The route-table test imports src/routes.tsx, which needs react and lucide-react installed.
       - run: npm ci
         working-directory: dashboard/frontend
+      - run: node --experimental-strip-types --test "dashboard/frontend/tests/*.test.mjs"
       - run: npm run build
         working-directory: dashboard/frontend
       - run: npm audit --audit-level=high
@@ -66,5 +68,8 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: npm ci
         working-directory: dashboard/frontend
-      - run: python tests/browser_smoke.py
-      - run: python tests/browser_lab_smoke.py
+      - run: |
+          for smoke in tests/browser_*smoke.py; do
+            echo "== $smoke"
+            python "$smoke" || exit 1
+          done

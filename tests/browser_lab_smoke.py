@@ -12,7 +12,12 @@ import urllib.request
 
 from playwright.sync_api import sync_playwright, expect
 
+from runner_date import create_demo_argv
+
 ROOT = Path(__file__).resolve().parents[1]
+# The app follows the system theme until one is chosen in 设置: the smoke runs dark, or light with
+# TRACKER_SCREENSHOT_THEME=light (screenshots for review in that theme). Theme assertions set the theme themselves.
+SCHEME = "light" if os.environ.get("TRACKER_SCREENSHOT_THEME") == "light" else "dark"
 
 
 def port():
@@ -30,9 +35,11 @@ def stop(process):
         process.wait()
 
 
-def ready(url, process):
+def ready(url, process, seconds=120):
+    # A deadline, not a number of tries: on a loaded machine the backend's imports alone can take tens of seconds.
+    deadline = time.monotonic() + seconds
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    for _ in range(100):
+    while time.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError("Isolated preview exited")
         try:
@@ -46,7 +53,8 @@ def ready(url, process):
 with ExitStack() as stack:
     out = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="research-browser-")))
     backend_port, frontend_port = port(), port()
-    subprocess.run([sys.executable, str(ROOT / "engine/scripts/create_demo.py"), "--output", str(out / "portfolio")], check=True)
+    # Research-only mode shows no holdings; the demo is still made for a fixed day, never the runner's.
+    subprocess.run(create_demo_argv("--output", str(out / "portfolio"), "--today", "2026-11-17"), check=True)
     env = {**os.environ, "PORTFOLIO_DIR": str(out / "portfolio"), "TRACKER_CONFIG_FILE": str(out / "config.json"),
            "TRACKER_LAB_DIR": str(out / "lab"), "TRACKER_LAB_ONLY": "1", "TRACKER_DEMO_MODE": "0",
            "PYTHONPATH": str(ROOT / "dashboard"), "BACKEND_PORT": str(backend_port), "FRONTEND_PORT": str(frontend_port)}
@@ -62,11 +70,12 @@ with ExitStack() as stack:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"),
                                               headless=True, args=["--no-sandbox"])
-        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        page = browser.new_page(color_scheme=SCHEME, viewport={"width": 1440, "height": 1000})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(f"http://127.0.0.1:{frontend_port}/lab")
-        expect(page.get_by_role("heading", name="股票研究工作台", exact=True)).to_be_visible()
+        # The first page load waits for Vite to compile the modules, like the other smokes' first page.
+        expect(page.get_by_role("heading", name="股票研究工作台", exact=True)).to_be_visible(timeout=60000)
         page.get_by_label("研究模板", exact=True).select_option("volatility")
         page.get_by_role("button", name="运行手动实验", exact=True).click()
         expect(page.get_by_text("已完成", exact=True)).to_be_visible(timeout=30000)
