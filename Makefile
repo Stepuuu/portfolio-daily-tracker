@@ -43,23 +43,23 @@ setup:
 	@[ -f engine/portfolio/config.json ] || cp engine/portfolio/config.example.json engine/portfolio/config.json
 	@# Create data directories
 	@mkdir -p engine/portfolio/holdings engine/portfolio/snapshots
-	@mkdir -p dashboard/data/conversations dashboard/data/screenshots
+	@mkdir -p dashboard/data/conversations
 	@echo ""
 	@echo "✓ Setup complete!"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  1. Edit dashboard/config.json — add your LLM API key"
-	@echo "  2. Edit engine/portfolio/config.json — set group names and cost basis"
-	@echo "  3. Create engine/portfolio/holdings/$$(date +%Y-%m-%d).json"
-	@echo "  4. Run: make start"
+	@echo "  1. Run: make start"
+	@echo "  2. Open http://localhost:3000/setup — the setup wizard creates your first account and"
+	@echo "     opening balance, reviews fees, checks quotes and alerts, and optionally saves your LLM API key"
+	@echo "  Fictional data first: make demo"
 
 # ── Development ──
 test:
 	python3 -m pytest -q
 
 demo:
-	@[ -d .demo/portfolio ] || python3 engine/scripts/create_demo.py --output .demo/portfolio
-	@echo "Open http://localhost:$${FRONTEND_PORT:-3000}/tracker — fictional data only"
+	@python3 engine/scripts/create_demo.py --output .demo/portfolio --ledger --refresh
+	@echo "Open http://localhost:$${FRONTEND_PORT:-3000} — fictional data only"
 	PORTFOLIO_DIR="$(CURDIR)/.demo/portfolio" TRACKER_LAB_DIR="$(CURDIR)/.demo/research" TRACKER_DEMO_MODE=1 bash start.sh
 
 lab:
