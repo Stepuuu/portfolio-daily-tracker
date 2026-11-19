@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from zoneinfo import ZoneInfo
@@ -29,6 +30,55 @@ from zoneinfo import ZoneInfo
 _MARKETS = {"SHA": "CNY", "SHE": "CNY", "HKG": "HKD", "NASDAQ": "USD", "NYSE": "USD"}
 class PortfolioError(ValueError):
     """A validated, user-facing accounting error."""
+
+
+# Runs in a child process. ``run_pipeline`` records the push as ``uncertain``
+# before it delivers, so no other pipeline will send the same report. Only for
+# that delivery does the child release the lock it shares with its parent
+# (argv[4] is the parent's inherited lock descriptor, or -1 for none).
+_PIPELINE = """
+import fcntl
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import portfolio_daily_update as p
+import portfolio_write_lock
+
+day, resume, lock = sys.argv[2], sys.argv[3] == '1', int(sys.argv[4])
+if lock >= 0:
+    # Lets the snapshot child work under this lock, but only if the descriptor
+    # really holds the lock of the portfolio this pipeline writes.
+    portfolio_write_lock.adopt_descriptor(p.PORTFOLIO_DIR, lock)
+checkpoint = p.PORTFOLIO_DIR / 'pipeline-state' / (day + '.json')
+deliver = p.send_feishu_report
+
+
+def recorded():
+    try:
+        return json.loads(checkpoint.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def deliver_unlocked(*args, **kwargs):
+    claim = recorded()
+    if lock < 0 or not isinstance(claim, dict) or claim.get('push') != 'uncertain':
+        # Without a durable claim another pipeline could send this report too.
+        return deliver(*args, **kwargs)
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    try:
+        delivered = deliver(*args, **kwargs)
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    # A pipeline for newer holdings may have replaced the checkpoint meanwhile;
+    # reporting failure keeps run_pipeline from overwriting that record.
+    return delivered and recorded() == claim
+
+
+p.send_feishu_report = deliver_unlocked
+sys.exit(0 if p.run_pipeline(day, send_report=True, resume=resume) else 1)
+"""
 
 
 _ACTIONS = {"no_change", "buy", "sell", "set_cash", "set_fund", "deposit", "withdraw", "set_cost_basis"}
@@ -117,6 +167,7 @@ class PortfolioAdapter:
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state_dir.chmod(0o700)
         self.db_path = self.state_dir / "operations.sqlite3"
+        self._held = threading.local()
         with self._db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS previews (
@@ -147,9 +198,11 @@ class PortfolioAdapter:
         with open(self.lock_path, "a+b") as handle:
             os.chmod(self.lock_path, 0o600)
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            self._held.descriptor = handle.fileno()
             try:
                 yield
             finally:
+                self._held.descriptor = None
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _guard_legacy(self):
@@ -483,6 +536,9 @@ class PortfolioAdapter:
                    "fingerprint": fingerprint, "saved_day": saved_day, "after": after,
                    "after_sha256": hashlib.sha256(after_bytes).hexdigest(), "action": action, "items": items}
         with self._db() as db:
+            # An expired preview can never be confirmed, and a confirmed one
+            # was copied into its operation; neither is read again.
+            db.execute("DELETE FROM previews WHERE expires<?", (time.time(),))
             db.execute("INSERT INTO previews VALUES (?,?,?)", (preview_id, time.time() + 1800, _encode(payload)))
         return {"id": preview_id, "summary": summary, "date": day, "changes": changes,
                 "opaque_state": {"preview_id": preview_id}}
@@ -558,18 +614,32 @@ class PortfolioAdapter:
 
     def _execute_pipeline(self, day, resume):
         # Call the report function directly: this avoids the CLI's clone path and
-        # a nested acquisition of the shared financial-write lock.
-        code = ("import sys; sys.path.insert(0, sys.argv[1]); "
-                "import portfolio_daily_update as p; "
-                "sys.exit(0 if p.run_pipeline(sys.argv[2], send_report=True, resume=sys.argv[3]=='1') else 1)")
+        # a nested acquisition of the shared financial-write lock. The child
+        # inherits this thread's lock so that the snapshot, the report file and
+        # every checkpoint write stay inside it; see _PIPELINE for the one
+        # stage, network delivery, that runs with the lock released.
+        lock = getattr(self._held, "descriptor", None)
         try:
-            process = subprocess.run([sys.executable, "-c", code, str(self.scripts_dir), day, "1" if resume else "0"],
-                                     cwd=self.scripts_dir, capture_output=True, timeout=900)
+            process = subprocess.run([sys.executable, "-c", _PIPELINE, str(self.scripts_dir), day,
+                                      "1" if resume else "0", str(-1 if lock is None else lock)],
+                                     cwd=self.scripts_dir, capture_output=True, timeout=900,
+                                     pass_fds=() if lock is None else (lock,))
             return process.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False
+        finally:
+            if lock is not None:
+                # The child may have stopped while delivery had released the
+                # shared lock; the caller's remaining work expects to hold it.
+                fcntl.flock(lock, fcntl.LOCK_EX)
 
     def run_report(self, receipt: dict):
+        """Report one committed update; the lock is released only while delivering.
+
+        A confirmation may therefore commit during delivery. It cannot change
+        the report being sent, whose text was produced from the holdings this
+        operation committed, and the newer update gets its own report.
+        """
         reference = receipt.get("operation_id", receipt.get("reference")) if isinstance(receipt, dict) else None
         if not isinstance(reference, str):
             raise PortfolioError("缺少已确认的更新回执。")

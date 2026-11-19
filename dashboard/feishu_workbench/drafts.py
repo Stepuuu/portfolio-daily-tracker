@@ -50,6 +50,20 @@ class Drafts:
             db.execute('INSERT INTO daily_edits VALUES (?,?,?)', (key, actor, encode(result)))
             return result
 
+    def prune(self, limit=500):
+        """Drop saved edit results whose command is gone and can never be retried.
+
+        Commit records are recovery state for confirmed updates and are kept.
+        """
+        with self.store.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            return db.execute("""
+                DELETE FROM daily_edits WHERE id IN (
+                    SELECT id FROM daily_edits WHERE id NOT IN (SELECT id FROM commands)
+                    AND (id NOT LIKE '%!_date' ESCAPE '!'
+                         OR substr(id,1,length(id)-5) NOT IN (SELECT id FROM commands))
+                    LIMIT ?)""", (limit,)).rowcount
+
     def commit(self, actor, key):
         with self.store.db() as db:
             row = db.execute('SELECT * FROM daily_commits WHERE id=? AND actor=?', (key, actor)).fetchone()

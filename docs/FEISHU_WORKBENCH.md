@@ -12,6 +12,18 @@ bridge's event connection.
 当前消息接入复用已有 OpenClaw 飞书连接。组合引擎、网页与股票研究工作台可独立运行；
 用环境变量提供凭证，也仍需配置桥接所用的事件连接。
 
+**4.0.0:** the web app now keeps holdings only in the confirmed ledger. The
+card's daily update edits the legacy dated holdings files, so once a ledger
+exists it is refused: record changes with 记一笔 or 账本 › 导入 in the web app. A
+ledger adapter for the card is on the [roadmap](ROADMAP.md). Price alerts and
+the briefs are not pushed to Feishu; they appear in the web app's notification
+bell. The daily report made by the automatic close snapshot is still pushed when
+`feishu_chat_id` is configured.
+
+**4.0.0：**网页的持仓只来自已确认的账本。卡片的「每日更新」修改的是旧版按日期保存的持仓文件，账本启用后会被拒绝，
+请在网页里用 记一笔 或 账本 › 导入 记录变动；卡片接入账本已列入[后续计划](ROADMAP.md)。价格提醒和盘前盘后简报不推送到飞书，
+只在网页的铃铛里；收盘自动快照生成的日报在配置了 `feishu_chat_id` 时仍会推送。
+
 ## Architecture / 接入方式
 
 ```mermaid

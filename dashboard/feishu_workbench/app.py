@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import hmac
 import json
+import logging
 import os
 from pathlib import Path
 import stat
@@ -14,6 +15,13 @@ from fastapi.responses import JSONResponse
 from .clients import FeishuClient, ResearchClient
 from .service import Workbench, toast
 from .store import Rejected, Store
+
+
+logger = logging.getLogger(__name__)
+
+# Event types are logged only when they are one of these fixed names.
+_EVENTS = frozenset({'card.action.trigger', 'im.message.receive_v1', 'application.bot.menu_v6',
+                     'im.chat.access_event.bot_p2p_chat_entered_v1'})
 
 
 def private_text(path):
@@ -93,11 +101,15 @@ def create_app(config, controller=None):
     @app.post('/bridge/event')
     async def event(request: Request):
         payload = await authenticated(request)
+        kind = payload.get('event_type')
+        kind = kind if isinstance(kind, str) and kind in _EVENTS else 'unrecognised event'
         try:
             return await asyncio.to_thread(controller.accept, payload)
         except Rejected as exc:
+            logger.warning('%s was refused (%s)', kind, type(exc).__name__)
             return toast(str(exc), 'error')
-        except (ValueError, TypeError, AttributeError):
+        except (ValueError, TypeError, AttributeError) as exc:
+            logger.warning('%s was malformed (%s)', kind, type(exc).__name__)
             return toast('操作数据无效，请重新打开工作台。', 'error')
 
     @app.post('/bridge/open')

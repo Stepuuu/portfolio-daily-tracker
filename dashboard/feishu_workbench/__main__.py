@@ -30,7 +30,11 @@ def main():
     if not isinstance(port, int) or not 1024 <= port <= 65535:
         parser.error('port must be an unprivileged TCP port')
     if args.command == 'serve':
+        import logging
         import uvicorn
+        # Worker failures are reported through logging; give them a timestamp
+        # in the private service log.
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
         uvicorn.run(create_app(config), host='127.0.0.1', port=port, access_log=False)
     elif args.command == 'status':
         print(json.dumps(read_json(f'http://127.0.0.1:{port}/health'), ensure_ascii=False))

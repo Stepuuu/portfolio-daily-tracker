@@ -17,7 +17,9 @@ teach the workflow; they are not market evidence. Existing account records are
 not required. `make demo` also allows synthetic manual experiments while keeping
 portfolio changes disabled. Demo research uses a separate database.
 
-The regular `make start` includes the workbench alongside the portfolio features.
+The regular `make start` includes the workbench (研究 › 工作台) alongside the
+portfolio features; 研究 › 回测 (`/backtest`) is the separate single-security
+backtest described in the [README](../README.md#backtesting).
 Python 3.10+, Node.js 22.12+ and Bash 4.3+ are required. No additional database
 server, task broker, Docker daemon or machine learning service is required.
 
@@ -106,7 +108,7 @@ from being committed. Cancelling cannot undo tokens already spent remotely.
 ## Connect a model
 
 Connections live in the workbench's **Connections and schedules** tab and in
-Settings. Model IDs are configurable; no model catalog is treated as permanent.
+设置 › 模型 (Settings › models, `/settings/models`). Model IDs are configurable; no model catalog is treated as permanent.
 
 | Connection | Authentication | What runs |
 |---|---|---|

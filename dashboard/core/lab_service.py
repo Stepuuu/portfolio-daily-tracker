@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import logging
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,7 @@ from core.lab_data import cached_records, demo_records, import_csv, metadata
 from core.lab_models import Connection, ExperimentParams, MarketDatasetRequest, RunRequest
 from core.lab_store import LabStore, LostLease, encode
 
+logger = logging.getLogger(__name__)
 
 def safe_message(value):
     """Keep task errors useful without exposing credentials or machine paths."""
@@ -29,6 +31,27 @@ def safe_message(value):
     text = re.sub(r"\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]+", "[redacted]", text)
     text = re.sub(r"(?:[A-Za-z]:\\|/)(?:[^\s:;,\"']+[\\/])+[^\s:;,\"']*", "[local path]", text)
     return text[:1200]
+
+
+EXPERIMENT_FAILED = "实验计算失败（详细原因已记录在服务端日志）"
+
+
+def _compute_errors():
+    from core.lab_compute import ERROR_TEXTS
+    return ERROR_TEXTS
+
+
+COMPUTE_ERRORS = _compute_errors()
+SUBPROCESS_ERRORS = ("研究计算进程失败，请检查数据和方法参数", "研究结果超过大小限制")
+
+
+def experiment_error(exc):
+    """The fixed text kept for a failed experiment; the exception's own words go to the log."""
+    text = str(exc)
+    if text in COMPUTE_ERRORS or text in SUBPROCESS_ERRORS:
+        return text
+    logger.warning("research experiment failed: %s", safe_message(f"{type(exc).__name__}: {text[:500]}"))
+    return EXPERIMENT_FAILED
 
 
 class LabService:
@@ -198,7 +221,9 @@ class LabService:
             return await self.compute_override(records, spec)
         output = await self._subprocess("core.lab_compute", {"records": records, "spec": spec}, timeout)
         if output.get("error"):
-            raise ValueError(safe_message(output["error"]))
+            if output.get("diagnostic"):
+                logger.warning("research experiment failed: %s", safe_message(output["diagnostic"]))
+            raise ValueError(output["error"] if output["error"] in COMPUTE_ERRORS else EXPERIMENT_FAILED)
         return output["result"]
 
     async def _worker(self):
@@ -348,7 +373,9 @@ class LabService:
                     result = await self._compute(records, spec, remaining())
                     entry = {"id": f"experiment_{index + 1}", "spec": spec, "result": result, "status": "completed"}
                 except ValueError as exc:
-                    entry = {"id": f"experiment_{index + 1}", "spec": spec, "error": safe_message(exc), "status": "failed"}
+                    # Stored, shown and given to the model as feedback: a fixed classification only.
+                    entry = {"id": f"experiment_{index + 1}", "spec": spec, "error": experiment_error(exc),
+                             "status": "failed"}
                 cp["experiments"].append(entry)
                 save("evaluated", f"实验 {index + 1} 的结果已保存" if entry["status"] == "completed" else f"实验 {index + 1} 失败：{entry['error']}")
             completed = [x for x in cp["experiments"] if x["status"] == "completed"]

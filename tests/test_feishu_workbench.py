@@ -313,7 +313,7 @@ def test_real_research_results_fit_card_and_show_both_evaluation_sets(tmp_path):
         try:
             run = service.submit({'objective': 'Synthetic stock research',
                                   'dataset_id': service.store.datasets()[0]['id'], 'template_id': 'volatility'})
-            for _ in range(200):
+            for _ in range(2000):   # up to a minute: a loaded machine needs more than six seconds
                 result = service.public_run(run['id'])
                 if result['status'] in {'completed', 'failed'}:
                     break

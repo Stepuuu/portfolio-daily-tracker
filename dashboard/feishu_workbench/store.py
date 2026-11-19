@@ -1,5 +1,6 @@
 """Durable card sessions and commands; callbacks never execute financial writes."""
 from contextlib import contextmanager
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,15 @@ import uuid
 
 class Rejected(ValueError):
     pass
+
+
+# How long an expired card, with its commands and deliveries, is still kept.
+RETENTION = 30 * 86400
+# A research card in one of these states will never change again.
+FINISHED_RUNS = frozenset({'completed', 'failed', 'cancelled'})
+# The daily reports that the reports card lists and can retry.
+_RECENT_REPORTS = ("SELECT c.* FROM commands c JOIN sessions s ON c.session=s.id "
+                   "WHERE c.action='daily.report' AND s.actor=? ORDER BY c.created DESC LIMIT 5")
 
 
 def encode(value):
@@ -38,6 +48,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS deliveries (
                     id TEXT PRIMARY KEY, session TEXT NOT NULL, prepared TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending');
+                CREATE INDEX IF NOT EXISTS command_session ON commands(session);
+                CREATE INDEX IF NOT EXISTS delivery_session ON deliveries(session);
             ''')
         os.chmod(self.path, 0o600)
 
@@ -154,13 +166,56 @@ class Store:
             if command['action'] != 'daily.report':
                 db.execute('UPDATE sessions SET busy=0 WHERE id=?', (command['session'],))
 
-    def observed_sessions(self):
+    def observed_sessions(self, limit=50):
+        """Valid cards of unfinished research, most recently updated first.
+
+        A failed or cancelled run keeps its status card; following those as
+        well would crowd out the runs that can still change.
+        """
         with self.db() as db:
-            return [self.unpack(row) for row in db.execute("SELECT * FROM sessions WHERE view='research_status' AND busy=0 AND message!='' LIMIT 50")]
+            rows = db.execute("SELECT * FROM sessions WHERE view='research_status' AND busy=0 AND message!='' "
+                              "AND expires>=? ORDER BY expires DESC, rowid DESC", (time.time(),))
+            sessions = (self.unpack(row) for row in rows)
+            return list(islice((s for s in sessions if s['model'].get('status') not in FINISHED_RUNS), limit))
+
+    def prune(self, now=None, limit=200):
+        """Forget up to ``limit`` cards that can no longer act; return how many.
+
+        Commands are idempotency keys and deliveries are retry state, so both
+        go only together with their session. A session stays while its card is
+        valid or expired less than RETENTION ago, while it is busy or has a
+        queued, running or recent command, while it holds one of its user's
+        listed daily reports or one that a valid card offers to retry, and while it is the
+        latest card of its chat (entering that chat must not send another).
+        """
+        cutoff = (time.time() if now is None else now) - RETENTION
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            listed = set()
+            for actor in [row['actor'] for row in db.execute('SELECT DISTINCT actor FROM sessions')]:
+                listed.update(row['session'] for row in db.execute(_RECENT_REPORTS, (actor,)))
+            # A valid card names the report its retry button acts on.
+            for row in db.execute("SELECT model FROM sessions WHERE expires>=? AND model LIKE '%_report_command%'",
+                                  (time.time() if now is None else now,)).fetchall():
+                target = json.loads(row['model']).get('_report_command')
+                if target:
+                    listed.update(r['session'] for r in db.execute('SELECT session FROM commands WHERE id=?', (target,)))
+            rows = db.execute("""
+                SELECT id FROM sessions AS s WHERE busy=0 AND expires<?
+                AND NOT EXISTS (SELECT 1 FROM commands WHERE session=s.id
+                                AND (status IN ('queued','running') OR created>=?))
+                AND rowid NOT IN (SELECT max(rowid) FROM sessions WHERE message!='' GROUP BY actor,chat)
+                ORDER BY expires, rowid""", (cutoff, cutoff))
+            expired = list(islice((row['id'] for row in rows if row['id'] not in listed), limit))
+            for identifier in expired:
+                db.execute('DELETE FROM deliveries WHERE session=?', (identifier,))
+                db.execute('DELETE FROM commands WHERE session=?', (identifier,))
+                db.execute('DELETE FROM sessions WHERE id=?', (identifier,))
+            return len(expired)
 
     def recent_reports(self, actor):
         with self.db() as db:
-            return [self.unpack(row) for row in db.execute("SELECT c.* FROM commands c JOIN sessions s ON c.session=s.id WHERE c.action='daily.report' AND s.actor=? ORDER BY c.created DESC LIMIT 5", (actor,))]
+            return [self.unpack(row) for row in db.execute(_RECENT_REPORTS, (actor,))]
 
     def retry_report(self, actor, identifier):
         with self.db() as db:

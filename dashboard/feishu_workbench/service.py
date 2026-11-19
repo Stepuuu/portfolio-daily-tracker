@@ -2,9 +2,12 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import threading
+import time
+import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,12 +17,28 @@ from .daily import DailyWorkflow, ACTIONS as DAILY_ACTIONS
 from .store import Rejected, Store, encode
 
 
+logger = logging.getLogger(__name__)
+
 _KEEP_RETRYING = object()
 
 ACTIONS = ('home', 'daily.open', 'daily.preview', 'daily.confirm', 'assets',
            'research.open', 'research.preview', 'research.start', 'research.list',
            'research.cancel', 'research.refresh', 'reports')
 ACTIONS += ('daily.report.retry', 'research.select', 'daily.choose') + DAILY_ACTIONS
+
+
+def origin(exc):
+    """Exception types and stack frames, deliberately without the messages.
+
+    SDK, model and file errors can quote paths, credentials or account values.
+    The log names actions and code locations only; never command identifiers
+    (card nonces), actors, card content or amounts.
+    """
+    parts = []
+    while exc is not None and len(parts) < 5:
+        parts.append(type(exc).__name__ + '\n' + ''.join(traceback.format_tb(exc.__traceback__)))
+        exc = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+    return 'caused by '.join(parts).rstrip()
 
 
 def toast(content, kind='info'):
@@ -81,6 +100,7 @@ class Workbench:
         self.stopping = False
         self.tasks = []
         self.render_locks = {}
+        self.unobserved = set()
         self.daily = DailyWorkflow(self)
 
     def authorize(self, actor):
@@ -362,45 +382,74 @@ class Workbench:
             if not command:
                 await asyncio.sleep(.2)
                 continue
+            action = command['action']
             try:
                 await asyncio.to_thread(self.execute, command)
-            except (DeliveryError, sqlite3.OperationalError):
+            except (DeliveryError, sqlite3.OperationalError) as exc:
                 if command['attempts'] < 2:
+                    logger.warning('%s: %s on attempt %d; will retry', action, type(exc).__name__, command['attempts'] + 1)
                     await self.database(self.store.retry, command)
                     await asyncio.sleep(2)
                     continue
+                logger.warning('%s: %s on attempt %d; gave up', action, type(exc).__name__, command['attempts'] + 1)
                 await self.database(self.store.finish, command, '服务暂时不可用；已确认的资产变更不会重复执行。')
             except Exception as exc:
                 # Only deliberate user-facing errors are exposed. SDK/model/file
                 # errors can contain paths, secrets or account internals.
                 from .portfolio import PortfolioError
-                message = str(exc) if isinstance(exc, (Rejected, PortfolioError)) else '操作未完成，请返回工作台核对状态。'
+                if isinstance(exc, (Rejected, PortfolioError)):
+                    message = str(exc)
+                    logger.warning('%s was refused (%s); the reason is stored with the command', action, type(exc).__name__)
+                else:
+                    message = '操作未完成，请返回工作台核对状态。'
+                    logger.error('%s failed unexpectedly: %s', action, origin(exc))
                 if not reports:
                     try:
                         await asyncio.to_thread(self.render, command, 'error', {'message': message})
-                    except Exception:
-                        pass
+                    except DeliveryError as failure:
+                        logger.warning('%s: error card was not delivered (%s)', action, type(failure).__name__)
+                    except Exception as failure:
+                        logger.error('%s: error card could not be built: %s', action, origin(failure))
                 await self.database(self.store.finish, command, message)
             else:
                 await self.database(self.store.finish, command)
 
+    def prune(self):
+        """One bounded pass; a backlog is worked off over the following passes."""
+        return self.store.prune() + self.daily.drafts.prune()
+
     async def observe(self):
+        pruned = None
         while not self.stopping:
-            for session in await self.database(self.store.observed_sessions, stop_result=[]):
+            if pruned is None or time.monotonic() - pruned >= 600:
+                pruned = time.monotonic()
+                try:
+                    await self.database(self.prune, stop_result=0)
+                except Exception as exc:
+                    logger.error('pruning finished card state failed: %s', origin(exc))
+            sessions = await self.database(self.store.observed_sessions, stop_result=[])
+            self.unobserved.intersection_update(session['id'] for session in sessions)
+            for session in sessions:
                 identifier = session['model'].get('_run_id', '')
                 if not re.fullmatch(r'run_[a-f0-9]{32}', identifier):
                     continue
                 try:
                     run = await asyncio.to_thread(self.research.get, '/api/lab/runs/' + identifier)
                     model = self.run_model(run)
-                    if model == session['model']:
-                        continue
-                    view = 'research_result' if run.get('status') == 'completed' else 'research_status'
-                    await asyncio.to_thread(self.render, {'session': session['id'], 'expected_revision': session['revision']}, view, model)
-                except Exception:
+                    if model != session['model']:
+                        view = 'research_result' if run.get('status') == 'completed' else 'research_status'
+                        await asyncio.to_thread(self.render, {'session': session['id'], 'expected_revision': session['revision']}, view, model)
+                    self.unobserved.discard(session['id'])
+                except Exception as exc:
                     # A transient outage retains the last valid card and its
                     # explicit refresh button instead of presenting a success.
-                    pass
+                    # This repeats every few seconds: report it once per card.
+                    if session['id'] not in self.unobserved:
+                        self.unobserved.add(session['id'])
+                        if isinstance(exc, (DeliveryError, sqlite3.OperationalError)):
+                            logger.warning('research card refresh is failing (%s); will keep trying', type(exc).__name__)
+                        else:
+                            logger.error('research card refresh failed unexpectedly: %s', origin(exc))
             for _ in range(25):
                 if self.stopping:
                     break

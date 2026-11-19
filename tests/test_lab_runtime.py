@@ -176,7 +176,9 @@ class FakeResearchModel:
 
 
 async def wait_complete(service, identifier):
-    for _ in range(200):
+    # Returns as soon as the run ends; the 30 s budget is for a loaded machine (one run computes in a
+    # separate process), where the former 6 s ran out once with the computation still going.
+    for _ in range(1000):
         run = service.public_run(identifier)
         if run["status"] in {"completed", "failed", "cancelled"}:
             return run
