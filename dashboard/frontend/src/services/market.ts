@@ -1,35 +1,20 @@
+// Market data for 行情 and the stock drawer: quotes for any tickers (`GET /api/quotes`, the same objects
+// as Today's rows) and daily bars (`GET /api/market/bars`, provider, adjustment and a provisional last
+// bar labelled).
 import api from './api'
-import type { Quote } from '@/types'
+import type { BarsPayload } from '@/features/market/chart'
+import type { QuotesPayload } from '@/features/today/types'
 
-export const marketService = {
-  // 获取单只股票行情
-  async getQuote(symbol: string, market = 'a_share'): Promise<Quote> {
-    const response = await api.get<Quote>(`/market/quote/${symbol}`, {
-      params: { market },
-    })
-    return response.data
-  },
+export type { BarsPayload, QuotesPayload }
 
-  // 批量获取行情
-  async getQuotes(symbols: { symbol: string; market?: string }[]): Promise<Quote[]> {
-    const response = await api.post('/market/quotes', {
-      symbols: symbols.map((s) => ({
-        symbol: s.symbol,
-        market: s.market || 'a_share',
-      })),
-    })
-    return response.data.quotes
-  },
+export const QUOTES_KEY = ['quotes'] as const
 
-  // 获取指数行情
-  async getIndices() {
-    const response = await api.get('/market/indices')
-    return response.data.indices
-  },
+/** Quote objects for up to 50 tickers, in request order. */
+export async function fetchQuotes(tickers: string[], signal?: AbortSignal): Promise<QuotesPayload> {
+  return (await api.get<QuotesPayload>('/quotes', { params: { tickers: tickers.join(',') }, signal })).data
+}
 
-  // 搜索股票
-  async searchStocks(keyword: string) {
-    const response = await api.get(`/market/search/${keyword}`)
-    return response.data.results
-  },
+export async function fetchBars(ticker: string, days: number, signal?: AbortSignal): Promise<BarsPayload> {
+  // The first request of a day may wait for the data source; give it longer than the default 10 s.
+  return (await api.get<BarsPayload>('/market/bars', { params: { ticker, days }, signal, timeout: 40_000 })).data
 }
