@@ -98,6 +98,8 @@ CLOSE_WAIT = re.compile(r'CLOSE_NOT_FINAL_UNTIL=(\S+)(?: MARKETS=([A-Z,]+))?(?: 
 # A wait the engine names is never shorter than this, so a job can never be run again at once.
 RECHECK = timedelta(minutes=1)
 CHINESE = re.compile(r'[一-鿿]')
+# The ledger's general notes the card already says in the item's own line ("基金估值，不是申购或赎回").
+_SAID_ELSEWHERE = ('基金按人民币合计估值记账',)
 
 
 def _number(value, *, positive=False, nonnegative=False):
@@ -804,18 +806,27 @@ class LedgerBook:
         return self._save(day, proposal, changes, summary, 'batch', items, owner)
 
     def _describe(self, proposal, items, plan):
-        """The proposal's own before → after of each account the list touches, and its warnings."""
+        """What the list changes in each account it touches (only the figures that move), and the warnings that
+        concern this list. The list's own lines (``plan['lines']``) already say each item's before → after, so
+        an account's fund value is not repeated here when the list sets it."""
         before, after = proposal['before']['accounts'], proposal['after']['accounts']
         touched = list(dict.fromkeys(item['account'] for item in items))
-        lines = []
+        fund_set = {item['account'] for item in items if item.get('operation') == 'set_fund'}
+        lines, moved_cash = [], set()
         for name in touched:
             old, new = before.get(name), after.get(name)
             if old is None or new is None:
                 continue
-            parts = [f"{unit} 现金 {_shown(old['cash_balances'].get(unit, '0'))} → {_shown(new['cash_balances'].get(unit, '0'))}"
-                     for unit in sorted(set(old['cash_balances']) | set(new['cash_balances']))]
-            parts.append(f"CNY 基金估值 {_shown(old['fund_cny'])} → {_shown(new['fund_cny'])}")
-            parts.append(f"CNY 累计净投入 {_shown(old['contributed_cny'])} → {_shown(new['contributed_cny'])}")
+            parts = []
+            for unit in sorted(set(old['cash_balances']) | set(new['cash_balances'])):
+                was, now = old['cash_balances'].get(unit, '0'), new['cash_balances'].get(unit, '0')
+                if amount(was) != amount(now):
+                    moved_cash.add((name, unit))
+                    parts.append(f"{unit} 现金 {_shown(was)} → {_shown(now)}")
+            if name not in fund_set and amount(old['fund_cny']) != amount(new['fund_cny']):
+                parts.append(f"CNY 基金估值 {_shown(old['fund_cny'])} → {_shown(new['fund_cny'])}")
+            if amount(old['contributed_cny']) != amount(new['contributed_cny']):
+                parts.append(f"CNY 累计净投入 {_shown(old['contributed_cny'])} → {_shown(new['contributed_cny'])}")
             for ticker in sorted(set(old['positions']) | set(new['positions'])):
                 a, b = old['positions'].get(ticker), new['positions'].get(ticker)
                 if a == b:
@@ -823,20 +834,21 @@ class LedgerBook:
                 quantity = f"{_shown(a['quantity']) if a else '0'} → {_shown(b['quantity']) if b else '0'} 股"
                 cost = f"成本价 {_shown(a['cost_price']) if a else '—'} → {_shown(b['cost_price']) if b else '—'}"
                 parts.append(f'{ticker} {quantity}（{cost}）')
-            lines.append(f'{name}：' + '；'.join(parts))
-        for name in touched:
-            for unit, value in sorted((after.get(name) or {}).get('cash_balances', {}).items()):
-                if amount(value) < 0:
-                    lines.append(f'{name} {unit} 现金为负（{_shown(value)}），请核对是否与实际账户一致；可在清单里补充现金对账。')
-        lines += [warning for warning in proposal.get('warnings', []) if CHINESE.search(warning)]
+            if parts:
+                lines.append(f'{name}：' + '；'.join(parts))
+        # A negative balance is pointed out when this list moves it; one the account already had is not news.
+        for name, unit in sorted(moved_cash):
+            value = after[name]['cash_balances'].get(unit, '0')
+            if amount(value) < 0:
+                lines.append(f'{name} {unit} 现金为负（{_shown(value)}），请核对是否与实际账户一致；可在清单里补充现金对账。')
+        lines += [warning for warning in proposal.get('warnings', []) if CHINESE.search(warning)
+                  and not any(warning.startswith(prefix) for prefix in _SAID_ELSEWHERE)
+                  and 'negative cash' not in warning]
         if plan['estimated']:
             lines.append('第 ' + '、'.join(map(str, plan['estimated'])) + ' 项的费用为估算，入账后在流水中标为估算；'
                          '与成交单不同时请在清单里改填实际费用。')
         if proposal.get('duplicates'):
             lines.append(f"有 {proposal['duplicates']} 笔记录已经入账，不会重复记录。")
-        untouched = [name for name in after if name not in touched]
-        if untouched:
-            lines.append('保持原样的账户：' + '、'.join(untouched))
         return lines
 
     def _mark(self, proposal_id, owner):

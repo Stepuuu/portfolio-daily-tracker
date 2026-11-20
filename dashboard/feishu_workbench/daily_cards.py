@@ -20,10 +20,14 @@ LEDGER_LABELS = {**_OPERATIONS, **LEDGER_OPERATIONS}
 
 def start(model, context):
     count = len(model.get('items', []))
+    changes_first = bool(count) or bool(model.get('changes_first'))
     return [
         _highlight(model['today'], '持仓、现金、基金和投入本金均无变化时，可直接更新日报。'),
-        _buttons(_button(context, 'daily.unchanged', '今日无变动，更新日报', primary=not count, disabled=bool(count)),
-                 _button(context, 'daily.batch', f'继续填写（{count} 项）' if count else '有变动', primary=bool(count))),
+        _buttons(_button(context, 'daily.batch', f'继续填写（{count} 项）' if count else '有变动', primary=changes_first),
+                 _button(context, 'daily.unchanged', '今日无变动，更新日报', primary=not changes_first,
+                         disabled=bool(count))) if changes_first else
+        _buttons(_button(context, 'daily.unchanged', '今日无变动，更新日报', primary=True),
+                 _button(context, 'daily.batch', '有变动')),
         _markdown('清单内有未保存的变动。' if count else '每项变动分别选账户，支持多个产品一起更新。', caption=True),
         _buttons(_button(context, 'assets', '查看资产'), _button(context, 'home', '返回主页')),
     ]

@@ -1399,3 +1399,64 @@ def test_the_card_waits_for_exactly_what_the_snapshot_engine_waits_for(day, tick
                 engine.append(wait)
         card = ledger_book.closes_final_at(state, day, moment)
         assert (card.until if card else None) == (max(engine) if engine else None), (day, when, card, engine)
+
+
+# -- what the preview shows, and the daily card's defaults ---------------------------------------------------
+
+def test_a_fund_valuation_preview_lists_only_the_fund_change(book):
+    w, ledger = book
+    # An account that already holds a negative CNY balance (margin), as a migrated portfolio may.
+    margin = ledger.propose([{'kind': 'buy', 'date': OPENED, 'account': 'Growth', 'ticker': 'SHA:600000',
+                              'quantity': '10000', 'price': '11', 'fee': '0', 'currency': 'CNY', 'allow_margin': True}])
+    ledger.confirm(margin['id'])
+    assert Decimal(account(ledger)['cash_balances']['CNY']) < 0
+    preview = w.portfolio.preview_batch(today(), [item('set_fund', amount='280')])
+    changes = preview['changes']
+    assert changes == ['Growth：基金合计估值 300 → 280 CNY（基金估值，不是申购或赎回）。'], changes
+    text = '\n'.join(changes)
+    for absent in ('现金', '累计净投入', '保持原样', 'negative cash', '基金按人民币合计估值记账', 'Reserve'):
+        assert absent not in text
+
+
+def test_a_trade_preview_lists_the_cash_and_position_it_moves_and_nothing_else(book):
+    w, _ = book
+    preview = w.portfolio.preview_batch(today(), [item('sell')])
+    summary = [line for line in preview['changes'] if line.startswith('Growth：') and '→' in line and '股' in line]
+    assert summary, preview['changes']
+    line = summary[-1]
+    assert 'CNY 现金' in line and 'SHA:600000 200 → 100 股' in line
+    for absent in ('HKD 现金', 'USD 现金', '基金估值', '累计净投入'):
+        assert absent not in line
+    assert not any('保持原样' in line for line in preview['changes'])
+
+
+def test_the_daily_card_can_start_from_the_usual_entry(book):
+    w, _ = book
+    sid = open_daily(w)
+    first = json.dumps(w.delivery.cards[w.store.session(sid)['message']], ensure_ascii=False)
+    assert first.index('今日无变动') < first.index('有变动')   # without defaults: unchanged first, as before
+    step(w, sid, 'daily.batch')
+    chosen = step(w, sid, 'daily.add')
+    assert (chosen['model']['account'], chosen['model']['operation']) == ('Growth', 'sell')
+
+    w.config['daily_defaults'] = {'start': 'changes', 'account': 'Reserve', 'operation': 'set_fund'}
+    sid = open_daily(w)
+    session = w.store.session(sid)
+    card = w.delivery.cards[session['message']]
+    buttons = [element for element in walk(card) if isinstance(element, dict) and element.get('tag') == 'button']
+    main = [b for b in buttons if b.get('type') == 'primary_filled' or b.get('type') == 'primary']
+    assert main and '有变动' in json.dumps(main[0], ensure_ascii=False)
+    step(w, sid, 'daily.batch')
+    chosen = step(w, sid, 'daily.add')
+    assert (chosen['model']['account'], chosen['model']['operation']) == ('Reserve', 'set_fund')
+    step(w, sid, 'daily.item.choose', account='Growth', operation='sell')
+    step(w, sid, 'daily.item.save', product='SHA:600000', quantity_mode='partial', quantity='100', price='12', fee='5',
+         settlement_cny='')
+    again = step(w, sid, 'daily.add')   # later items keep the previous item's account
+    assert (again['model']['account'], again['model']['operation']) == ('Growth', 'set_fund')
+
+    w.config['daily_defaults'] = {'account': 'Nobody', 'operation': 'correction'}
+    sid = open_daily(w)
+    step(w, sid, 'daily.batch')
+    chosen = step(w, sid, 'daily.add')
+    assert (chosen['model']['account'], chosen['model']['operation']) == ('Growth', 'sell')

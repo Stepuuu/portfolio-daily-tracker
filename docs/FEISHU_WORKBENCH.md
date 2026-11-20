@@ -252,6 +252,12 @@ Without a transaction ledger the card edits the **dated JSON holdings** files as
 
 没有交易账本时，卡片按上文修改**按日期保存的 JSON 持仓**；账本启用后改为记入账本（见下一节）。卡片不向券商下单。资产反映已保存记录，打开或刷新资产卡不会抓取实时行情，也不会补造缺失估值。
 
+**Defaults for your usual entry (optional).** In the companion's `config.json`, `"daily_defaults": {"start": "changes", "account": "<account name>", "operation": "set_fund"}` makes **有变动** the first card's main button (instead of 今日无变动) and preselects that account and kind when the first item of a list is added (`operation`: `buy`, `sell`, `deposit`, `withdraw`, `set_cash`, `set_fund`, `set_capital`). An unknown account or kind falls back to the first account and 卖出; later items keep the previous item's account. Restart the companion after changing it.
+
+**常用录入的默认值（可选）：**在 companion 的 `config.json` 中加入 `"daily_defaults": {"start": "changes", "account": "<账户名>", "operation": "set_fund"}`，首张卡片的主按钮改为 **有变动**（而不是 今日无变动），清单添加第一项时预选该账户和变动类型（`operation` 可为 `buy`、`sell`、`deposit`、`withdraw`、`set_cash`、`set_fund`、`set_capital`）。账户或类型无效时退回第一个账户和 卖出；之后添加的项沿用上一项的账户。修改后重启 companion。
+
+**核对全部变动** lists only what the list changes: each item's before → after, then per account only the figures that move (cash per currency, fund value when no item sets it, contributed capital, positions). A negative cash balance is pointed out when the list moves it. / 核对时只列出这份清单改变的数字：每项的变动前后，以及各账户实际变化的现金、基金、本金和持仓；现金为负只在本次清单改变了该币种现金时提示。
+
 ## With the transaction ledger / 启用交易账本后
 
 When `ledger.sqlite3` in the portfolio directory has a confirmed revision, the daily card records into the ledger; without one it behaves as above. The card is then one more way to make a [ledger proposal](LEDGER.md) and confirm it, like 记一笔 in the web app: each item becomes one or more ledger events, **核对全部变动** shows the ledger's own preview of them, and **确认入账并更新日报** on that preview is the person confirming the proposal. The receipt lists what was booked.

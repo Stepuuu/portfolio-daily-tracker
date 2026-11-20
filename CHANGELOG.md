@@ -113,6 +113,12 @@
 
 ### Changed
 
+- **The Feishu card's ledger preview lists only what the list changes.** It no longer repeats unchanged cash,
+  fund value and contributed capital, the accounts the list does not touch, the fund note the item's own line
+  already says, an English duplicate of the negative-cash warning, or a negative balance the list does not move.
+- **The daily card can start from your usual entry.** An optional `daily_defaults` in the card service's
+  `config.json` makes 有变动 the first card's main button and preselects an account and kind for the first item
+  of a list (docs/FEISHU_WORKBENCH.md).
 - The card stays exactly-once on the ledger: its operations are keyed on the
   proposal, events carry the source `feishu-card` and an external id from the list
   item, a newer preview withdraws the same person's older one, and a preview the

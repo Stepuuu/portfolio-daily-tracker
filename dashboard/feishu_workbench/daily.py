@@ -49,6 +49,12 @@ class DailyWorkflow:
         self.w = workbench
         self.drafts = Drafts(workbench.store)
 
+    def defaults(self):
+        """The card config's ``daily_defaults``: ``start`` (``changes`` makes 有变动 the first card's main button),
+        ``account`` and ``operation`` (preselected when the first item of a list is added). Anything else is ignored."""
+        value = (getattr(self.w, 'config', None) or {}).get('daily_defaults')
+        return value if isinstance(value, dict) else {}
+
     def model(self, draft):
         overview = self.w.portfolio.overview()
         model = {**draft, 'accounts': overview.get('accounts', []),
@@ -154,7 +160,8 @@ class DailyWorkflow:
         if action in {'daily.open', 'daily.batch'}:
             if action == 'daily.batch' or draft['locked_by']:
                 return self.render_draft(command, draft)
-            return self.w.render(command, 'daily_start', {**self.model(draft), 'today': today()})
+            return self.w.render(command, 'daily_start', {**self.model(draft), 'today': today(),
+                                                          'changes_first': self.defaults().get('start') == 'changes'})
         if action in {'daily.item.save', 'daily.item.remove', 'daily.discard', 'daily.date.save'}:
             edited = self.drafts.edited(actor, command['id'])
             if edited:
@@ -191,8 +198,14 @@ class DailyWorkflow:
             model = self.model(draft)
             if not model['accounts']:
                 raise Rejected('请先在 QR 中完成组合初始化。')
-            model['account'] = draft['items'][-1]['account'] if draft['items'] else model['accounts'][0]['value']
-            model['operation'] = 'sell'
+            defaults, accounts = self.defaults(), [a['value'] for a in model['accounts']]
+            if draft['items']:
+                model['account'] = draft['items'][-1]['account']
+            else:
+                model['account'] = defaults['account'] if defaults.get('account') in accounts else accounts[0]
+            choices = set(LEDGER_OPERATIONS) if model.get('ledger') else _ACTIONS - {'no_change'}
+            operation = defaults.get('operation')
+            model['operation'] = operation if operation in choices - {'correction', 'set_cost_basis'} else 'sell'
             return self.w.render(command, 'daily_item_choose', model)
         if action == 'daily.item.choose':
             if set(fields) != {'account', 'operation'}:
