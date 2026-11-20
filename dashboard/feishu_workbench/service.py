@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from .cards import CardContext, build_card
 from .clients import DeliveryError
 from .daily import DailyWorkflow, ACTIONS as DAILY_ACTIONS
+from .pages import Pages
 from .store import Rejected, Store, encode
 
 
@@ -65,7 +66,7 @@ def normalize(envelope):
         result.update(actor=body.get('operator', {}).get('open_id'),
                       chat=context.get('open_chat_id'), message=context.get('open_message_id'),
                       nonce=name[4:] if name.startswith('qrw_') else value.get('nonce'),
-                      fields=action.get('form_value') or {})
+                      fields=action.get('form_value') or {}, value=value)
         if not isinstance(result['fields'], dict) or len(result['fields']) > 20:
             raise Rejected('表单内容无效。')
         if any(not isinstance(v, str) or len(v) > 2000 for v in result['fields'].values()):
@@ -93,9 +94,12 @@ def normalize(envelope):
 
 
 class Workbench:
-    def __init__(self, config, store, portfolio, research, delivery):
+    def __init__(self, config, store, portfolio, research, delivery, pages=None):
         self.config, self.store = config, store
         self.portfolio, self.research, self.delivery = portfolio, research, delivery
+        # Card pages of extensions (``pages.load``); none unless TRACKER_EXTENSIONS names a module defining them.
+        self.pages = pages if pages is not None else Pages()
+        self.actions = ACTIONS + self.pages.action_names()
         self.allowed = set(config.get('allowed_users', []))
         if not self.allowed or '*' in self.allowed:
             raise ValueError('必须配置明确的工作台用户白名单。')
@@ -115,6 +119,10 @@ class Workbench:
         event = normalize(envelope)
         self.authorize(event.get('actor'))
         if event['kind'] == 'card.action.trigger':
+            if not event.get('nonce') and self.pages.wants(event):
+                # A card another process sent with the bot, for an extension page (see pages.py: the page,
+                # not the nonce, decides whether the card is its own). Built-in actions always need a nonce.
+                return self.pages.click(event)
             if not all(isinstance(event.get(key), str) and event[key] for key in ('chat', 'message', 'nonce')):
                 raise Rejected('卡片上下文不完整。')
             accepted = self.store.accept(event['actor'], event['chat'], event['message'], event['nonce'], event['fields'])
@@ -146,10 +154,12 @@ class Workbench:
         lock = self.render_locks.setdefault(command['session'], threading.Lock())
         with lock:
             key = command.get('id', f"observe_{command['session']}_{command.get('expected_revision')}") + ':' + view
-            session = self.store.prepare_render(key, command['session'], view, model, ACTIONS, command.get('expected_revision'))
+            session = self.store.prepare_render(key, command['session'], view, model, self.actions,
+                                                command.get('expected_revision'))
             if session is None:
                 return None
-            card = build_card(session['view'], session['model'], CardContext(session['id'], session['revision'], session['nonces']))
+            card = build_card(session['view'], session['model'],
+                              CardContext(session['id'], session['revision'], session['nonces'], self.pages))
             if session['message']:
                 self.delivery.patch(session['message'], card)
             else:
@@ -252,8 +262,10 @@ class Workbench:
         action, payload = command['action'], command['payload']
         fields, previous = payload.get('fields', {}), payload.get('model', {})
         if action == 'home':
-            return self.render(command, 'home', {'title': 'QR 工作台', 'subtitle': '组合记录与股票研究',
-                                               'notice': ''})
+            model = {'title': 'QR 工作台', 'subtitle': '组合记录与股票研究', 'notice': ''}
+            if self.pages.entries:
+                model['pages'] = [{'label': label, 'action': name} for label, name in self.pages.entries]
+            return self.render(command, 'home', model)
         if action == 'daily.open' or action in DAILY_ACTIONS:
             return self.daily.execute(command)
         if action == 'daily.choose':
@@ -371,6 +383,10 @@ class Workbench:
             run = self.research.post(path + '/cancel') if action == 'research.cancel' else self.research.get(path)
             view = 'research_result' if run.get('status') == 'completed' else 'research_status'
             return self.render(command, view, self.run_model(run))
+        if self.pages.handles(action):
+            actor = self.store.session(command['session'])['actor']
+            view, model = self.pages.execute(action, actor, payload)
+            return self.render(command, view, model)
         raise Rejected('未知操作，请重新打开工作台。')
 
     def report_waits_until(self, day):

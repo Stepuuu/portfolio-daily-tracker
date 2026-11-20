@@ -59,6 +59,8 @@ class CardContext:
     session_id: str
     revision: int
     nonces: Mapping[str, str]
+    # The extensions' card pages (``pages.Pages``): their actions get nonces and their views are built here too.
+    pages: Any = None
 
 
 def _string(value: Any) -> str:
@@ -74,7 +76,8 @@ def _string(value: Any) -> str:
 def _escape(value: Any) -> str:
     """Render untrusted text without links, mentions or formatting injection."""
     text = _string(value).replace("&", "&amp;")
-    for char in "<>*~[]()#:_`\\":
+    # "#" goes first: every later replacement writes a "#" of its own.
+    for char in "#<>*~[]():_`\\":
         text = text.replace(char, f"&#{ord(char)};")
     return text
 
@@ -99,7 +102,8 @@ def _list(model: Mapping, key: str) -> list:
 
 def _nonce(context: CardContext, action: str) -> str:
     value = context.nonces.get(action)
-    if action not in ACTIONS or not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value):
+    known = action in ACTIONS or (context.pages is not None and context.pages.handles(action))
+    if not known or not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value):
         raise ValueError(f"Missing or invalid nonce for {action}")
     return value
 
@@ -207,12 +211,17 @@ def _preview_text(model: Mapping) -> list[dict]:
 
 
 def _home(model: Mapping, context: CardContext) -> list[dict]:
-    return [
+    elements = [
         _highlight("操作", model.get("summary", "每日更新 · 资产 · 研究")),
         _buttons(_button(context, "daily.open", "每日更新", primary=True),
                  _button(context, "assets", "资产"), _button(context, "research.open", "研究任务")),
         _buttons(_button(context, "reports", "日报")),
     ]
+    # The extensions' pages that have an entry (``pages.Pages.entries``); none without extensions.
+    entries = _list(model, "pages")
+    if entries:
+        elements.append(_buttons(*(_button(context, entry["action"], entry["label"]) for entry in entries[:6])))
+    return elements
 
 
 _OPERATIONS = {
@@ -514,7 +523,7 @@ _VIEWS = {
 def build_card(view: str, model: Mapping[str, Any], context: CardContext) -> dict:
     """Return a complete, JSON-serializable shared Card 2.0 without side effects."""
     from .daily_cards import VIEWS
-    views = {**_VIEWS, **VIEWS}
+    views = {**(context.pages.views if context.pages is not None else {}), **_VIEWS, **VIEWS}
     if view not in views:
         raise ValueError("Unknown workbench card view")
     if (not isinstance(context.session_id, str) or not context.session_id
@@ -534,6 +543,12 @@ def build_card(view: str, model: Mapping[str, Any], context: CardContext) -> dic
             "header": header,
             "body": {"direction": "vertical", "padding": "12px 12px 20px 12px", "vertical_spacing": "12px",
                      "elements": elements}}
+    check_budget(card)
+    return card
+
+
+def check_budget(card: Mapping[str, Any]) -> None:
+    """Refuse (``ValueError``) a card beyond the component or display budget, or not JSON."""
     encoded = json.dumps(card, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     def count_tags(value: Any) -> int:
         if isinstance(value, dict):
@@ -543,4 +558,3 @@ def build_card(view: str, model: Mapping[str, Any], context: CardContext) -> dic
         raise ValueError("Card exceeds the component budget; paginate the content")
     if len(encoded.encode("utf-8")) > MAX_CARD_BYTES:
         raise ValueError("Card exceeds the display budget; split the request instead of truncating the preview")
-    return card

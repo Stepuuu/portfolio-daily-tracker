@@ -15,6 +15,15 @@
   when the variable is set) and never takes the API down. Demo mode loads none;
   lab-only mode mounts their routes but starts no background task. Extensions
   run with the backend's privileges. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
+- **Feishu workbench pages from extensions.** The Feishu workbench imports the modules named in its own
+  environment's `TRACKER_EXTENSIONS` and adds the card pages of those that define `workbench_pages()`:
+  actions on its own cards, checked like built-in ones (allowlist, the card's nonce and session, a
+  `.confirm` only from the page's `_preview`), views within the card budget, a home button, and
+  `external` actions for buttons on cards another process sent with the same bot, answered in the callback
+  without a nonce; such a page must check itself that the card is one it sent and still current. Built-in
+  actions still need their nonce, and built-in names and namespaces cannot be taken. A module that fails
+  is logged and left out. Without the variable the workbench is unchanged. See
+  [docs/EXTENSIONS.md](docs/EXTENSIONS.md#feishu-workbench-pages).
 - `TRACKER_REPORTS_DIR`: the directory of the daily Markdown reports, by default `engine/reports` beside
   the code, as before. The pipeline saves them there, and the close snapshot, the extensions' close reports
   and the Feishu workbench (its 日报 card and the pipeline it starts) read them there, so they can be kept
@@ -74,6 +83,9 @@
 
 ### Fixed
 
+- **Brackets and asterisks in Feishu card text are shown as themselves.** The card service escaped the
+  `#` of the entities it had just written for `< > * ~ [ ] ( )`, so a name such as "A股(沪)" appeared on the
+  card as `A股&#40;沪&#41;`. Each special character is now escaped exactly once.
 - **A day's snapshot is never made from the day before's prices.** Run before the day's session had closed
   (the Feishu card's pipeline after an entry dated today, at 02:46), the snapshot booked the mainland's and
   Hong Kong's previous close as the day's, without an estimate mark, and the close pipeline then only

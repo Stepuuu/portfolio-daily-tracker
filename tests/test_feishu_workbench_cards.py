@@ -329,3 +329,17 @@ def test_rendering_does_not_mutate_inputs(models, context):
     original = json.dumps(models["research_result"], sort_keys=True)
     build_card("research_result", models["research_result"], context)
     assert json.dumps(models["research_result"], sort_keys=True) == original
+
+
+def test_escaped_text_is_escaped_once():
+    """Each special character becomes one entity; the "#" of an entity is not escaped again."""
+    import html
+    from feishu_workbench.cards import _escape
+
+    text = "A股(沪) <b> [x] *y* ~z~ #1 a_b 10:30 R&D `c` \\"
+    escaped = _escape(text)
+    assert "&&" not in escaped and "&#35;4" not in escaped and "&#35;6" not in escaped
+    assert html.unescape(escaped) == text
+    for char in "<>*~[]():_`\\":
+        assert char not in escaped
+    assert escaped.count("#") == escaped.count("&#")

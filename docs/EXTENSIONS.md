@@ -36,6 +36,7 @@ Each is optional.
 | `background_tasks()` | `[f(app), ...]`, each returning an async context manager, as in `backend/features.py` | entered at start-up after the built-in tasks, left at shutdown before them |
 | `on_close_report(report)` | a function or an `async def` | once per finished close report content, see below |
 | module body | `core.agent_tools.register(factory)` (chat tools, see `core/agent_tools/__init__.py`), `core.notify.register_deliverer(function)` (delivery channels, see `core/notify.py`) | at import: before the chat agent builds its tools at start-up, and before anything is published |
+| `workbench_pages()` | `[page, ...]`, see [Feishu workbench pages](#feishu-workbench-pages) | by the Feishu workbench, a separate process, at its start; never by the backend |
 
 ```python
 # my_private/publisher.py
@@ -199,10 +200,115 @@ SHA-256), `snapshot_sha`, `report_file`, `snapshot_file`, `replaces` (the
 - **Do not import `backend.main`.** Your module is imported while it is being
   imported; use the `app` your task factories receive, or `request.app`.
 - **Rely only on this page.** The hooks above, `agent_tools.register`,
-  `notify.register_deliverer` and the `report` fields are the interface; other
-  modules of the application can change in any release.
+  `notify.register_deliverer`, the `report` fields and, for workbench pages,
+  `feishu_workbench.pages` (`Refused`, `button`, `markdown`, `PageRequest`,
+  `CardClick`) are the interface; other modules of the application can change in
+  any release.
 - Log identifiers and exception types, not amounts, holdings or secrets; text
   shown to the user is Chinese.
 
-The Feishu workbench (`dashboard/feishu_workbench`) is a separate process and
-does not load extensions.
+## Feishu workbench pages
+
+The Feishu workbench (`dashboard/feishu_workbench`, [FEISHU_WORKBENCH.md](FEISHU_WORKBENCH.md))
+is a separate process. A module can add card pages to it with `workbench_pages()`;
+that is the only thing the workbench uses of an extension.
+
+**Loading.** The workbench reads `TRACKER_EXTENSIONS` from its own environment
+only, not from `.env`: set it in the shell that runs
+`python -m feishu_workbench.control start`, which passes its environment on.
+The service runs in `dashboard/`, so install the package or put it on
+`PYTHONPATH` as an absolute path. At start the workbench imports every module
+named there, once, in order, the same modules as the backend: one variable
+configures both. It then asks only for `workbench_pages()`. A module without
+that function is imported and then left alone. The workbench never calls its
+`routers()`, `background_tasks()` or `on_close_report`, and has no chat agent and
+publishes no notifications, so what its module body registers is never used
+there either. Every named module must therefore be cheap and free of side
+effects to import (no threads, connections or files at import), because its body
+runs in both processes. A module that cannot be imported, or whose pages are
+refused, is logged with the exception type and stack frames and left out; the
+workbench starts without it and the backend is not affected. When the variable
+is unset or empty, or no module defines `workbench_pages()`, nothing changes:
+no action, view or button is added.
+
+```python
+# my_private/news.py
+from feishu_workbench.pages import Refused, button, markdown
+
+
+def news_open(request):                    # PageRequest: action, actor, fields, view, model
+    return "news_list", {"items": latest_titles(), "page": 0}
+
+
+def news_list(model, context):             # the card's body, like a built-in view
+    return [markdown(title) for title in model["items"]] + [button(context, "news.open", "刷新")]
+
+
+def news_page(click):                      # CardClick: action, actor, chat, message, value, fields
+    batch = sent_batch(click.value.get("batch_id"))       # your own record of the cards you sent
+    if batch is None or batch.message_id != click.message:
+        raise Refused("资讯卡片已失效。")
+    return {"card": {"type": "raw", "data": render_page(batch, click.value.get("page"))}}
+
+
+def workbench_pages():
+    return [{"actions": {"news.open": news_open},
+             "views": {"news_list": ("市场资讯", news_list)},
+             "external": {"news.page": news_page},
+             "entry": ("市场资讯", "news.open")}]
+```
+
+A page is a mapping with four optional keys:
+
+| Key | Shape | What it does |
+|---|---|---|
+| `actions` | `{"ns.name": handle}` | buttons on cards the workbench renders. `handle(request)` runs in the workbench's worker after the press was checked as for a built-in button (allow-listed user, the card's nonce, its session, once per nonce) and returns `(view, model)`, where `view` is one of the same page's views; the workbench renders it as the card's next state |
+| `views` | `{"name": (title, build)}` | `build(model, context)` returns the card's body elements; the workbench adds the header (the view's title, or the model's `title`, and the model's `subtitle`) and refuses a card over 28,000 bytes or 200 components. `button(context, action, label, primary=False)` makes a button for one of the page's actions, or `home` (no other built-in action: those act on their own views' models), bound to the card's nonce; `markdown(text)` shows text from outside escaped. The model is stored with the card as JSON; `notice` is for built-in views only |
+| `external` | `{"ns.name": click}` | buttons on cards **another process** sent with the bot, whose value is `{"qr_workbench": 1, "action": "ns.name", ...}` and has no `nonce`. `click(request)` runs inside Feishu's callback, which the bridge gives 1.8 seconds, in a thread, possibly several at once. It returns `{}`, `{"toast": {"type": "info", "content": "..."}}` (also `success`, `warning`, `error`; at most 200 characters) and/or `{"card": {"type": "raw", "data": card}}`, which replaces the pressed card and must stay within the same budget. A value over 4,000 bytes is refused before `click` is called |
+| `entry` | `(label, "ns.name")` | a button on the home card for one of the page's own `actions` (the first six pages' entries are shown) |
+
+Action names are `namespace.name` (lowercase, up to three dots), and view names
+are lowercase words. Built-in names are refused, and so are the workbench's
+namespaces: `home.`, `daily.`, `assets.`, `research.`, `reports.` and `home_`,
+`daily_`, `assets_`, `research_`, `reports_`, `error_`. A name another module
+took first is refused too. A module with one refused page contributes no page at
+all. An action whose name ends in `.confirm` is accepted only from a card of one
+of the page's own views whose name ends in `_preview`. Such a card lives 15
+minutes, as a built-in preview does.
+
+A handler that raises `feishu_workbench.pages.Refused("…")` shows that message,
+in Chinese and safe to show: on the card's error state for an action, as an error
+toast for a click. Any other exception, a result that is not one of the page's
+views, or an answer of another shape shows a fixed message instead, and is
+logged with its type (and stack frames for an exception), never its message.
+
+**What an external click means: the trust decision is the page's.** A card
+another process sent carries no nonce of the workbench, so the workbench cannot
+tell which card was pressed or by whom it was meant to be pressed. For an
+`external` action it guarantees only three things:
+
+- the press came through the bot's authenticated bridge;
+- the user pressing is on the workbench's allow-list (`allowed_users`);
+- the action name is one a page declared `external`.
+
+It does **not** guarantee any of these:
+
+- that the card was sent by your module;
+- that the user pressing it is the one it was sent to (anyone allow-listed in
+  the chat can press it);
+- that the button's other values are the ones you wrote;
+- that the press is fresh: an old card can be pressed again at any time, and
+  Feishu redelivers.
+
+So `click` must:
+
+- look `request.message` up in its own record of the cards it sent, and refuse
+  one it did not send, one that is no longer current, or one sent to another chat
+  (`request.chat`) or user (`request.actor`);
+- check every value as untrusted input;
+- do only what is harmless to repeat, such as showing another page of the same
+  content.
+
+Anything that changes data belongs on a card the workbench renders, through an
+`actions` page with a `_preview` view and its `.confirm`. Built-in actions
+always need their nonce, with or without extensions.

@@ -56,9 +56,12 @@ def create_app(config, controller=None):
         # profiles and trade plans through core.desk_store) is pointed at that same absolute directory.
         portfolio = PortfolioAdapter.configured(Path(config['project_dir']), state)
         os.environ['PORTFOLIO_DIR'] = str(portfolio.portfolio_dir)
+        # Card pages of the extensions named in TRACKER_EXTENSIONS (pages.py); none without it. A module that
+        # fails to import or whose pages are refused is logged and left out.
+        from .pages import load as load_pages
         controller = Workbench(config, Store(state / 'cards.sqlite3'), portfolio,
                                ResearchClient(config.get('lab_url', 'http://127.0.0.1:8000')),
-                               FeishuClient(config))
+                               FeishuClient(config), pages=load_pages())
 
     @asynccontextmanager
     async def lifespan(app):
